@@ -151,12 +151,13 @@ async function handlePurchase(req, res) {
       userEmail: userEmail,
       fullName: fullName || null,
       category: category,
-      categories: categories || [category],
+      // Flatten categories to comma‑separated string
+      categories: Array.isArray(categories) ? categories.join(",") : typeof categories === "string" ? categories : (Array.isArray([category]) ? [category].join(",") : ""),
       categoryPrice: price,
       purchaseCodeUsed: purchaseCodeUsed || null,
       purchaseCodeOwnerId: purchaseCodeOwnerId || null,
       purchaseCodeOwnerName: purchaseCodeOwnerName || null
-    }
+    };
 
     console.log("[portfolio-purchase] metadata:", JSON.stringify(metadata))
 

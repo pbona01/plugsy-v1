@@ -184,9 +184,10 @@ async function handleInitialize(req, res) {
       purchaseCodeUsed: purchaseCodeUsed || null,
       purchaseCodeOwnerId: purchaseCodeOwnerId || null,
       purchaseCodeOwnerName: purchaseCodeOwnerName || null,
-      // Flatten categories array to JSON string to satisfy Flutterwave meta constraints
-      categories: JSON.stringify(plan.categories || []),
-      category: plan.category || null
+      // Flatten categories to comma‑separated string
+      categories: Array.isArray(plan.categories) ? plan.categories.join(",") : "",
+      category: plan.category || null,
+      type: "capcut_order"
     };
 
     console.log("[init] metadata:", JSON.stringify(metadata));
