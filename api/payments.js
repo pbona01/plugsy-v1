@@ -919,7 +919,7 @@ async function handleWebhook(req, res) {
     const { data: insertedOrder, error: insertError } = await supabase.from("orders").insert({
       user_id: userId, user_email: userEmail, product_name: productName, plan_duration: planDuration,
       plan_months: planMonths, plan_duration_days: planMonths * 30, amount: amountPaid, currency: "NGN",
-      order_reference: order_reference, paystack_ref: reference, status: "paid", delivery_status: isMedal ? "delivered" : "pending_login",
+      order_reference: order_reference, paystack_ref: reference, status: "paid", delivery_status: isMedal ? "delivered" : (metaType === "portfolio_purchase" ? "delivered" : "pending_login"),
       purchase_code_used: purchaseCodeUsed, purchase_code_owner_id: purchaseCodeOwnerId, reward_amount: 0, reward_status: "none"
     }).select().single();
 
