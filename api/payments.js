@@ -187,7 +187,7 @@ async function handleInitialize(req, res) {
       // Flatten categories to comma‑separated string
       categories: Array.isArray(plan.categories) ? plan.categories.join(",") : "",
       category: plan.category || null,
-      type: "capcut_order"
+      type: plan.category && plan.category.startsWith("portfolio") ? "portfolio_purchase" : "capcut_order"
     };
 
     console.log("[init] metadata:", JSON.stringify(metadata));
