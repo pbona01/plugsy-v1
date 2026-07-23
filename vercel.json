@@ -1,0 +1,33 @@
+{
+  "functions": {
+    "api/video.js": {
+      "maxDuration": 300
+    },
+    "api/payments.js": {
+      "maxDuration": 60
+    },
+    "api/misc.js": {
+      "maxDuration": 60
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/status?action=cleanup-expired",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/bookings?action=notify-expiring",
+      "schedule": "0 9 * * *"
+    }
+  ],
+  "rewrites": [
+    { "source": "/api/admin(.*)", "destination": "/api/misc?route=admin" },
+    { "source": "/api/bookings(.*)", "destination": "/api/misc?route=bookings" },
+    { "source": "/api/calls(.*)", "destination": "/api/misc?route=calls" },
+    { "source": "/api/categories(.*)", "destination": "/api/misc?route=categories" },
+    { "source": "/api/status(.*)", "destination": "/api/misc?route=status" },
+    { "source": "/api/purchase-code(.*)", "destination": "/api/misc?route=purchase-code" },
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

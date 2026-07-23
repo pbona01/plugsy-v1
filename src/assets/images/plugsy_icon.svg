@@ -1,0 +1,26 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" fill="#000000" />
+  <g transform="translate(0, -40)">
+    <!-- Prongs -->
+    <rect x="250" y="222" width="28" height="12" rx="4" fill="#ffffff" />
+    <rect x="250" y="246" width="28" height="12" rx="4" fill="#ffffff" />
+    
+    <!-- Plug Body and left sweeping stem -->
+    <path d="M 255 200 
+             L 215 200 
+             C 175 200, 165 240, 155 330 
+             C 180 285, 205 275, 255 275 
+             Z" fill="#ffffff" />
+
+    <!-- Outer P Curve -->
+    <path d="M 145 225 
+             C 145 130, 220 100, 310 130 
+             C 395 155, 420 260, 360 330 
+             C 325 375, 245 380, 195 355 
+             C 230 345, 265 345, 305 315 
+             C 355 280, 350 185, 285 170 
+             C 225 155, 170 180, 150 230 
+             Z" fill="#ffffff" />
+  </g>
+  <text x="256" y="440" font-family="system-ui, -apple-system, sans-serif" font-weight="600" font-size="64" fill="#ffffff" text-anchor="middle" letter-spacing="6">plugsy</text>
+</svg>

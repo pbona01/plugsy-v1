@@ -1,0 +1,53 @@
+{
+  "id": "/dashboard",
+  "name": "Plugsy",
+  "short_name": "Plugsy",
+  "description": "CapCut subscriptions and creative portfolios",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#EF4444",
+  "orientation": "portrait",
+  "prefer_related_applications": false,
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "https://res.cloudinary.com/doit6oaze/image/upload/v1783666216/icon-192_gxuh39.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://res.cloudinary.com/doit6oaze/image/upload/v1783666215/icon-512_coggae.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://res.cloudinary.com/doit6oaze/image/upload/v1783666215/icon-maskable-192_y3jp3u.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "https://res.cloudinary.com/doit6oaze/image/upload/v1783666215/icon-maskable-512_gi4py6.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "https://res.cloudinary.com/doit6oaze/image/upload/v1783667065/screenshot-wide_kzfnzn.png",
+      "sizes": "1366x661",
+      "type": "image/png",
+      "form_factor": "wide"
+    },
+    {
+      "src": "https://res.cloudinary.com/doit6oaze/image/upload/v1783667065/screenshot-mobile_b5kwlr.png",
+      "sizes": "540x1184",
+      "type": "image/png"
+    }
+  ]
+}

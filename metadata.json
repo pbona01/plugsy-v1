@@ -1,0 +1,10 @@
+{
+  "name": "Plugsy | Affordable Premium Digital Products",
+  "description": "Get premium digital subscriptions at the best rates in Nigeria.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
