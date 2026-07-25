@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js"
 import crypto from "crypto";
 import { CATEGORY_CONFIG, getCategoryConfig } from "../src/utils/categoryConfig.js";
+import { getPortfolioInitializationPause } from "./_portfolioPurchasePause.js";
 
 async function readBody(req) {
   if (req.rawBody) return req.rawBody.toString();
@@ -783,6 +784,11 @@ export default async function handler(req, res) {
 
   const urlObj = new URL(req.originalUrl || req.url, `http://${req.headers?.host || 'localhost'}`)
   const action = req.query?.action || urlObj.searchParams.get("action") || req.url.split("/").pop()?.split("?")[0]
+
+  const portfolioInitializationPause = getPortfolioInitializationPause(action)
+  if (portfolioInitializationPause) {
+    return res.status(503).json(portfolioInitializationPause)
+  }
   
   if (action === "delete-item") return await handleDeleteItem(req, res)
   if (action === "purchase") return await handlePurchase(req, res)

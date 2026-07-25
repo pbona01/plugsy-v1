@@ -1,5 +1,6 @@
 import { supabase } from "../lib/supabase";
 import { sendOrderToTelegram } from "../lib/notifications";
+import { executeMessageSendContract } from "../utils/messageSendContract";
 
 export const sendBroadcastSafely = async (channelName: string, eventName: string, payload: any = {}) => {
   console.log(`[broadcast-safely] attempting to send '${eventName}' to '${channelName}'`);
@@ -252,6 +253,8 @@ export const chatService = {
       let createdMsgId;
       let fullMessageObj: any = null;
 
+      return await executeMessageSendContract({
+        insert: async () => {
       if (
         payload.senderRole === "admin" ||
         payload.senderRole === "system" ||
@@ -263,7 +266,9 @@ export const chatService = {
           body: JSON.stringify({ collection: "messages", data: dbPayload }),
         });
         const resultData = await res.json();
-        if (resultData.error) throw new Error(resultData.error);
+        if (!res.ok || resultData.error) {
+          throw new Error(resultData.error || "Message insert failed");
+        }
         createdMsgId = resultData.id;
         fullMessageObj = { ...dbPayload, id: createdMsgId, created_at: new Date().toISOString() };
       } else {
@@ -277,11 +282,23 @@ export const chatService = {
         fullMessageObj = msg?.[0];
       }
 
-      const { data: chatData } = await supabase
+      if (!createdMsgId || !fullMessageObj) {
+        throw new Error("Message insert did not return a message ID");
+      }
+
+      return { createdMsgId, fullMessageObj };
+        },
+        getInsertedId: ({ createdMsgId }) => createdMsgId,
+        runPostInsertSideEffects: async ({
+          createdMsgId,
+          fullMessageObj,
+        }) => {
+      const { data: chatData, error: chatFetchError } = await supabase
         .from("chats")
         .select("chat_type, user_email, user_id")
         .eq("id", chatId)
         .maybeSingle();
+      if (chatFetchError) throw chatFetchError;
       const chatType = chatData?.chat_type || "support";
 
       // BROADCAST TO FIX REALTIME IF POSTGRES_CHANGES FAILS
@@ -490,15 +507,24 @@ export const chatService = {
           }),
         });
         const data = await res.json();
-        if (data.error) throw new Error(data.error);
+        if (!res.ok || data.error) {
+          throw new Error(data.error || "Chat summary update failed");
+        }
       } else {
-        await supabase.from("chats").update(updatePayload).eq("id", chatId);
+        const { error: summaryError } = await supabase
+          .from("chats")
+          .update(updatePayload)
+          .eq("id", chatId);
+        if (summaryError) throw summaryError;
       }
 
       // If user is sending a message (not an attachment), and not an admin/system message
       // we might want to log it for AI or just let the admin handle it.
 
-      return createdMsgId;
+        },
+        logPostInsertError: (message, error) =>
+          console.error(message, error),
+      });
     } catch (error) {
       throw error;
     }

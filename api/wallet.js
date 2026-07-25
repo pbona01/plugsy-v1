@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { getPortfolioPurchasePause } from "./_portfolioPurchasePause.js"
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -14,6 +15,12 @@ export default async function handler(req, res) {
   const action = req.query?.action || urlObj.searchParams.get("action") || req.url.split("/").pop()?.split("?")[0]
 
   if (action === "fund") {
+    return res.status(503).json({
+      success: false,
+      code: "WALLET_FUNDING_TEMPORARILY_PAUSED",
+      error: "Wallet deposits are temporarily paused while we complete an urgent balance-credit fix. No payment has been initiated."
+    })
+
     try {
       const { userId, userEmail, amount } = req.body
 
@@ -614,6 +621,11 @@ export default async function handler(req, res) {
       const { userId, userEmail, amount, purpose, purposeData } = req.body
       // purpose: "capcut_order" | "portfolio_purchase"
       // purposeData: whatever metadata that flow needs
+
+      const portfolioPurchasePause = getPortfolioPurchasePause(purpose)
+      if (portfolioPurchasePause) {
+        return res.status(503).json(portfolioPurchasePause)
+      }
 
       const { data: profile } = await supabase
         .from("profiles")

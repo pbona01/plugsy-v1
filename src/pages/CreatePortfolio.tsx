@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useUser } from "@clerk/clerk-react";
 import { Helmet } from "react-helmet-async";
@@ -20,6 +20,11 @@ import { SEO } from "../components/seo/SEO";
 import { showToast } from "../components/Toast";
 import PreviewModal from "../components/verification/PreviewModal";
 import { PaymentModeBanner } from "../components/PaymentModeBanner";
+import {
+  getPortfolioInitializationPause,
+  PORTFOLIO_PURCHASE_PAUSE_CODE,
+  PORTFOLIO_PURCHASE_PAUSE_MESSAGE,
+} from "../../api/_portfolioPurchasePause.js";
 
 export interface PairedCategory {
   id: string;
@@ -136,6 +141,7 @@ export function CreatePortfolio() {
   const { isPortfolioUnlocked } = usePortfolioAccess();
   
   const [loading, setLoading] = useState<string | null>(null);
+  const paymentInFlightRef = useRef(false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedPairId, setSelectedPairId] = useState<string | null>(null);
   const [selectedOptionIndex, setSelectedOptionIndex] = useState<number>(2);
@@ -238,7 +244,21 @@ export function CreatePortfolio() {
   };
   
   const initiatePayment = async () => {
-    if (selectedCategories.length === 0 || !user) return;
+    if (
+      selectedCategories.length === 0 ||
+      !user ||
+      paymentInFlightRef.current
+    ) {
+      return;
+    }
+    paymentInFlightRef.current = true;
+
+    if (getPortfolioInitializationPause("purchase")) {
+      showToast(PORTFOLIO_PURCHASE_PAUSE_MESSAGE, "error");
+      paymentInFlightRef.current = false;
+      return;
+    }
+
     setLoading("payment");
     
     // Trigger confetti
@@ -279,6 +299,12 @@ export function CreatePortfolio() {
         });
         const walletData = await walletRes.json();
         
+        if (
+          walletData.code === PORTFOLIO_PURCHASE_PAUSE_CODE
+        ) {
+          throw new Error(PORTFOLIO_PURCHASE_PAUSE_MESSAGE);
+        }
+
         if (!walletData.success) {
           throw new Error(walletData.error || "Failed to deduct from wallet.");
         }
@@ -321,10 +347,13 @@ export function CreatePortfolio() {
       
       if (data.authorization_url) {
         window.location.href = data.authorization_url;
+        return;
       }
+      throw new Error("Payment initialization failed");
     } catch (e: any) {
       console.error(e);
       showToast(e.message, "error");
+      paymentInFlightRef.current = false;
       setLoading(null);
     }
   };

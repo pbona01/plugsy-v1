@@ -33,6 +33,9 @@ import {
 import BankAccountForm from "@/components/wallet/BankAccountForm";
 import SendMoneyModal from "@/components/wallet/SendMoneyModal";
 
+const WALLET_FUNDING_PAUSED_MESSAGE =
+  "Wallet deposits are temporarily paused while we complete an urgent balance-credit fix. No payment has been initiated.";
+
 const getWithdrawalFee = (amount: number): number => {
   const amt = Number(amount) || 0;
   if (amt < 1000) return 25;
@@ -412,6 +415,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
 
   const handleFundWallet = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (isFunding) return;
     console.log("[fund] button clicked, amount:", fundAmount);
 
     const amount = Number(fundAmount);
@@ -457,6 +461,12 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
       }
 
       console.log("[fund] parsed data:", data);
+
+      if (data.code === "WALLET_FUNDING_TEMPORARILY_PAUSED") {
+        setFundError(WALLET_FUNDING_PAUSED_MESSAGE);
+        setIsFunding(false);
+        return;
+      }
 
       if (!data.success) {
         console.error("[fund] API returned error:", data.error);

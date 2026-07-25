@@ -39,6 +39,12 @@ import { Logo } from "../components/ui/Logo";
 import { LiquidGlass } from "../components/ui/LiquidGlass";
 import { VoiceNotePlayer } from "../components/chat/VoiceNotePlayer";
 import { useVoiceRecorder } from "../hooks/useVoiceRecorder";
+import {
+  filterSupportChatRows,
+  mergeSupportChatMessages,
+  markMessageFailed,
+  markMessageSent,
+} from "../utils/supportChatMessages";
 
 const getCleanMessageText = (content: string | null): string => {
   if (!content) return "";
@@ -187,56 +193,78 @@ export default function Chat() {
     }, 2000);
   };
 
+  const persistOptimisticMessage = async (optimisticMsg: ChatMessage) => {
+    if (!chat?.id || !optimisticMsg.id) return;
 
-  // Need a ref that always has latest messages for the
-  // closure inside setInterval to read correctly:
-  const messagesRef = useRef<ChatMessage[]>([]);
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === optimisticMsg.id
+          ? { ...message, status: "pending" }
+          : message,
+      ),
+    );
 
-  useEffect(() => {
-    if (!chat?.id && !userId) return;
+    try {
+      await setSupabaseAuth(getToken, true);
+      const insertedId = await chatService.sendMessage(
+        chat.id,
+        {
+          senderRole: "user",
+          message: optimisticMsg.message,
+          senderId: optimisticMsg.senderId || userId || "",
+          senderName: optimisticMsg.senderName || user?.fullName || "Customer",
+          orderId: orderId || undefined,
+          userId: userId || undefined,
+          attachmentUrl: optimisticMsg.attachmentUrl,
+          attachmentType: optimisticMsg.attachmentType,
+          messageType: optimisticMsg.messageType,
+          audioUrl: optimisticMsg.audioUrl,
+        },
+        getToken,
+      );
 
-    const pollInterval = setInterval(async () => {
-      const lastMsg = messagesRef.current[messagesRef.current.length - 1];
-      
-      let query = supabase
-        .from("messages")
-        .select("*")
-        .order("created_at", { ascending: true });
+      const isTextMessage =
+        !optimisticMsg.attachmentUrl && !optimisticMsg.audioUrl;
 
-      if (chat?.id) {
-        query = query.eq("chat_id", chat?.id);
-      } else {
-        query = query.eq("user_id", userId);
+      setMessages((prev) =>
+        markMessageSent(prev, optimisticMsg.id!, insertedId),
+      );
+
+      if (isTextMessage) {
+        Promise.resolve()
+          .then(() => getToken())
+          .then((token) =>
+            fetch("/api/chat/alert", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                message: optimisticMsg.message,
+                email:
+                  user?.primaryEmailAddress?.emailAddress || "Unknown User",
+                userId,
+              }),
+            }),
+          )
+          .catch((error) =>
+            console.error("Telegram alert failed:", error),
+          );
+      }
+    } catch (error) {
+      console.error("Failed to send message:", error);
+      setMessages((prev) => markMessageFailed(prev, optimisticMsg.id!));
+
+      if (optimisticMsg.message) {
+        setInputText((current) => current || optimisticMsg.message);
       }
 
-      if (lastMsg?.created_at) {
-        query = query.gt("created_at", lastMsg.created_at);
-      }
-
-      try {
-        const { data } = await query;
-
-        if (data && data.length > 0) {
-          console.log("[polling] found new messages:", data.length);
-          setMessages(prev => {
-            const existingIds = new Set(prev.map(m => m.id));
-            const newOnes = data.filter(m => !existingIds.has(m.id)) as ChatMessage[];
-            return newOnes.length > 0 ? [...prev, ...newOnes] : prev;
-          });
-          setTimeout(() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-          }, 100);
-        }
-      } catch (err) {
-        console.error("[polling] error:", err);
-      }
-    }, 4000);
-
-    return () => clearInterval(pollInterval);
-  }, [chat?.id, userId]);
+      toast.error("Message could not be sent. Tap to retry.", {
+        id: `support-message-send-${optimisticMsg.id}`,
+      });
+    }
+  };
 
   // Audio Recording
   const { isRecording, duration, startRecording, stopRecording, cancelRecording } = useVoiceRecorder();
@@ -270,34 +298,11 @@ export default function Chat() {
         status: "pending",
       };
       setMessages((prev) => [...prev, optimisticFileMsg]);
-
-      await setSupabaseAuth(getToken, true);
-      const insertedId = await chatService.sendMessage(
-        chat.id,
-        {
-          senderRole: "user",
-          message: "",
-          senderId: userId || "",
-          senderName: user?.fullName || "Customer",
-          orderId: orderId || undefined,
-          userId: userId || undefined,
-          messageType: "audio",
-          audioUrl: audioUrl,
-        },
-        getToken,
-      );
-
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === optimisticFileMsg.id
-            ? { ...m, id: insertedId, status: "sent" }
-            : m
-        )
-      );
+      await persistOptimisticMessage(optimisticFileMsg);
 
     } catch (e) {
       console.error(e);
-      toast.error('Failed to send voice note');
+      toast.error("Failed to upload voice note");
     } finally {
       setUploading(false);
       setUploadProgress(0);
@@ -395,19 +400,26 @@ export default function Chat() {
   useEffect(() => {
     if (!chat?.id) return;
 
-    let pollingInterval: NodeJS.Timeout;
-
     const fetchMessages = async () => {
-      const userEmail = user?.primaryEmailAddress?.emailAddress;
-      const { data } = await supabase
-        .from("messages")
-        .select("*")
-        .or(`user_id.eq.${userId},user_email.eq.${userEmail}`)
-        .order("created_at", { ascending: true });
+      try {
+        const { data, error } = await supabase
+          .from("messages")
+          .select("*")
+          .eq("chat_id", chat.id)
+          .order("created_at", { ascending: true });
 
-      if (data) {
+        if (error) {
+          console.error("[support-chat] failed to fetch messages:", error);
+          toast.error("Messages could not be loaded. Please try again.", {
+            id: "support-chat-history-error",
+          });
+          return;
+        }
+
+        const chatRows = filterSupportChatRows(data || [], chat.id);
+
         // Map Supabase columns to ChatMessage interface
-        const msgs = data.map((d: any) => ({
+        const msgs = chatRows.map((d: any) => ({
           ...d,
           chatId: d.chat_id,
           senderId: d.sender_id,
@@ -427,51 +439,60 @@ export default function Chat() {
         }));
 
         setMessages((prev) => {
-          const optimisticMsgs = prev.filter((m) => m.status === "pending");
-          const mergedMsgs = [...msgs];
-
-          optimisticMsgs.forEach((opt) => {
-            const alreadyInDb = mergedMsgs.some(
-              (dbMsg) =>
-                dbMsg.senderRole === opt.senderRole &&
-                dbMsg.message === opt.message &&
-                Math.abs(dbMsg.createdAt - opt.createdAt) < 5000,
+          const optimisticMsgs = prev.filter(
+            (message) =>
+              message.chatId === chat.id &&
+              (message.status === "pending" || message.status === "failed"),
+          );
+          const optimisticMatches = (dbMsg: ChatMessage) =>
+            optimisticMsgs.some(
+              (optimisticMsg) =>
+                dbMsg.senderRole === optimisticMsg.senderRole &&
+                dbMsg.message === optimisticMsg.message &&
+                Math.abs(dbMsg.createdAt - optimisticMsg.createdAt) < 5000,
             );
-            if (!alreadyInDb) {
-              mergedMsgs.push(opt);
-            }
-          });
-
-          mergedMsgs.sort((a, b) => a.createdAt - b.createdAt);
+          const mergedMessages = mergeSupportChatMessages(
+            msgs.filter((dbMsg) => !optimisticMatches(dbMsg)),
+            optimisticMsgs,
+          );
 
           // Prevent excessive renders
           if (
-            mergedMsgs.length !== prev.length ||
-            (mergedMsgs.length > 0 &&
-              mergedMsgs[mergedMsgs.length - 1].id !== prev[prev.length - 1].id)
+            mergedMessages.length !== prev.length ||
+            mergedMessages.some(
+              (message, index) =>
+                message.id !== prev[index]?.id ||
+                message.status !== prev[index]?.status,
+            )
           ) {
-            return mergedMsgs;
+            return mergedMessages;
           }
           return prev;
         });
 
-        // Mark unread messages as read for this user
+        // Mark only messages in this chat that were not sent by this user.
         if (userId) {
-          supabase
+          const { error: readError } = await supabase
             .from("messages")
             .update({ read_by_user: true })
-            .eq("user_id", String(userId))
+            .eq("chat_id", chat.id)
             .eq("read_by_user", false)
-            .then(({ error }) => {
-              if (error)
-                console.error("Error marking messages as read:", error);
-            });
+            .or(`sender_id.is.null,sender_id.neq.${String(userId)}`);
+
+          if (readError) {
+            console.error("Error marking messages as read:", readError);
+          }
         }
+      } catch (error) {
+        console.error("[support-chat] failed to fetch messages:", error);
+        toast.error("Messages could not be loaded. Please try again.", {
+          id: "support-chat-history-error",
+        });
       }
     };
 
     fetchMessages();
-    pollingInterval = setInterval(fetchMessages, 5000); 
+    pollingRef.current = setInterval(fetchMessages, 5000);
 
     // Visibility change handler
     const handleVisibilityChange = () => {
@@ -512,6 +533,8 @@ export default function Chat() {
           (payload) => {
             console.log("[realtime] NEW MESSAGE:", payload.new);
             const d = payload.new;
+            if (d.chat_id !== chatId) return;
+
             const newMsg = {
               ...d,
               chatId: d.chat_id,
@@ -532,7 +555,6 @@ export default function Chat() {
             } as any;
     
             setMessages(prev => {
-              if (prev.some(m => m.id === newMsg.id)) return prev;
               const isOptimisticAlready = prev.some(
                 (opt) =>
                   opt.status === "pending" &&
@@ -540,8 +562,10 @@ export default function Chat() {
                   opt.message === newMsg.message &&
                   Math.abs(opt.createdAt - newMsg.createdAt) < 5000,
               );
-              if (isOptimisticAlready) return prev;
-              return [...prev, newMsg];
+              if (isOptimisticAlready) {
+                return mergeSupportChatMessages(prev);
+              }
+              return mergeSupportChatMessages(prev, [newMsg]);
             });
     
             requestAnimationFrame(() => {
@@ -583,9 +607,11 @@ export default function Chat() {
   
     return () => {
       console.log("[realtime] cleanup");
-      clearInterval(pollingInterval);
       if (channel) supabase.removeChannel(channel);
-      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("online", handleOnline);
     };
@@ -716,49 +742,7 @@ export default function Chat() {
     updateTypingStatus(false);
     isTypingRef.current = false;
 
-    try {
-      // Force fresh token to fix 401
-      await setSupabaseAuth(getToken, true);
-
-      // 2. Second, save user message to database
-      const insertedId = await chatService.sendMessage(
-        chat.id,
-        {
-          senderRole: "user",
-          message: msg,
-          senderId: userId || "",
-          senderName: user?.fullName || "Customer",
-          orderId: orderId || undefined,
-          userId: userId || undefined,
-        },
-        getToken,
-      );
-
-      // 3. Ping Telegram Admin Alert
-      fetch("/api/chat/alert", {
-         method: "POST",
-         headers: {
-           "Content-Type": "application/json",
-           Authorization: `Bearer ${await getToken()}`,
-         },
-         body: JSON.stringify({
-           message: msg,
-           email: user?.primaryEmailAddress?.emailAddress || "Unknown User",
-           userId: userId,
-         }),
-      }).catch((err) => console.error("Telegram alert failed:", err));
-
-      // Update optimistic message with real ID and change status to sent
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === optimisticMsg.id
-            ? { ...m, id: insertedId, status: "sent" }
-            : m
-        )
-      );
-    } catch (error) {
-      console.error("Failed to send message:", error);
-    }
+    await persistOptimisticMessage(optimisticMsg);
   };
 
   if (loading) {
@@ -964,13 +948,20 @@ export default function Chat() {
                                     },
                                   )
                                 : ""}
-                              {isUser && msg.status !== "pending" && (
+                              {isUser &&
+                                msg.status !== "pending" &&
+                                msg.status !== "failed" && (
                                 <span className="text-[10px] text-blue-400 font-bold">
                                   ✓
                                 </span>
                               )}
                               {isUser && msg.status === "pending" && (
                                 <Clock size={10} className="animate-pulse text-white/40" />
+                              )}
+                              {isUser && msg.status === "failed" && (
+                                <span className="text-[9px] font-bold text-red-400">
+                                  Failed
+                                </span>
                               )}
                             </span>
                           </div>
@@ -1099,6 +1090,15 @@ export default function Chat() {
                             )}
                           </div>
                         )}
+                        {isUser && msg.status === "failed" && (
+                          <button
+                            type="button"
+                            onClick={() => persistOptimisticMessage(msg)}
+                            className="rounded-full border border-red-400/40 bg-red-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-red-400 transition-colors hover:bg-red-500/20"
+                          >
+                            Retry
+                          </button>
+                        )}
                       </div>
                     </div>
                   </motion.div>
@@ -1197,34 +1197,7 @@ export default function Chat() {
                           setMessages((prev) => [...prev, optimisticFileMsg]);
                           setInputText("");
 
-                          try {
-                            await setSupabaseAuth(getToken, true);
-                            const insertedId = await chatService.sendMessage(
-                              chat.id,
-                              {
-                                senderRole: "user",
-                                message: optimisticFileMsg.message,
-                                senderId: optimisticFileMsg.senderId,
-                                senderName: optimisticFileMsg.senderName,
-                                orderId: orderId || undefined,
-                                userId: userId || undefined,
-                                attachmentUrl: cloudinaryUrl,
-                                attachmentType:
-                                  optimisticFileMsg.attachmentType,
-                              },
-                              getToken,
-                            );
-
-                            setMessages((prev) =>
-                              prev.map((m) =>
-                                m.id === optimisticFileMsg.id
-                                  ? { ...m, id: insertedId, status: "sent" }
-                                  : m
-                              )
-                            );
-                          } catch (err) {
-                            console.error(err);
-                          }
+                          await persistOptimisticMessage(optimisticFileMsg);
                         }
                       } catch (err) {
                         console.error("Upload failed", err);
