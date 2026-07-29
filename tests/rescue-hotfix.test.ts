@@ -165,46 +165,84 @@ test("message insert failures reject, while post-insert failures still mark the 
   assert.equal(sent[0].status, "sent");
 });
 
-test("wallet funding is paused before identity, Flutterwave, profile, or transaction work", () => {
+test("wallet funding remains paused by default before identity, Flutterwave, or transaction work", () => {
   const walletSource = readSource("../api/wallet.js");
-  const fundStart = walletSource.indexOf('if (action === "fund")');
+  const helperSource = readSource(
+    "../api/_walletFundingWebhook.js",
+  );
+
+  const fundStart = walletSource.indexOf(
+    'if (action === "fund")',
+  );
   const fundEnd = walletSource.indexOf(
     'if (action === "webhook")',
     fundStart,
   );
-  const fundBlock = walletSource.slice(fundStart, fundEnd);
-  const pauseIndex = fundBlock.indexOf(
-    'code: "WALLET_FUNDING_TEMPORARILY_PAUSED"',
-  );
-  const identityIndex = fundBlock.indexOf(
-    "const { userId, userEmail, amount } = req.body",
-  );
-  const flutterwaveIndex = fundBlock.indexOf(
-    '"https://api.flutterwave.com/v3/payments"',
-  );
-  const transactionIndex = fundBlock.indexOf(
-    'supabase.from("wallet_transactions")',
+  const fundBlock = walletSource.slice(
+    fundStart,
+    fundEnd,
   );
 
   assert.notEqual(fundStart, -1);
-  assert.notEqual(pauseIndex, -1);
   assert.match(
     fundBlock,
-    /return res\.status\(503\)\.json\(\{[\s\S]*success: false,[\s\S]*code: "WALLET_FUNDING_TEMPORARILY_PAUSED"/,
+    /return initializeWalletFunding\(\{ req, res, supabase \}\)/,
   );
-  assert.match(
-    fundBlock,
-    /Wallet deposits are temporarily paused while we complete an urgent balance-credit fix\. No payment has been initiated\./,
-  );
-  assert.ok(pauseIndex < identityIndex);
-  assert.ok(pauseIndex < flutterwaveIndex);
-  assert.ok(pauseIndex < transactionIndex);
-  assert.doesNotMatch(
-    fundBlock.slice(0, pauseIndex),
-    /req\.body|FLUTTERWAVE|supabase|wallet_transactions|profiles/,
-  );
-});
 
+  const initializerStart = helperSource.indexOf(
+    "export async function initializeWalletFunding",
+  );
+  const initializerEnd = helperSource.indexOf(
+    "export async function processWalletFundingWebhook",
+    initializerStart,
+  );
+  const initializer = helperSource.slice(
+    initializerStart,
+    initializerEnd,
+  );
+
+  const flagIndex = initializer.indexOf(
+    "WALLET_FUNDING_V2_ENABLED",
+  );
+  const pauseIndex = initializer.indexOf(
+    "FUNDING_PAUSE_CODE",
+  );
+  const identityIndex = initializer.indexOf(
+    "requireVerifiedClerkUser(req, res)",
+  );
+  const transactionIndex = initializer.indexOf(
+    '.from("wallet_transactions")',
+  );
+  const flutterwaveIndex = initializer.indexOf(
+    '"https://api.flutterwave.com/v3/payments"',
+  );
+
+  assert.notEqual(initializerStart, -1);
+  assert.notEqual(flagIndex, -1);
+  assert.notEqual(pauseIndex, -1);
+  assert.notEqual(identityIndex, -1);
+  assert.notEqual(transactionIndex, -1);
+  assert.notEqual(flutterwaveIndex, -1);
+
+  assert.match(
+    initializer,
+    /WALLET_FUNDING_V2_ENABLED[\s\S]*!==[\s\S]*"true"[\s\S]*return res\.status\(503\)/,
+  );
+  assert.match(
+    helperSource,
+    /const FUNDING_PAUSE_MESSAGE[\s\S]*Wallet deposits are temporarily paused while we complete an urgent balance-credit fix\. No payment has been initiated\./,
+  );
+
+  assert.match(
+    initializer,
+    /error: FUNDING_PAUSE_MESSAGE/,
+  );
+
+  assert.ok(flagIndex < identityIndex);
+  assert.ok(pauseIndex < identityIndex);
+  assert.ok(pauseIndex < transactionIndex);
+  assert.ok(pauseIndex < flutterwaveIndex);
+});
 test("wallet funding UI shows the exact pause and blocks repeated active submissions", () => {
   const walletPage = readSource("../src/pages/Wallet.tsx");
   const handlerStart = walletPage.indexOf("const handleFundWallet = async");
@@ -231,79 +269,30 @@ test("wallet funding UI shows the exact pause and blocks repeated active submiss
   assert.match(walletPage, /disabled=\{isFunding \|\| !fundAmount\}/);
 });
 
-test("portfolio wallet payment remains paused before wallet reads or debits", () => {
-  assert.deepEqual(getPortfolioPurchasePause("portfolio_purchase"), {
-    success: false,
-    code: PORTFOLIO_PURCHASE_PAUSE_CODE,
-    error: PORTFOLIO_PURCHASE_PAUSE_MESSAGE,
-  });
-  assert.equal(getPortfolioPurchasePause("capcut_order"), null);
+test("portfolio wallet payment uses authenticated atomic entitlement purchase", () => {
+  const portfolioApi = readSource("../api/portfolio.js");
+  const commerce = readSource("../api/_walletCommerce.js");
+  const createPortfolioPage = readSource("../src/pages/CreatePortfolio.tsx");
 
-  const walletSource = readSource("../api/wallet.js");
-  const payStart = walletSource.indexOf(
-    'if (action === "pay-with-wallet")',
-  );
-  const payEnd = walletSource.indexOf(
-    'if (action === "list-banks")',
-    payStart,
-  );
-  const payWithWalletBlock = walletSource.slice(payStart, payEnd);
-  const guardIndex = payWithWalletBlock.indexOf(
-    "getPortfolioPurchasePause(purpose)",
-  );
-  const profileIndex = payWithWalletBlock.indexOf(
-    'supabase\n        .from("profiles")',
-  );
-
-  assert.notEqual(guardIndex, -1);
-  assert.notEqual(profileIndex, -1);
-  assert.ok(guardIndex < profileIndex);
+  assert.match(portfolioApi, /handlePortfolioWalletPurchase/);
+  assert.match(commerce, /purchase_portfolio_wallet_v2/);
+  assert.match(commerce, /PORTFOLIO_ENTITLEMENT_INVALID/);
+  assert.match(createPortfolioPage, /\/api\/portfolio\?action=purchase/);
+  assert.match(createPortfolioPage, /Authorization: `Bearer \$\{token\}`/);
+  assert.doesNotMatch(createPortfolioPage, /action=pay-with-wallet/);
 });
 
-test("direct portfolio initialization stays paused without blocking verify or webhook", () => {
-  assert.deepEqual(getPortfolioInitializationPause("purchase"), {
-    success: false,
-    code: PORTFOLIO_PURCHASE_PAUSE_CODE,
-    error: PORTFOLIO_PURCHASE_PAUSE_MESSAGE,
-  });
-  assert.equal(getPortfolioInitializationPause("verify"), null);
-  assert.equal(getPortfolioInitializationPause("webhook"), null);
-
+test("portfolio purchase route is reachable while provider and split routes stay retired", () => {
   const portfolioApi = readSource("../api/portfolio.js");
   const apiHandler = portfolioApi.slice(
     portfolioApi.indexOf("export default async function handler"),
   );
-  const apiGuardIndex = apiHandler.indexOf(
-    "getPortfolioInitializationPause(action)",
-  );
   const purchaseDispatchIndex = apiHandler.indexOf(
-    'if (action === "purchase") return await handlePurchase',
+    'if (action === "purchase")',
   );
-  const createPortfolioPage = readSource("../src/pages/CreatePortfolio.tsx");
-  const initiateStart = createPortfolioPage.indexOf(
-    "const initiatePayment = async",
-  );
-  const initiateEnd = createPortfolioPage.indexOf(
-    "\n  if (onboardingCategory)",
-    initiateStart,
-  );
-  const initiatePayment = createPortfolioPage.slice(
-    initiateStart,
-    initiateEnd,
-  );
-  const browserGuardIndex = initiatePayment.indexOf(
-    'getPortfolioInitializationPause("purchase")',
-  );
-  const walletRequestIndex = initiatePayment.indexOf(
-    'fetch("/api/wallet?action=pay-with-wallet"',
-  );
-  const providerRequestIndex = initiatePayment.indexOf("fetch(apiUrl");
-
-  assert.ok(apiGuardIndex >= 0);
-  assert.ok(apiGuardIndex < purchaseDispatchIndex);
-  assert.ok(browserGuardIndex >= 0);
-  assert.ok(browserGuardIndex < walletRequestIndex);
-  assert.ok(browserGuardIndex < providerRequestIndex);
+  assert.ok(purchaseDispatchIndex >= 0);
+  assert.match(apiHandler, /SPLIT_PORTFOLIO_PURCHASE_RETIRED/);
+  assert.match(apiHandler, /PORTFOLIO_PROVIDER_WEBHOOK_RETIRED/);
   assert.match(apiHandler, /if \(action === "webhook"\)/);
   assert.match(apiHandler, /if \(action === "verify"\)/);
 });

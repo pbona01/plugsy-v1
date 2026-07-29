@@ -7,5 +7,6 @@ coverage/
 .env*
 !.env.example
 *.txt
-scripts/
+scripts/*
+!scripts/wallet-funding-v2-staging.mjs
 temp/

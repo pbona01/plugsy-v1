@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase';
 export default function PaymentCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { isLoaded, userId } = useAuth();
+  const { isLoaded, userId, getToken } = useAuth();
   
   const [status, setStatus] = useState<'verifying' | 'success' | 'error'>('verifying');
   const [errorMessage, setErrorMessage] = useState('');
@@ -23,23 +23,19 @@ export default function PaymentCallback() {
 
     const verifyPayment = async () => {
       try {
+        const token = await getToken();
         const res = await fetch('/api/payments?action=verify', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({ reference })
         });
         
-        const text = await res.text();
-        console.log("[callback] raw:", text);
+        const data = await res.json();
         
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          throw new Error("Invalid server response format");
-        }
-        
-        if (data.success || data.alreadyProcessed) {
+        if (res.ok && data.success && !data.pending) {
           setStatus('success');
           
           const order = data.order;
@@ -54,17 +50,17 @@ export default function PaymentCallback() {
           }, 2000);
         } else {
           setStatus('error');
-          setErrorMessage(data.error || "Payment verification failed");
+          setErrorMessage(data.error || (data.pending ? "Purchase is still pending." : "Payment verification failed"));
         }
       } catch (err: any) {
-        console.error("Verification connection error:", err);
+        console.error("Verification connection error");
         setStatus('error');
         setErrorMessage(err.message || "Network error. Please try again or contact support.");
       }
     };
     
     verifyPayment();
-  }, [isLoaded, reference, navigate, userId]);
+  }, [isLoaded, reference, navigate, userId, getToken]);
   
   return (
     <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">

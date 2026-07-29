@@ -10,12 +10,11 @@ import {
   AlertCircle,
   CheckCircle2,
   Wallet,
-  CreditCard,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { toast } from "react-hot-toast";
 import { LiquidGlass } from "../components/ui/LiquidGlass";
-import { PaymentModeBanner } from "../components/PaymentModeBanner";
+import { getStableIdempotencyKey, clearStableIdempotencyKey } from "../utils/idempotency";
 
 export default function CheckoutConfirm() {
   const [searchParams] = useSearchParams();
@@ -24,8 +23,6 @@ export default function CheckoutConfirm() {
   const { getToken } = useAuth();
   const { user } = useUser();
   const userId = user?.id;
-
-  console.log("[checkout] userId:", userId);
 
   const [plan, setPlan] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -111,15 +108,17 @@ export default function CheckoutConfirm() {
       // Step 1: Validate against the API
       const res = await fetch("/api/purchase-code?action=validate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: code.toUpperCase(), userId: userId }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${await getToken()}`,
+        },
+        body: JSON.stringify({ code: code.toUpperCase() }),
       });
 
       // If code in state has changed since request started, ignore results
       if (purchaseCode.trim().toUpperCase() !== code.toUpperCase()) return;
 
       const text = await res.text();
-      console.log("raw /validate response:", text);
       let result;
       try {
         result = JSON.parse(text);
@@ -157,7 +156,7 @@ export default function CheckoutConfirm() {
         );
       }
     } catch (err: any) {
-      console.error("Code scanning error:", err);
+      console.error("Code scanning error");
       // Fallback to RPC if API route fails
       try {
         const { data, error } = await supabase.rpc("get_code_owner", {
@@ -237,10 +236,8 @@ export default function CheckoutConfirm() {
   };
 
   const handleContinue = async () => {
-    // Safety: Ensure email is not null
-    const userEmail = user?.primaryEmailAddress?.emailAddress;
-    if (!userEmail) {
-      toast.error("Verified email required to proceed.");
+    if (!userId) {
+      toast.error("Please login first.");
       return;
     }
 
@@ -249,119 +246,40 @@ export default function CheckoutConfirm() {
 
     try {
       const token = await getToken();
-
-      const priceInfo = getDisplayPrice(plan);
-
-      const payload = {
-        userId: userId,
-        userEmail: user?.primaryEmailAddress?.emailAddress,
-        fullName:
-          user?.fullName ||
-          (user?.firstName ? user.firstName + " " + user.lastName : ""),
-        planId: plan.id,
-        purchaseCodeUsed:
-          scanResult.status === "valid" ? purchaseCode.trim() : null,
-        purchaseCodeOwnerId:
-          scanResult.status === "valid" ? scanResult.ownerId : null,
-        purchaseCodeOwnerName:
-          scanResult.status === "valid" ? scanResult.ownerName : null,
-        actualPrice: priceInfo.displayPrice,
-        originalPrice: priceInfo.originalPrice,
-        hasDiscount: priceInfo.hasDiscount,
-        planCategory: plan.category,
-      };
-
-      console.log(
-        "PURCHASE CODE BEING SENT:",
-        payload.purchaseCodeUsed,
-        payload.purchaseCodeOwnerId,
-      );
-
-      if (useWallet) {
-        // Step 1: Debit Wallet via API
-        const walletRes = await fetch("/api/wallet?action=pay-with-wallet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId,
-            userEmail: payload.userEmail,
-            amount: priceInfo.displayPrice,
-            purpose: plan.name || "Plugsy Plan",
-            purposeData: {
-              planId: plan.id,
-              productName: plan.name,
-              category: plan.category
-            }
-          })
-        });
-        const walletData = await walletRes.json();
-        
-        if (!walletData.success) {
-          throw new Error(walletData.error || "Failed to deduct from wallet.");
-        }
-
-        // Step 2: Create order internal flow
-        const createRes = await fetch("/api/payments?action=create-from-wallet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: payload.userId,
-            userEmail: payload.userEmail,
-            fullName: payload.fullName,
-            productName: plan.name || plan.durationLabel || "Plugsy Plan",
-            planCategory: plan.category,
-            planDuration: plan.durationLabel || null,
-            planMonths: plan.duration_months || 1,
-            amountPaid: priceInfo.displayPrice,
-            purchaseCodeUsed: payload.purchaseCodeUsed,
-            purchaseCodeOwnerId: payload.purchaseCodeOwnerId,
-            reference: walletData.reference,
-          })
-        });
-        
-        const createData = await createRes.json();
-        if (!createData.success) {
-          throw new Error("Payment succeeded but order creation failed. Please contact support.");
-        }
-        
-        toast.success("Order successful! Redirecting...", { id: loadingToast });
-        navigate("/payment/callback?reference=" + walletData.reference);
-        return;
-      }
-
-      // Step 1: Initialize Payment (Server creates metadata session)
-      const res = await fetch("/api/payments?action=initialize", {
+      const key = getStableIdempotencyKey(`product:${plan.id}`);
+      const res = await fetch("/api/payments?action=purchase", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
+          "Idempotency-Key": key,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          planId: plan.id,
+          purchaseCode: scanResult.status === "valid" ? purchaseCode.trim() : undefined,
+        }),
       });
-
-      const text = await res.text();
-      console.log("raw response:", text);
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        throw new Error("Invalid response from server: " + text.slice(0, 50));
-      }
+      const data = await res.json();
 
       if (!res.ok || !data.success) {
-        throw new Error(
-          data.error || "Failed to initialize payment session with server.",
-        );
+        throw new Error(data.error || "Wallet purchase failed.");
       }
-
-      // Step 2: Handle Redirection
-      console.log("[CHECKOUT] Redirecting to:", data.authorization_url);
-      if (data.authorization_url) {
-        toast.success("Redirecting to Flutterwave...", { id: loadingToast });
-        window.location.href = data.authorization_url;
-      } else {
-        throw new Error("Unable to create payment session.");
+      clearStableIdempotencyKey(`product:${plan.id}`);
+      toast.success(
+        data.pending
+          ? "Purchase recorded. Login is required to deliver this product."
+          : "Purchase successful.",
+        { id: loadingToast },
+      );
+      if (data.pending) {
+        navigate("/chat");
+        return;
       }
+      if (data.medal?.number) {
+        navigate("/medals?success=medal");
+        return;
+      }
+      navigate(`/payment/callback?reference=${encodeURIComponent(data.reference)}`);
     } catch (err: any) {
       console.error("Checkout Error:", err);
       toast.error(err.message || "Failed to proceed to checkout.", {
@@ -538,31 +456,13 @@ export default function CheckoutConfirm() {
                           </div>
                         </button>
 
-                        {/* Flutterwave Direct Method */}
-                        <button
-                          type="button"
-                          onClick={() => setUseWallet(false)}
-                          className={`p-3.5 rounded-xl border text-left transition-all flex items-start gap-3 cursor-pointer ${
-                            !useWallet
-                              ? "border-brand-accent bg-brand-accent/10 text-brand-text"
-                              : "border-brand-border bg-brand-card/50 text-brand-text/60 hover:border-brand-border/80"
-                          }`}
-                        >
-                          <CreditCard className={`w-5 h-5 mt-0.5 shrink-0 ${!useWallet ? "text-brand-accent" : "text-brand-text/40"}`} />
-                          <div>
-                            <div className="text-xs font-bold uppercase tracking-wider">Card / Transfer</div>
-                            <div className="text-[10px] font-mono text-brand-text-secondary mt-0.5">
-                              Pay via Flutterwave
-                            </div>
-                          </div>
-                        </button>
                       </div>
                     </div>
 
                     {useWallet ? (
                       <div>
                         <button
-                          disabled={!canAfford || processing || isScanning}
+                          disabled={processing || isScanning}
                           onClick={handleContinue}
                           className="w-full py-4 px-6 rounded-xl font-bold text-sm uppercase tracking-wider text-white transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 border-none bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-900/20"
                         >
@@ -582,13 +482,6 @@ export default function CheckoutConfirm() {
                                 Top Up Wallet
                               </Link>
                               <span className="text-xs text-brand-text/30">•</span>
-                              <button
-                                type="button"
-                                onClick={() => setUseWallet(false)}
-                                className="text-xs font-bold text-brand-accent hover:underline uppercase tracking-wider bg-transparent border-0 cursor-pointer"
-                              >
-                                Pay via Flutterwave
-                              </button>
                             </div>
                           </div>
                         )}

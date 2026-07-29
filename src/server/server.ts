@@ -167,8 +167,6 @@ async function cleanDuplicatePortfolioOrders() {
     console.log("[Startup-Cleanup] Error on startup cleanup:", err.message);
   }
 }
-cleanDuplicatePortfolioOrders();
-
 const _filename = typeof __filename !== "undefined" ? __filename : "";
 const _dirname = typeof __dirname !== "undefined" ? __dirname : path.dirname(_filename);
 
@@ -667,6 +665,8 @@ async function startServer() {
     "/api/purchase-code/validate",
     ClerkExpressWithAuth(),
     async (req: any, res) => {
+      const handlerModule = await import("../../api-handlers/purchase-code.js");
+      return handlerModule.default(req, res);
       try {
         const { code } = req.body;
         const userId = req.auth?.userId;
@@ -985,6 +985,11 @@ async function startServer() {
     "/api/payments/initialize",
     ClerkExpressWithAuth(),
     async (req: any, res) => {
+      return res.status(410).json({
+        success: false,
+        code: "DIRECT_PRODUCT_PROVIDER_RETIRED",
+        error: "Product purchases must use the Plugsy Wallet.",
+      });
       const DIRECT_PAYSTACK_ENABLED = false;
       if (!DIRECT_PAYSTACK_ENABLED) {
         return res.status(403).json({
@@ -1183,6 +1188,8 @@ async function startServer() {
     "/api/payments/verify",
     ClerkExpressWithAuth(),
     async (req: any, res) => {
+      const handlerModule = await import("../../api/payments.js");
+      return handlerModule.default(req, res);
       const { reference } = req.body;
       if (!reference)
         return res.status(400).json({ error: "No reference provided" });
@@ -1215,6 +1222,7 @@ async function startServer() {
 
   // Paystack Callback (Redirect)
   app.get("/api/payments/callback", async (req, res) => {
+    return res.redirect("/dashboard?payment=failed");
     const { reference } = req.query;
     if (!reference || typeof reference !== "string")
       return res.redirect("/dashboard?payment=failed");
@@ -1230,7 +1238,7 @@ async function startServer() {
       );
 
       if (response.data.data.status === "success") {
-        await handleSuccessfulPayment(reference, response.data.data.metadata);
+        await handleSuccessfulPayment(String(reference), response.data.data.metadata);
         res.redirect("/portfolio?payment=success");
       } else {
         res.redirect("/dashboard?payment=failed");
@@ -1242,6 +1250,8 @@ async function startServer() {
 
   // Paystack Webhook
   app.post("/api/payments/webhook", async (req: any, res) => {
+    const handlerModule = await import("../../api/payments.js");
+    return handlerModule.default(req, res);
     try {
       const secret =
         process.env.PAYSTACK_WEBHOOK_SECRET ||

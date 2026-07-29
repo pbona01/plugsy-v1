@@ -1,8 +1,12 @@
 "use client";
 
 import React, { useState } from "react";
-import { useUser } from "@clerk/nextjs";
+import { useAuth, useUser } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
+import {
+  clearStableIdempotencyKey,
+  getStableIdempotencyKey,
+} from "../utils/idempotency";
 
 interface CheckoutButtonProps {
   planId: string;
@@ -18,6 +22,7 @@ export default function CheckoutButton({
   purchaseCodeOwnerName,
 }: CheckoutButtonProps) {
   const { user, isLoaded } = useUser();
+  const { getToken } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,50 +39,32 @@ export default function CheckoutButton({
     setLoading(true);
     setError(null);
 
-    const payload = {
-      userId: user?.id || null,
-      userEmail: userEmail,
-      fullName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || userEmail.split("@")[0],
-      planId,
-      purchaseCodeUsed,
-      purchaseCodeOwnerId,
-      purchaseCodeOwnerName,
-    };
-
-    console.log("[CheckoutButton] initiating with:", payload);
-
     try {
-      const res = await fetch("/api/payments?action=initialize", {
+      const token = await getToken();
+      const res = await fetch("/api/payments?action=purchase", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Notice we don't pass Authorization header because it's a public route 
-        // to prevent Clerk 405 error, but we pass the userId directly in the body
-        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "Idempotency-Key": getStableIdempotencyKey(`product:${planId}`),
+        },
+        body: JSON.stringify({
+          planId,
+          purchaseCode: purchaseCodeUsed,
+        }),
       });
 
-      const text = await res.text();
-      console.log("[CheckoutButton] raw response:", text);
+      const data = await res.json();
 
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (parseErr) {
-        console.error("Failed to parse JSON response:", parseErr);
-        setError("Invalid response from server. Check your console logs.");
-        setLoading(false);
-        return;
-      }
-
-      if (data.success && data.authorization_url) {
-        console.log("[CheckoutButton] Redirecting to:", data.authorization_url);
-        window.location.href = data.authorization_url;
+      if (res.ok && data.success) {
+        clearStableIdempotencyKey(`product:${planId}`);
+        window.location.href = `/payment/callback?reference=${encodeURIComponent(data.reference)}`;
       } else {
-        console.error("[CheckoutButton] Server returned error:", data.error);
         setError(data.error || "Failed to initialize payment.");
         setLoading(false);
       }
     } catch (e: any) {
-      console.error("[CheckoutButton] Network/Fetch Error:", e);
+      console.error("[CheckoutButton] request failed");
       setError(e?.message || "A network error occurred. Please try again.");
       setLoading(false);
     }

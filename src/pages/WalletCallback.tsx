@@ -1,14 +1,26 @@
 import React, { useEffect, useState } from 'react';
+import { useAuth } from '@clerk/clerk-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  XCircle,
+} from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 export const WalletCallback = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const [status, setStatus] = useState<'verifying' | 'success' | 'checking' | 'failed'>('checking');
-  
-  const reference = searchParams.get('reference');
+  const { getToken } = useAuth();
+
+  const [status, setStatus] = useState<
+    'checking' | 'verifying' | 'success' | 'pending' | 'failed'
+  >('checking');
+
+  const reference =
+    searchParams.get('tx_ref') ||
+    searchParams.get('reference');
 
   useEffect(() => {
     if (!reference) {
@@ -16,38 +28,57 @@ export const WalletCallback = () => {
       return;
     }
 
-    verifyTransaction();
+    void verifyTransaction();
   }, [reference]);
 
   const verifyTransaction = async () => {
     setStatus('verifying');
+
     try {
-      // Poll a few times to give webhook time to process
-      for (let i = 0; i < 5; i++) {
-        const res = await fetch('/api/wallet?action=verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reference })
-        });
-        
-        const data = await res.json();
-        
-        if (data.success && !data.pending) {
+      const token = await getToken();
+
+      if (!token) {
+        setStatus('failed');
+        toast.error('Your session expired. Please sign in again.');
+        return;
+      }
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const response = await fetch(
+          '/api/wallet?action=verify',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ reference }),
+          },
+        );
+
+        const data = await response.json();
+
+        if (data.success && data.pending === false) {
           setStatus('success');
           return;
         }
-        
-        // Wait 2 seconds before next poll
-        await new Promise(r => setTimeout(r, 2000));
+
+        if (data.pending === false) {
+          setStatus('failed');
+          return;
+        }
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, 2000),
+        );
       }
-      
-      // If we get here, it's still pending after 10 seconds
-      // We assume it might still be processing. 
-      setStatus('success');
-      toast.success('Payment received, wallet will be updated shortly.');
-      
-    } catch (err) {
-      console.error('Verify error:', err);
+
+      setStatus('pending');
+      toast.success(
+        'Payment received. Wallet crediting may still be processing.',
+      );
+    } catch (error) {
+      console.error('Verify error:', error);
       setStatus('failed');
     }
   };
@@ -55,19 +86,26 @@ export const WalletCallback = () => {
   return (
     <div className="min-h-screen pt-32 pb-12 px-6 flex items-center justify-center">
       <div className="max-w-md w-full bg-brand-surface border border-brand-border rounded-2xl p-8 text-center shadow-xl">
-        
         {status === 'verifying' || status === 'checking' ? (
           <div className="flex flex-col items-center">
             <Loader2 className="w-16 h-16 text-brand-accent animate-spin mb-6" />
-            <h2 className="text-2xl font-bold text-white mb-2">Verifying Payment...</h2>
-            <p className="text-brand-text-secondary">Please wait while we confirm your wallet top-up.</p>
+            <h2 className="text-2xl font-bold text-white mb-2">
+              Verifying Payment...
+            </h2>
+            <p className="text-brand-text-secondary">
+              Please wait while we confirm your wallet top-up.
+            </p>
           </div>
         ) : status === 'success' ? (
           <div className="flex flex-col items-center">
             <CheckCircle2 className="w-16 h-16 text-green-500 mb-6" />
-            <h2 className="text-2xl font-bold text-white mb-2">Funded Successfully</h2>
-            <p className="text-brand-text-secondary mb-8">Your wallet has been credited.</p>
-            
+            <h2 className="text-2xl font-bold text-white mb-2">
+              Funded Successfully
+            </h2>
+            <p className="text-brand-text-secondary mb-8">
+              Your wallet has been credited.
+            </p>
+
             <button
               onClick={() => navigate('/wallet')}
               className="w-full bg-brand-accent hover:bg-opacity-90 text-white font-bold py-3 px-6 rounded-xl transition-all"
@@ -75,12 +113,35 @@ export const WalletCallback = () => {
               Back to Wallet
             </button>
           </div>
+        ) : status === 'pending' ? (
+          <div className="flex flex-col items-center">
+            <AlertCircle className="w-16 h-16 text-amber-500 mb-6" />
+            <h2 className="text-2xl font-bold text-white mb-2">
+              Credit Processing
+            </h2>
+            <p className="text-brand-text-secondary mb-8">
+              Your payment may still be processing. Your wallet will only
+              show the funds after secure confirmation.
+            </p>
+
+            <button
+              onClick={() => navigate('/wallet')}
+              className="w-full bg-brand-accent hover:bg-opacity-90 text-white font-bold py-3 px-6 rounded-xl transition-all"
+            >
+              Check Wallet
+            </button>
+          </div>
         ) : (
           <div className="flex flex-col items-center">
             <XCircle className="w-16 h-16 text-red-500 mb-6" />
-            <h2 className="text-2xl font-bold text-white mb-2">Verification Failed</h2>
-            <p className="text-brand-text-secondary mb-8">We couldn't verify your payment immediately. If you were charged, it will reflect shortly.</p>
-            
+            <h2 className="text-2xl font-bold text-white mb-2">
+              Verification Failed
+            </h2>
+            <p className="text-brand-text-secondary mb-8">
+              We could not confirm this funding attempt. No wallet credit
+              is being claimed on this screen.
+            </p>
+
             <button
               onClick={() => navigate('/wallet')}
               className="w-full bg-brand-surface border border-brand-border hover:bg-white/5 text-white font-bold py-3 px-6 rounded-xl transition-all"
@@ -89,7 +150,6 @@ export const WalletCallback = () => {
             </button>
           </div>
         )}
-        
       </div>
     </div>
   );

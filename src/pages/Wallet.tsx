@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useUser } from '@clerk/clerk-react';
+import { useAuth, useUser } from '@clerk/clerk-react';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 import { useNavigate, Link } from 'react-router-dom';
@@ -32,6 +32,10 @@ import {
 } from 'lucide-react';
 import BankAccountForm from "@/components/wallet/BankAccountForm";
 import SendMoneyModal from "@/components/wallet/SendMoneyModal";
+import {
+  clearStableIdempotencyKey,
+  getStableIdempotencyKey,
+} from "../utils/idempotency";
 
 const WALLET_FUNDING_PAUSED_MESSAGE =
   "Wallet deposits are temporarily paused while we complete an urgent balance-credit fix. No payment has been initiated.";
@@ -51,6 +55,7 @@ interface WalletProps {
 
 export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const navigate = useNavigate();
   const [balance, setBalance] = useState<number>(0);
   const [profile, setProfile] = useState<any>(null);
@@ -152,11 +157,13 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     try {
       const res = await fetch("/api/wallet?action=update-username", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${await getToken()}`,
+          "Idempotency-Key": getStableIdempotencyKey("username"),
+        },
         body: JSON.stringify({ 
-          userId: user?.id, 
           username: clean,
-          email: user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress
         })
       });
       const result = await res.json();
@@ -227,9 +234,12 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     try {
       const res = await fetch('/api/wallet?action=set-pin', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await getToken()}`,
+          "Idempotency-Key": getStableIdempotencyKey("set-pin"),
+        },
         body: JSON.stringify({
-          userId: user?.id,
           pin: pinInput,
           require_pin_view: viewRequirePin
         })
@@ -257,9 +267,12 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     try {
       const res = await fetch('/api/wallet?action=update-pin-settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await getToken()}`,
+          "Idempotency-Key": getStableIdempotencyKey("pin-settings"),
+        },
         body: JSON.stringify({
-          userId: user?.id,
           require_pin_view: requireView
         })
       });
@@ -284,9 +297,11 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     try {
       const res = await fetch('/api/wallet?action=verify-pin', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await getToken()}`,
+        },
         body: JSON.stringify({
-          userId: user?.id,
           pin: viewUnlockPin
         })
       });
@@ -338,17 +353,25 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     try {
       const res = await fetch('/api/wallet?action=withdraw', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await getToken()}`,
+          "Idempotency-Key": getStableIdempotencyKey("withdrawal"),
+        },
         body: JSON.stringify({
-          userId: user?.id,
-          userEmail: user?.primaryEmailAddress?.emailAddress,
           amount: Number(withdrawAmount),
           pin: withdrawPin
         })
       });
       const data = await res.json();
-      if (!data.success) throw new Error(data.error);
+      if (!data.success) {
+        if (data.refunded) {
+          clearStableIdempotencyKey("withdrawal");
+        }
+        throw new Error(data.error);
+      }
 
+      clearStableIdempotencyKey("withdrawal");
       toast.success(data.message || 'Withdrawal initiated successfully!');
       setWithdrawAmount('');
       setWithdrawPin('');
@@ -416,12 +439,9 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   const handleFundWallet = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (isFunding) return;
-    console.log("[fund] button clicked, amount:", fundAmount);
-
     const amount = Number(fundAmount);
     
     if (!amount || amount < 100) {
-      console.log("[fund] invalid amount:", amount);
       setFundError("Minimum funding amount is ₦100");
       return;
     }
@@ -430,7 +450,6 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     const userEmail = user?.primaryEmailAddress?.emailAddress;
 
     if (!userId || !userEmail) {
-      console.error("[fund] missing user info:", userId, userEmail);
       setFundError("User not loaded yet, please try again");
       return;
     }
@@ -439,28 +458,33 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     setFundError(null);
 
     try {
-      console.log("[fund] calling /api/wallet?action=fund...");
-      
-      const res = await fetch("/api/wallet?action=fund", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, userEmail, amount })
-      });
+      const token = await getToken();
+
+      if (!token) {
+        throw new Error(
+          "Your session expired. Please sign in again.",
+        );
+      }
+
+      const res = await fetch("/api/wallet?action=fund", { method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "Idempotency-Key": getStableIdempotencyKey("wallet-funding"),
+        },
+        body: JSON.stringify({ amount }) });
 
       const text = await res.text();
-      console.log("[fund] raw response:", text);
 
       let data;
       try {
         data = JSON.parse(text);
       } catch (e) {
-        console.error("[fund] failed to parse response:", e);
         setFundError("Server returned invalid response");
         setIsFunding(false);
         return;
       }
 
-      console.log("[fund] parsed data:", data);
 
       if (data.code === "WALLET_FUNDING_TEMPORARILY_PAUSED") {
         setFundError(WALLET_FUNDING_PAUSED_MESSAGE);
@@ -469,24 +493,21 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
       }
 
       if (!data.success) {
-        console.error("[fund] API returned error:", data.error);
         setFundError(data.error || "Failed to initialize payment");
         setIsFunding(false);
         return;
       }
 
       if (!data.authorization_url) {
-        console.error("[fund] no authorization_url in response");
         setFundError("Payment link missing — try again");
         setIsFunding(false);
         return;
       }
 
-      console.log("[fund] redirecting to:", data.authorization_url);
       window.location.href = data.authorization_url;
 
     } catch (e: any) {
-      console.error("[fund] crash:", e.message);
+      console.error("[fund] request failed");
       setFundError("Network error: " + e.message);
       setIsFunding(false);
     }
@@ -503,11 +524,13 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
 
     const res = await fetch("/api/wallet?action=update-username", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${await getToken()}`,
+        "Idempotency-Key": getStableIdempotencyKey("username"),
+      },
       body: JSON.stringify({ 
-        userId: user?.id, 
         username: clean,
-        email: user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress
       })
     });
     const result = await res.json();

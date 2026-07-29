@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabase"
+import { useAuth } from "@clerk/clerk-react"
+import { getStableIdempotencyKey } from "../../utils/idempotency"
 import { CheckCircle2, ChevronDown, ChevronUp, Search, Loader2 } from "lucide-react"
 
 interface Bank {
@@ -24,6 +25,7 @@ export default function BankAccountForm({
   currentBank,
   onSaved
 }: BankAccountFormProps) {
+  const { getToken } = useAuth()
   const [banks, setBanks] = useState<Bank[]>([])
   const [loadingBanks, setLoadingBanks] = useState(true)
   const [search, setSearch] = useState("")
@@ -45,7 +47,9 @@ export default function BankAccountForm({
       return
     }
 
-    fetch("/api/wallet?action=list-banks")
+    getToken().then(token => fetch("/api/wallet?action=list-banks", {
+      headers: { Authorization: `Bearer ${token}` },
+    }))
       .then(res => res.json())
       .then(data => {
         if (data.success) {
@@ -70,17 +74,19 @@ export default function BankAccountForm({
     const timer = setTimeout(async () => {
       setResolving(true)
       try {
+        const token = await getToken()
         const res = await fetch("/api/wallet?action=resolve-account", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({
             accountNumber,
             bankCode: selectedBank.code
           })
         })
         const data = await res.json()
-        console.log("[bank-form] resolve:", data)
-
         if (data.success) {
           setResolvedName(data.accountName)
         } else {
@@ -105,11 +111,15 @@ export default function BankAccountForm({
 
     setSaving(true)
     try {
+      const token = await getToken()
       const res = await fetch("/api/wallet?action=save-bank", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "Idempotency-Key": getStableIdempotencyKey("bank-account"),
+        },
         body: JSON.stringify({
-          userId,
           accountNumber,
           bankCode: selectedBank.code,
           bankName: selectedBank.name,
@@ -117,8 +127,6 @@ export default function BankAccountForm({
         })
       })
       const data = await res.json()
-      console.log("[bank-form] save:", data)
-
       if (data.success) {
         setEditing(false)
         onSaved()

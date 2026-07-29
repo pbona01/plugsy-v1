@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { useUser } from "@clerk/clerk-react";
+import { useAuth, useUser } from "@clerk/clerk-react";
 import { Helmet } from "react-helmet-async";
 import { supabase } from "../lib/supabase";
 import { 
@@ -19,12 +19,7 @@ import confetti from "canvas-confetti";
 import { SEO } from "../components/seo/SEO";
 import { showToast } from "../components/Toast";
 import PreviewModal from "../components/verification/PreviewModal";
-import { PaymentModeBanner } from "../components/PaymentModeBanner";
-import {
-  getPortfolioInitializationPause,
-  PORTFOLIO_PURCHASE_PAUSE_CODE,
-  PORTFOLIO_PURCHASE_PAUSE_MESSAGE,
-} from "../../api/_portfolioPurchasePause.js";
+import { getStableIdempotencyKey, clearStableIdempotencyKey } from "../utils/idempotency";
 
 export interface PairedCategory {
   id: string;
@@ -136,6 +131,7 @@ export const PAIRED_CATEGORIES: PairedCategory[] = [
 
 export function CreatePortfolio() {
   const { user, isLoaded } = useUser();
+  const { getToken } = useAuth();
   const { theme } = useTheme();
   const navigate = useNavigate();
   const { isPortfolioUnlocked } = usePortfolioAccess();
@@ -253,12 +249,6 @@ export function CreatePortfolio() {
     }
     paymentInFlightRef.current = true;
 
-    if (getPortfolioInitializationPause("purchase")) {
-      showToast(PORTFOLIO_PURCHASE_PAUSE_MESSAGE, "error");
-      paymentInFlightRef.current = false;
-      return;
-    }
-
     setLoading("payment");
     
     // Trigger confetti
@@ -269,87 +259,28 @@ export function CreatePortfolio() {
     });
 
     try {
-      const config = getCategoryConfig(JSON.stringify(selectedCategories));
-      if (!config) throw new Error("Category config not found");
-      const mainCategory = selectedCategories[0];
-      
-      const payload = {
-        userId: user.id,
-        userEmail: user.primaryEmailAddress?.emailAddress,
-        fullName: user.fullName || "",
-        category: JSON.stringify(selectedCategories), // Send as JSON array under category field or add a new categories field
-        categories: selectedCategories,
-        purchaseCodeUsed: purchaseCodeOwnerId ? purchaseCode.toUpperCase() : null,
-        purchaseCodeOwnerId
-      };
-
-      const price = config.price;
-      const discountedPrice = activeMedal ? Math.round(price * (1 - activeMedal.discount)) : price;
-
-      if (useWallet) {
-        const walletRes = await fetch("/api/wallet?action=pay-with-wallet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: user.id,
-            userEmail: user.primaryEmailAddress?.emailAddress,
-            amount: discountedPrice,
-            purpose: "portfolio_purchase",
-          })
-        });
-        const walletData = await walletRes.json();
-        
-        if (
-          walletData.code === PORTFOLIO_PURCHASE_PAUSE_CODE
-        ) {
-          throw new Error(PORTFOLIO_PURCHASE_PAUSE_MESSAGE);
-        }
-
-        if (!walletData.success) {
-          throw new Error(walletData.error || "Failed to deduct from wallet.");
-        }
-
-        const createRes = await fetch("/api/portfolio?action=create-from-wallet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...payload,
-            reference: walletData.reference,
-            amountPaid: discountedPrice
-          })
-        });
-        
-        const createData = await createRes.json();
-        if (!createData.success) {
-          throw new Error("Payment succeeded but portfolio creation failed. Please contact support.");
-        }
-        
-        showToast("Portfolio purchase successful!");
-        navigate("/portfolio/callback?reference=" + walletData.reference);
-        return;
-      }
-
-      const API_BASE = import.meta.env.VITE_SUPABASE_URL 
-        ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/portfolio`
-        : "/api/portfolio"; // fallback
-        
-      // For Vite relative to current proxy
-      const apiUrl = "/api/portfolio?action=purchase";
-        
-      const res = await fetch(apiUrl, {
+      const token = await getToken();
+      const key = getStableIdempotencyKey(`portfolio:${selectedCategories.join(",")}`);
+      const res = await fetch("/api/portfolio?action=purchase", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "Idempotency-Key": key,
+        },
+        body: JSON.stringify({
+          categories: selectedCategories,
+          purchaseCode: purchaseCodeOwnerId ? purchaseCode.toUpperCase() : undefined,
+        })
       });
       
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Payment initialization failed");
-      
-      if (data.authorization_url) {
-        window.location.href = data.authorization_url;
-        return;
+      if (!res.ok || !data.success || !data.entitlement?.id) {
+        throw new Error(data.error || "Portfolio purchase failed");
       }
-      throw new Error("Payment initialization failed");
+      clearStableIdempotencyKey(`portfolio:${selectedCategories.join(",")}`);
+      showToast("Portfolio purchase successful!");
+      navigate(`/portfolio/${data.entitlement.id}/edit`);
     } catch (e: any) {
       console.error(e);
       showToast(e.message, "error");
@@ -388,7 +319,6 @@ export function CreatePortfolio() {
         description="Choose your discipline and set up the perfect verification structure for your craft."
       />
       <div className="max-w-7xl mx-auto relative z-10">
-        <PaymentModeBanner />
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -782,7 +712,7 @@ export function CreatePortfolio() {
 
                             <button
                               type="button"
-                              onClick={() => setUseWallet(false)}
+                              disabled
                               className={`p-3.5 rounded-xl border text-left transition-all flex items-start gap-3 cursor-pointer ${
                                 !useWallet
                                   ? "border-brand-accent bg-brand-accent/10 text-brand-text"
@@ -791,9 +721,9 @@ export function CreatePortfolio() {
                             >
                               <CreditCard className={`w-5 h-5 mt-0.5 shrink-0 ${!useWallet ? "text-brand-accent" : "text-brand-text/40"}`} />
                               <div>
-                                <div className="text-xs font-bold uppercase tracking-wider">Card / Bank / USSD</div>
+                                <div className="text-xs font-bold uppercase tracking-wider">Wallet only</div>
                                 <div className="text-[10px] font-mono text-brand-text-secondary mt-0.5">
-                                  Pay via Flutterwave
+                                  Direct provider checkout is retired
                                 </div>
                               </div>
                             </button>
@@ -803,7 +733,7 @@ export function CreatePortfolio() {
                         {useWallet ? (
                           <div>
                             <button
-                              disabled={!canAfford || loading === "payment"}
+                              disabled={loading === "payment"}
                               onClick={initiatePayment}
                               className="w-full py-4 px-6 rounded-xl font-bold text-xs uppercase tracking-wider text-white transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 border-none bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2"
                             >
@@ -828,13 +758,6 @@ export function CreatePortfolio() {
                                     Top Up Wallet
                                   </Link>
                                   <span className="text-xs text-brand-text/30">•</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setUseWallet(false)}
-                                    className="text-xs font-bold text-brand-accent hover:underline uppercase tracking-wider bg-transparent border-0 cursor-pointer"
-                                  >
-                                    Pay via Flutterwave
-                                  </button>
                                 </div>
                               </div>
                             )}

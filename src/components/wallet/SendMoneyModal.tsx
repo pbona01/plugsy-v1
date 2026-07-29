@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { X, Send, CheckCircle2, AlertCircle } from "lucide-react";
-import { supabase } from "../../lib/supabase";
+import { useAuth } from "@clerk/clerk-react";
+import {
+  clearStableIdempotencyKey,
+  getStableIdempotencyKey,
+} from "../../utils/idempotency";
 
 interface SendMoneyModalProps {
   isOpen: boolean;
@@ -31,6 +35,7 @@ export default function SendMoneyModal({
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sentSuccess, setSentSuccess] = useState(false);
+  const { getToken } = useAuth();
 
   // Clean username helper
   const getCleanUsername = (val: string) => {
@@ -52,9 +57,13 @@ export default function SendMoneyModal({
 
     const timer = setTimeout(async () => {
       try {
+        const token = await getToken();
         const res = await fetch("/api/wallet?action=resolve-username", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({ username }),
         });
         const data = await res.json();
@@ -94,13 +103,17 @@ export default function SendMoneyModal({
     setIsSending(true);
     setSendError(null);
 
-    try {
+      try {
+      const token = await getToken();
+      const key = getStableIdempotencyKey(`p2p:${getCleanUsername(recipientInput)}`);
       const res = await fetch("/api/wallet?action=p2p-transfer", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "Idempotency-Key": key,
+        },
         body: JSON.stringify({
-          senderId,
-          senderEmail,
           recipientUsername: getCleanUsername(recipientInput),
           amount,
           note,
@@ -112,6 +125,7 @@ export default function SendMoneyModal({
         throw new Error(data.error || "Transfer failed");
       }
 
+      clearStableIdempotencyKey(`p2p:${getCleanUsername(recipientInput)}`);
       setSentSuccess(true);
     } catch (err: any) {
       setSendError(err.message || "Something went wrong");

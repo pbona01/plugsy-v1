@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@clerk/clerk-react";
 
 export default function PortfolioCallback() {
   const [status, setStatus] = useState<
@@ -8,6 +9,7 @@ export default function PortfolioCallback() {
   const [portfolioId, setPortfolioId] = useState<string | null>(null)
   const [attempts, setAttempts] = useState(0)
   const navigate = useNavigate()
+  const { getToken } = useAuth()
 
   useEffect(() => {
     const reference = new URLSearchParams(
@@ -16,8 +18,6 @@ export default function PortfolioCallback() {
     new URLSearchParams(
       window.location.search  
     ).get("trxref")
-
-    console.log("[callback] reference:", reference)
 
     if (!reference) {
       setStatus("failed")
@@ -28,33 +28,26 @@ export default function PortfolioCallback() {
   }, [])
 
   const checkPayment = async (reference: string) => {
-    console.log("[callback] checking payment:", reference)
-    
     try {
+      const token = await getToken()
       const res = await fetch("/api/portfolio?action=verify", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ reference })
       })
 
-      const text = await res.text()
-      console.log("[callback] verify response:", text)
-      
-      let data: any
-      try {
-        data = JSON.parse(text)
-      } catch {
-        setStatus("failed")
-        return
-      }
+      const data: any = await res.json()
 
-      if (data.portfolioId) {
+      if (res.ok && data.success && data.entitlement?.id) {
         // Portfolio exists and payment confirmed
         setStatus("success")
-        setPortfolioId(data.portfolioId)
+        setPortfolioId(data.entitlement.id)
         // Redirect to editor after 2 seconds
         setTimeout(() => {
-          navigate("/portfolio/" + data.portfolioId + "/edit")
+          navigate("/portfolio/" + data.entitlement.id + "/edit")
         }, 2000)
         return
       }
@@ -80,7 +73,7 @@ export default function PortfolioCallback() {
       }
 
     } catch (e) {
-      console.error("[callback] error:", e)
+      console.error("[callback] error")
       setStatus("failed")
     }
   }
