@@ -419,3 +419,26 @@ test("withdrawal callback records final outcomes only after validation", () => {
   assert.doesNotMatch(review, /update public\.withdrawal_callback_events_v2/);
   assert.match(review, /WITHDRAWAL_CALLBACK_EVENT_CONFLICT/);
 });
+
+test("withdrawal UI uses the persisted Flutterwave bank fields without changing the transfer request", () => {
+  const wallet = read("src/pages/Wallet.tsx");
+  const commerce = read("api/_walletCommerce.js");
+  assert.doesNotMatch(wallet, /paystack_recipient_code/);
+  assert.match(wallet, /const hasWithdrawalBankAccount = Boolean\(/);
+  assert.match(wallet, /profile\?\.bank_code/);
+  assert.match(wallet, /profile\?\.bank_name/);
+  assert.match(wallet, /\^\\d\{10\}\$\/.test\(String\(profile\?\.account_number \|\| ""\)\)/);
+  assert.match(wallet, /profile\?\.account_name/);
+  assert.match(wallet, /disabled=\{isWithdrawing \|\| !withdrawAmount \|\| !hasWithdrawalBankAccount\}/);
+  assert.match(wallet, /\{!hasWithdrawalBankAccount && \(/);
+  assert.match(wallet, /Continue to Flutterwave/);
+
+  const submitStart = wallet.indexOf("const handleWithdrawSubmit = async");
+  const filterStart = wallet.indexOf("const filteredTransactions");
+  assert.ok(submitStart >= 0 && filterStart > submitStart);
+  const submit = wallet.slice(submitStart, filterStart);
+  assert.match(submit, /fetch\('\/api\/wallet\?action=withdraw'/);
+  assert.match(submit, /body: JSON\.stringify\(\{\s*amount: Number\(withdrawAmount\),\s*pin: withdrawPin\s*\}\)/);
+  assert.doesNotMatch(submit, /bank_code|bank_name|account_number|account_name/);
+  assert.match(commerce, /https:\/\/api\.flutterwave\.com\/v3\/transfers/);
+});

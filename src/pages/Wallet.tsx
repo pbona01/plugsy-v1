@@ -84,6 +84,12 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const FEE = getWithdrawalFee(Number(withdrawAmount) || 0);
+  const hasWithdrawalBankAccount = Boolean(
+    profile?.bank_code &&
+    profile?.bank_name &&
+    /^\d{10}$/.test(String(profile?.account_number || "")) &&
+    profile?.account_name
+  );
 
   // PIN Security states
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -962,7 +968,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
 
         <button
           onClick={() => {
-            if (!profile?.account_number) {
+            if (!hasWithdrawalBankAccount) {
               setIsBankModalOpen(true);
               toast.error("Please set up your bank account details first.");
               return;
@@ -991,7 +997,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
       </div>
 
       {/* 4. BANK STATUS BANNER (If bank not set up) */}
-      {!profile?.account_number && showBankBanner && (
+      {!hasWithdrawalBankAccount && showBankBanner && (
         <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4.5 flex items-center justify-between gap-4 text-xs shadow-xs animate-in slide-in-from-top duration-300">
           <div className="flex items-start gap-3">
             <Building2 className="text-amber-500 shrink-0 mt-0.5" size={18} />
@@ -1150,7 +1156,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
                     Processing...
                   </>
                 ) : (
-                  'Confirm & pay with paystack'
+                  'Continue to Flutterwave'
                 )}
               </button>
             </form>
@@ -1171,7 +1177,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
             </div>
             
             <form onSubmit={handleWithdrawClick} className="space-y-4">
-              {profile?.account_number && (
+              {hasWithdrawalBankAccount && (
                 <div className="bg-brand-text/5 border border-brand-border rounded-xl p-3.5 flex items-center gap-3">
                   <Building2 size={18} className="text-brand-accent" />
                   <div className="text-xs">
@@ -1219,13 +1225,13 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
 
               <button
                 type="submit"
-                disabled={isWithdrawing || !withdrawAmount || !profile?.paystack_recipient_code}
+                disabled={isWithdrawing || !withdrawAmount || !hasWithdrawalBankAccount}
                 className="w-full bg-brand-accent hover:bg-brand-accent/95 disabled:opacity-50 text-white font-black uppercase tracking-wider text-xs py-3.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 {isWithdrawing ? 'Processing...' : 'Authorize withdrawal'}
               </button>
 
-              {!profile?.paystack_recipient_code && (
+              {!hasWithdrawalBankAccount && (
                 <p className="text-xs text-red-500 mt-2 flex items-center gap-1 justify-center">
                   <AlertCircle size={12} /> Add bank account details first
                 </p>
