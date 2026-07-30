@@ -600,6 +600,126 @@ const flutterwaveSecret = (res) => {
   return key;
 };
 
+const FINAL_WITHDRAWAL_FAILURE_STATUSES = new Set([
+  "failed",
+  "cancelled",
+  "canceled",
+  "reversed",
+]);
+
+const AMBIGUOUS_WITHDRAWAL_HTTP_STATUSES = new Set([
+  408,
+  409,
+  425,
+  429,
+]);
+
+const SAFE_PRE_SUBMISSION_REJECTION_HTTP_STATUSES = new Set([
+  400,
+  401,
+  403,
+  404,
+  405,
+  415,
+  422,
+]);
+
+const SAFE_PROVIDER_REJECTION_STATUSES = new Set([
+  "error",
+  "failed",
+  "failure",
+]);
+
+const isFinalWithdrawalFailureStatus = (value) =>
+  FINAL_WITHDRAWAL_FAILURE_STATUSES.has(lower(value));
+
+const hasAmbiguousProviderRejectionMessage = (value) =>
+  /\b(?:duplicate|already exists?|same reference|existing transfer|already (?:been )?(?:created|submitted|processed)|processing|pending)\b/i.test(
+    text(value),
+  );
+
+const sanitizeProviderDiagnostic = (value, maxLength = 160) =>
+  text(value)
+    .replace(
+      /\b(?:authorization|bearer|secret(?:[_ -]?key)?|token|pin)\b\s*[:=]?\s*\S+/gi,
+      "[redacted-credential]",
+    )
+    .replace(
+      /\baccount(?:[_ -]?number)?\b\s*[:=]?\s*\S+/gi,
+      "account=[redacted]",
+    )
+    .replace(/(?:\d[\s-]?){6,}\d/g, "[redacted-digits]")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .slice(0, maxLength);
+
+const flutterwaveTraceHeader = (response) => {
+  const headerNames = [
+    "x-request-id",
+    "request-id",
+    "x-trace-id",
+    "trace-id",
+    "x-flw-request-id",
+  ];
+
+  for (const headerName of headerNames) {
+    const value = response?.headers?.get?.(headerName);
+    if (value) return sanitizeProviderDiagnostic(value, 96);
+  }
+
+  return "";
+};
+
+const flutterwaveInitiationDiagnostics = ({
+  reference,
+  response,
+  provider,
+}) => ({
+  reference,
+  httpStatus: response?.status || null,
+  providerStatus:
+    sanitizeProviderDiagnostic(provider?.status, 48) || null,
+  providerTransferStatus:
+    sanitizeProviderDiagnostic(provider?.data?.status, 48) || null,
+  providerIdPresent: Boolean(text(provider?.data?.id)),
+  providerMessage:
+    sanitizeProviderDiagnostic(
+      provider?.message ||
+        provider?.complete_message ||
+        provider?.data?.complete_message,
+    ) || null,
+  providerTraceHeader: flutterwaveTraceHeader(response) || null,
+});
+
+const markWithdrawalInitiationManualReview = async ({
+  supabase,
+  reference,
+  key,
+  diagnostics,
+}) => {
+  const reason = "provider initiation outcome ambiguous";
+  const results = await Promise.allSettled([
+    supabase.rpc("mark_wallet_withdrawal_manual_review_v2", {
+      p_reference: reference,
+      p_reason: reason,
+    }),
+    supabase.rpc("record_financial_manual_review_v2", {
+      p_event_key: `withdrawal-init-unknown:${key}`,
+      p_operation_type: "withdrawal",
+      p_reference: reference,
+      p_reason: reason,
+      p_details: diagnostics,
+    }),
+  ]);
+
+  return results.every(
+    (result) =>
+      result.status === "fulfilled" &&
+      !result.value?.error &&
+      normalizeRpcData(result.value?.data)?.success === true,
+  );
+};
+
 const resolveBankAccount = async ({
   accountNumber,
   bankCode,
@@ -1108,20 +1228,7 @@ export async function handleWithdrawal(req, res) {
   );
   if (!reservation) return;
 
-  if (
-    reservation.already_processed === true &&
-    reservation.provider_submitted === true
-  ) {
-    if (reservation.pending_manual_review === true) {
-      return res.status(200).json({
-        success: false,
-        alreadyProcessed: true,
-        pending: true,
-        manualReview: true,
-        reference: reservation.reference,
-      });
-    }
-
+  if (reservation.already_processed === true) {
     if (reservation.withdrawal_final_status === "failed") {
       return send(
         res,
@@ -1136,16 +1243,78 @@ export async function handleWithdrawal(req, res) {
       );
     }
 
-    return res.status(200).json({
-      success: true,
-      alreadyProcessed: true,
-      pending:
-        reservation.withdrawal_final_status !== "success",
+    if (reservation.withdrawal_final_status === "success") {
+      return res.status(200).json({
+        success: true,
+        alreadyProcessed: true,
+        pending: false,
+        reference: reservation.reference,
+        amount: reservation.amount,
+        fee: reservation.fee,
+        balanceAfter: reservation.balance_after,
+      });
+    }
+
+    if (reservation.pending_manual_review === true) {
+      return res.status(200).json({
+        success: false,
+        alreadyProcessed: true,
+        pending: true,
+        manualReview: true,
+        reference: reservation.reference,
+      });
+    }
+
+    if (reservation.provider_submitted === true) {
+      return res.status(200).json({
+        success: false,
+        alreadyProcessed: true,
+        pending: true,
+        reference: reservation.reference,
+        amount: reservation.amount,
+        fee: reservation.fee,
+        balanceAfter: reservation.balance_after,
+      });
+    }
+
+    const replayDiagnostics = {
       reference: reservation.reference,
-      amount: reservation.amount,
-      fee: reservation.fee,
-      balanceAfter: reservation.balance_after,
-    });
+      httpStatus: null,
+      providerStatus: null,
+      providerTransferStatus:
+        reservation.provider_attempt_started === true
+          ? "submission_started"
+          : null,
+      providerIdPresent: false,
+      providerMessage: "reserved withdrawal replay requires reconciliation",
+      providerTraceHeader: null,
+    };
+    const manualReviewRecorded =
+      await markWithdrawalInitiationManualReview({
+        supabase,
+        reference: reservation.reference,
+        key,
+        diagnostics: replayDiagnostics,
+      });
+    if (!manualReviewRecorded) {
+      console.error(
+        "[wallet-withdrawal] Replay manual-review persistence failed:",
+        replayDiagnostics,
+      );
+    }
+
+    return send(
+      res,
+      503,
+      "WITHDRAWAL_MANUAL_REVIEW",
+      "The withdrawal is reserved and requires provider confirmation.",
+      {
+        alreadyProcessed: true,
+        pending: true,
+        manualReview: true,
+        reference: reservation.reference,
+      },
+    );
   }
 
   const attempt = await callRpc(
@@ -1159,12 +1328,13 @@ export async function handleWithdrawal(req, res) {
   if (!attempt) return;
 
   let provider;
+  let response;
   try {
     const siteUrl =
       text(process.env.NEXT_PUBLIC_SITE_URL) ||
       text(process.env.SITE_URL) ||
       "https://www.plugsy.ng";
-    const response = await fetch(
+    response = await fetch(
       "https://api.flutterwave.com/v3/transfers",
       {
         method: "POST",
@@ -1178,6 +1348,7 @@ export async function handleWithdrawal(req, res) {
           amount: reservation.amount,
           narration: "Plugsy Wallet Withdrawal",
           currency: "NGN",
+          debit_currency: "NGN",
           reference: reservation.reference,
           callback_url:
             siteUrl.replace(/\/$/, "") +
@@ -1185,44 +1356,139 @@ export async function handleWithdrawal(req, res) {
         }),
       },
     );
-    provider = await response.json().catch(() => null);
+    const parsedProvider = await response.json().catch(() => null);
+    const hasValidProviderJson =
+      parsedProvider !== null &&
+      typeof parsedProvider === "object" &&
+      !Array.isArray(parsedProvider);
+    provider = hasValidProviderJson ? parsedProvider : null;
 
-    if (!response.ok || provider?.status !== "success") {
-      await callRpc(
+    const diagnostics = flutterwaveInitiationDiagnostics({
+      reference: reservation.reference,
+      response,
+      provider,
+    });
+    console.info(
+      "[wallet-withdrawal] Flutterwave initiation diagnostics:",
+      diagnostics,
+    );
+
+    const providerId = text(provider?.data?.id);
+    const providerStatus = lower(provider?.status);
+    const providerTransferStatus = lower(provider?.data?.status);
+    const providerMessage =
+      provider?.message ||
+      provider?.complete_message ||
+      provider?.data?.complete_message;
+    const hasFinalFailureStatus =
+      isFinalWithdrawalFailureStatus(providerTransferStatus);
+    const accepted =
+      response.ok &&
+      providerStatus === "success" &&
+      Boolean(providerId) &&
+      !hasFinalFailureStatus;
+
+    if (!accepted) {
+      const hasAmbiguousTransportStatus =
+        AMBIGUOUS_WITHDRAWAL_HTTP_STATUSES.has(response.status) ||
+        response.status >= 500;
+      const isSafePreSubmissionRejection =
+        SAFE_PRE_SUBMISSION_REJECTION_HTTP_STATUSES.has(
+          response.status,
+        ) &&
+        !providerId &&
+        SAFE_PROVIDER_REJECTION_STATUSES.has(providerStatus) &&
+        !hasAmbiguousProviderRejectionMessage(providerMessage);
+      const hasExplicitFinalFailure =
+        hasFinalFailureStatus ||
+        (response.ok &&
+          !providerId &&
+          isFinalWithdrawalFailureStatus(providerStatus));
+      const confirmedRejection =
+        hasValidProviderJson &&
+        !hasAmbiguousTransportStatus &&
+        (hasExplicitFinalFailure ||
+          isSafePreSubmissionRejection);
+
+      if (!confirmedRejection) {
+        const manualReviewRecorded =
+          await markWithdrawalInitiationManualReview({
+            supabase,
+            reference: reservation.reference,
+            key,
+            diagnostics,
+          });
+        if (!manualReviewRecorded) {
+          console.error(
+            "[wallet-withdrawal] Manual-review persistence failed:",
+            diagnostics,
+          );
+        }
+
+        return send(
+          res,
+          503,
+          "WITHDRAWAL_MANUAL_REVIEW",
+          "The withdrawal is reserved and requires provider confirmation.",
+          {
+            pending: true,
+            manualReview: true,
+            reference: reservation.reference,
+          },
+        );
+      }
+
+      const refund = await callRpc(
         supabase,
         res,
         "refund_wallet_withdrawal_v2",
         {
           p_reference: reservation.reference,
-          p_provider_transaction_id:
-            text(provider?.data?.id) || null,
+          p_provider_transaction_id: providerId || null,
           p_provider_status:
-            text(provider?.data?.status) || "initialization_failed",
+            text(providerTransferStatus) ||
+            text(providerStatus) ||
+            "initialization_failed",
           p_event_key: `init-failed:${key}`,
         },
       );
-      if (res.headersSent) return;
+      if (!refund) return;
+
       return send(
         res,
         502,
         "WITHDRAWAL_PROVIDER_REJECTED",
-        "The withdrawal provider rejected the transfer.",
+        "The withdrawal could not be completed.",
+        {
+          refunded: true,
+          pending: false,
+          reference: reservation.reference,
+        },
       );
     }
   } catch {
-    await supabase.rpc("mark_wallet_withdrawal_manual_review_v2", {
-      p_reference: reservation.reference,
-      p_reason: "provider request outcome unknown",
+    const diagnostics = flutterwaveInitiationDiagnostics({
+      reference: reservation.reference,
+      response,
+      provider: null,
     });
-    await supabase.rpc("record_financial_manual_review_v2", {
-      p_event_key: `withdrawal-init-unknown:${key}`,
-      p_operation_type: "withdrawal",
-      p_reference: reservation.reference,
-      p_reason: "provider request outcome unknown",
-      p_details: {
-        actor_user_id: context.actor.userId,
-      },
-    });
+    console.error(
+      "[wallet-withdrawal] Flutterwave initiation diagnostics:",
+      diagnostics,
+    );
+    const manualReviewRecorded =
+      await markWithdrawalInitiationManualReview({
+        supabase,
+        reference: reservation.reference,
+        key,
+        diagnostics,
+      });
+    if (!manualReviewRecorded) {
+      console.error(
+        "[wallet-withdrawal] Manual-review persistence failed:",
+        diagnostics,
+      );
+    }
 
     return send(
       res,
@@ -1231,6 +1497,7 @@ export async function handleWithdrawal(req, res) {
       "The withdrawal is reserved and requires provider confirmation.",
       {
         pending: true,
+        manualReview: true,
         reference: reservation.reference,
       },
     );
@@ -1274,7 +1541,7 @@ const normalizeTransferStatus = (value) => {
     return "successful";
   }
   if (
-    ["failed", "cancelled", "canceled", "reversed"].includes(status)
+    isFinalWithdrawalFailureStatus(status)
   ) {
     return "failed";
   }

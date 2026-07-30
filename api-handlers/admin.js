@@ -1,5 +1,11 @@
 import { createClient } from "@supabase/supabase-js"
 import { Resend } from 'resend';
+import {
+  isSupportChat,
+  resolveExistingSupportChat,
+  resolveOrCreateSupportChat,
+} from "./_supportChats.js";
+import { requireVerifiedClerkUser } from "../api/_clerkAuth.js";
 
 const getClient = () => createClient(
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co',
@@ -14,26 +20,85 @@ const getClient = () => createClient(
   }
 );
 
+const ADMIN_MESSAGE_INSERT_FIELDS = new Set([
+  "chat_id",
+  "sender_id",
+  "sender_name",
+  "sender_role",
+  "content",
+  "attachment_url",
+  "attachment_type",
+  "message_type",
+  "audio_url",
+  "read_by_admin",
+  "read_by_user",
+  "order_id",
+  "user_id",
+  "is_bot",
+]);
+
+async function requireSupportWriter(req, res, supabase) {
+  const actor = await requireVerifiedClerkUser(req, res);
+  if (!actor) return null;
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("clerk_id", actor.userId)
+    .maybeSingle();
+  if (profileError) {
+    res.status(503).json({ error: "SUPPORT_WRITER_LOOKUP_FAILED" });
+    return null;
+  }
+
+  const clerkRole = String(
+    actor.clerkUser?.publicMetadata?.role ||
+      actor.clerkUser?.public_metadata?.role ||
+      "",
+  ).toLowerCase();
+  return {
+    actor,
+    isAdmin:
+      String(profile?.role || "").toLowerCase() === "admin" ||
+      clerkRole === "admin",
+  };
+}
+
+async function requireVerifiedAdmin(req, res, supabase) {
+  const writer = await requireSupportWriter(req, res, supabase);
+  if (!writer) return null;
+  if (!writer.isAdmin) {
+    res.status(403).json({
+      success: false,
+      error: "ADMIN_REQUIRED",
+    });
+    return null;
+  }
+  return writer;
+}
+
 async function handleSendLoginEmail(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" })
   try {
+    const supabase = getClient();
+    const writer = await requireVerifiedAdmin(req, res, supabase);
+    if (!writer) return;
+
     let parsedBody = req.body;
     if (typeof parsedBody === 'string') {
       try {
         parsedBody = JSON.parse(parsedBody);
-      } catch (err) {}
+      } catch {}
     }
     parsedBody = parsedBody || {};
     
-    const { orderId, loginDetails, adminEmail } = parsedBody;
+    const { orderId, loginDetails } = parsedBody;
 
     console.log("[send-login] STARTING for order:", orderId)
 
     if (!orderId || !loginDetails) {
       return res.status(400).json({ success: false, error: "Missing orderId or loginDetails" })
     }
-
-    const supabase = getClient();
 
     const { data: order, error: orderErr } = await supabase
       .from("orders")
@@ -42,8 +107,23 @@ async function handleSendLoginEmail(req, res) {
       .single()
 
     if (orderErr || !order) {
-      console.error("[send-login] order not found:", orderErr?.message)
+      console.error("[send-login] order lookup failed", { orderId })
       return res.status(404).json({ success: false, error: "Order not found" })
+    }
+
+    let supportChat;
+    try {
+      supportChat = await resolveOrCreateSupportChat(
+        supabase,
+        order.user_id,
+        order.user_email
+      );
+    } catch {
+      console.error("[send-login] support chat resolution failed", { orderId });
+      return res.status(500).json({
+        success: false,
+        error: "Support timeline unavailable"
+      });
     }
 
     // STEP 1: Update order (critical — must succeed)
@@ -59,7 +139,7 @@ async function handleSendLoginEmail(req, res) {
         logins: loginDetails,
         logins_sent_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
-        confirmed_by: adminEmail || "admin",
+        confirmed_by: writer.actor.userId,
         updated_at: new Date().toISOString(),
         subscription_started_at: new Date().toISOString(),
         subscription_expires_at: subscriptionExpiresAt
@@ -67,65 +147,56 @@ async function handleSendLoginEmail(req, res) {
       .eq("id", orderId)
 
     if (updateError) {
-      console.error("[send-login] order update FAILED:", updateError.message)
-      return res.status(500).json({ success: false, error: updateError.message })
+      console.error("[send-login] order update failed", { orderId })
+      return res.status(500).json({ success: false, error: "ORDER_UPDATE_FAILED" })
     }
     console.log("[send-login] ✅ order updated")
 
     // STEP 2: Chat message (isolated)
     try {
-      let chatId = null
-      const { data: existingChat } = await supabase
+      const { error: messageError } = await supabase.from("messages").insert({
+        chat_id: supportChat.id,
+        sender_id: writer.actor.userId,
+        sender_role: "admin",
+        sender_name: writer.actor.email || "Plugsy Team",
+        content: loginDetails,
+        user_id: supportChat.user_id,
+        user_email: order.user_email,
+        is_from_user: false,
+        is_bot: false,
+        read_by_admin: true,
+        read_by_user: false
+      });
+      if (messageError) throw new Error("SUPPORT_MESSAGE_INSERT_FAILED");
+
+      const { error: summaryError } = await supabase
         .from("chats")
-        .select("id")
-        .eq("user_id", order.user_id)
-        .maybeSingle()
-
-      if (existingChat) {
-        chatId = existingChat.id
-      } else {
-        const { data: newChat } = await supabase
-          .from("chats")
-          .insert({
-            user_id: order.user_id,
-            user_email: order.user_email,
-            status: "open",
-            last_message: "Login details sent",
-            last_message_at: new Date().toISOString()
-          })
-          .select("id")
-          .single()
-        chatId = newChat?.id
-      }
-
-      if (chatId) {
-        await supabase.from("messages").insert({
-          chat_id: chatId,
-          sender_id: "admin",
-          sender_role: "admin",
-          sender_name: adminEmail || "Plugsy Team",
-          content: loginDetails,
-          user_id: order.user_id,
-          user_email: order.user_email,
-          is_from_user: false,
-          is_bot: false,
-          read_by_admin: true,
-          read_by_user: false
+        .update({
+          last_message: "Login details sent",
+          last_message_at: new Date().toISOString(),
+          needs_admin_attention: false
         })
-        
-        await supabase
-          .from("chats")
-          .update({
-            last_message: "Login details sent",
-            last_message_at: new Date().toISOString(),
-            needs_admin_attention: false
-          })
-          .eq("id", chatId)
-
-        console.log("[send-login] ✅ chat message sent")
+        .eq("id", supportChat.id);
+      if (summaryError) {
+        console.error("[send-login] support chat summary update failed", {
+          orderId,
+          chatId: supportChat.id
+        });
       }
-    } catch (chatErr) {
-      console.error("[send-login] ⚠️ chat message failed:", chatErr.message)
+
+      console.log("[send-login] chat message sent", {
+        orderId,
+        chatId: supportChat.id
+      });
+    } catch {
+      console.error("[send-login] chat message failed", {
+        orderId,
+        code: "SUPPORT_TIMELINE_WRITE_FAILED"
+      });
+      return res.status(500).json({
+        success: false,
+        error: "Support timeline delivery failed"
+      });
     }
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 
@@ -164,19 +235,21 @@ async function handleSendLoginEmail(req, res) {
           })
         })
 
-        const emailData = await emailRes.json()
-        console.log("[send-login] email response:", emailRes.status, JSON.stringify(emailData))
+        await emailRes.json().catch(() => null)
+        console.log("[send-login] email response status:", emailRes.status)
 
         if (!emailRes.ok) {
-          console.error("[send-login] ⚠️ EMAIL FAILED:", emailData)
+          console.error("[send-login] email delivery failed", {
+            status: emailRes.status
+          })
         } else {
           console.log("[send-login] ✅ email sent")
         }
       } else {
         console.warn("[send-login] ⚠️ RESEND_API_KEY not set, skipping email")
       }
-    } catch (emailError) {
-      console.error("[send-login] ⚠️ email crashed:", emailError.message)
+    } catch {
+      console.error("[send-login] email delivery crashed", { orderId })
     }
 
     // STEP 4: TELEGRAM to admin (isolated)
@@ -200,15 +273,18 @@ async function handleSendLoginEmail(req, res) {
         const tgData = await tgRes.json()
         
         if (!tgData.ok) {
-          console.error("[send-login] ⚠️ TELEGRAM FAILED:", tgData.description)
+          console.error("[send-login] Telegram delivery failed", {
+            orderId,
+            status: tgRes.status,
+          })
         } else {
           console.log("[send-login] ✅ telegram sent")
         }
       } else {
         console.warn("[send-login] ⚠️ Telegram env vars missing, skipping")
       }
-    } catch (tgError) {
-      console.error("[send-login] ⚠️ telegram crashed:", tgError.message)
+    } catch {
+      console.error("[send-login] Telegram delivery crashed", { orderId })
     }
 
     // STEP 5: OneSignal push notification (isolated)
@@ -227,23 +303,23 @@ async function handleSendLoginEmail(req, res) {
         })
       })
       const pushData = await pushRes.json()
-      console.log("[send-login] push response:", JSON.stringify(pushData))
+      console.log("[send-login] push response status:", pushRes.status)
       
       if (pushData.playerIds === 0) {
         console.warn("[send-login] ⚠️ user has no push subscription")
       } else {
         console.log("[send-login] ✅ push sent")
       }
-    } catch (pushError) {
-      console.error("[send-login] ⚠️ push crashed:", pushError.message)
+    } catch {
+      console.error("[send-login] push delivery crashed", { orderId })
     }
 
     console.log("[send-login] ============ ALL STEPS COMPLETE ============")
     return res.status(200).json({ success: true, message: "Login sent" })
 
-  } catch (e) {
-    console.error("[send-login] FATAL CRASH:", e.message)
-    return res.status(500).json({ success: false, error: e.message })
+  } catch {
+    console.error("[send-login] request failed")
+    return res.status(500).json({ success: false, error: "SEND_LOGIN_FAILED" })
   }
 }
 
@@ -254,52 +330,15 @@ async function handleBroadcastEmail(req, res) {
     if (typeof parsedBody === 'string') {
       try {
         parsedBody = JSON.parse(parsedBody);
-      } catch (err) {}
+      } catch {}
     }
     parsedBody = parsedBody || {};
 
-    const { subject, html, recipientEmails, callerClerkId } = parsedBody;
-
-    if (!callerClerkId) {
-      return res.status(400).json({ success: false, error: "Caller Clerk ID is required for security verification." });
-    }
+    const { subject, html, recipientEmails } = parsedBody;
 
     const supabase = getClient();
-
-    // Verify caller is admin
-    let isAuthorized = false;
-    const { data: callerProfile, error: verifyErr } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("clerk_id", callerClerkId)
-      .maybeSingle();
-
-    if (callerProfile && callerProfile.role === 'admin') {
-      isAuthorized = true;
-    } else {
-      // Fallback check
-      const secretKey = process.env.CLERK_SECRET_KEY;
-      if (secretKey) {
-        try {
-          const clerkUserRes = await fetch(
-            `https://api.clerk.com/v1/users/${callerClerkId}`,
-            { headers: { Authorization: "Bearer " + secretKey } }
-          );
-          if (clerkUserRes.ok) {
-            const clerkUser = await clerkUserRes.json();
-            if (clerkUser?.public_metadata?.role === "admin") {
-              isAuthorized = true;
-            }
-          }
-        } catch (clerkErr) {
-          console.error("[broadcast] Clerk role fallback check error:", clerkErr);
-        }
-      }
-    }
-
-    if (!isAuthorized) {
-      return res.status(403).json({ success: false, error: "Access denied. Unauthorized." });
-    }
+    const writer = await requireVerifiedAdmin(req, res, supabase);
+    if (!writer) return;
 
     if (!subject || !html) {
       return res.status(400).json({ success: false, error: "Missing subject or content" });
@@ -441,98 +480,195 @@ async function handleBroadcastEmail(req, res) {
     }
 
     if (errors.length > 0) {
-      console.error("[BROADCAST] Some emails failed:", errors);
+      console.error("[broadcast] email delivery failures", {
+        count: errors.length,
+      });
     }
 
     return res.status(200).json({
       success: true,
       resultsCount: results.length,
-      errorCount: errors.length,
-      errors: errors.length > 0 ? errors : undefined
+      errorCount: errors.length
     });
 
-  } catch (e) {
-    console.error("[broadcast] error:", e.message);
-    return res.status(500).json({ success: false, error: e.message });
+  } catch {
+    console.error("[broadcast] request failed");
+    return res.status(500).json({ success: false, error: "BROADCAST_FAILED" });
   }
 }
 
 async function handleAdd(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
   try {
-    const { collection, data } = req.body || JSON.parse(req.body);
+    const parsedBody =
+      typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+    const { collection, data } = parsedBody;
     if (!collection || !data) return res.status(400).json({ error: "Missing required fields" });
-    const { data: result, error } = await getClient().from(collection).insert([data]).select().maybeSingle();
+    if (collection !== "messages") {
+      return res.status(403).json({ error: "COLLECTION_NOT_ALLOWED" });
+    }
+    if (
+      Object.keys(data).some(
+        (field) => !ADMIN_MESSAGE_INSERT_FIELDS.has(field),
+      )
+    ) {
+      return res.status(400).json({ error: "MESSAGE_FIELDS_INVALID" });
+    }
+    const supabase = getClient();
+    const writer = await requireSupportWriter(req, res, supabase);
+    if (!writer) return;
+
+    const chatId = String(data.chat_id || "").trim();
+    if (!chatId) {
+      return res.status(400).json({ error: "CHAT_ID_REQUIRED" });
+    }
+
+    const { data: chat, error: chatError } = await supabase
+      .from("chats")
+      .select("id, user_id, chat_type")
+      .eq("id", chatId)
+      .maybeSingle();
+    if (chatError) {
+      return res.status(500).json({ error: "CHAT_LOOKUP_FAILED" });
+    }
+    if (!chat) return res.status(404).json({ error: "CHAT_NOT_FOUND" });
+
+    const senderRole = String(data.sender_role || "").toLowerCase();
+    if (!["admin", "system", "bot"].includes(senderRole)) {
+      return res.status(403).json({
+        error: "SUPPORT_WRITER_ROLE_INVALID",
+      });
+    }
+
+    const supportChat = isSupportChat(chat);
+    const isConversationOwner =
+      supportChat && writer.actor.userId === chat.user_id;
+    if (
+      !writer.isAdmin &&
+      (senderRole === "admin" || !isConversationOwner)
+    ) {
+      return res.status(403).json({ error: "SUPPORT_WRITE_FORBIDDEN" });
+    }
+
+    const insertData = {
+      ...data,
+      chat_id: chat.id,
+      sender_id:
+        senderRole === "admin" ? writer.actor.userId : data.sender_id,
+    };
+    if (supportChat) {
+      if (!String(chat.user_id || "").startsWith("user_")) {
+        return res.status(500).json({ error: "SUPPORT_CHAT_OWNER_REQUIRED" });
+      }
+      const canonical = await resolveExistingSupportChat(
+        supabase,
+        chat.user_id,
+      );
+      if (!canonical.chat) {
+        return res.status(404).json({ error: "SUPPORT_CHAT_NOT_FOUND" });
+      }
+      if (canonical.chat.id !== chat.id) {
+        return res.status(409).json({ error: "SUPPORT_CHAT_NOT_CANONICAL" });
+      }
+      insertData.user_id = canonical.canonicalUserId;
+    }
+
+    const { data: result, error } = await supabase
+      .from("messages")
+      .insert([insertData])
+      .select()
+      .maybeSingle();
     if (error) throw error;
     return res.json({ success: true, id: result?.id });
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
+  } catch {
+    console.error("[admin-add] insert failed");
+    return res.status(500).json({ error: "INSERT_FAILED" });
   }
 }
 
 async function handleUpdate(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
   try {
-    let body = req.body || JSON.parse(req.body);
+    const body =
+      typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
     const { collection, id, data } = body;
     if (!collection || !id || !data) return res.status(400).json({ error: "Missing required fields" });
-
-    if (collection === 'orders' && data.status === 'confirmed') {
-      data.confirmed_at = new Date().toISOString();
-      data.confirmed_by = 'Admin';
-      const { data: orderData } = await getClient().from('orders').select('*').eq('id', id).single();
-      if (orderData) {
-        let token = process.env.VITE_TELEGRAM_ADMIN_TELEGRAM_BOT_TOKEN;
-        let chatId = process.env.VITE_TELEGRAM_ADMIN_GROUP_ID;
-        if (chatId && !chatId.startsWith('-100')) chatId = '-100' + chatId.replace(/^-/, '');
-        if (token && chatId) {
-          try {
-            const caption = `🔥 ORDER CONFIRMED\n------------------------\n👤 User: ${orderData.user_email}\n📦 Product: ${orderData.product_name}\n💰 Amount: ₦${orderData.amount}\n------------------------\n🔗 Confirmed By: ${data.confirmed_by}`;
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: caption })
-            });
-          } catch (err) { }
-        }
-      }
+    if (collection !== "chats") {
+      return res.status(403).json({ error: "COLLECTION_NOT_ALLOWED" });
     }
 
-    let query = getClient().from(collection).update(data);
-    if (collection === 'site_settings') query = query.eq('setting_key', id);
-    else query = query.eq('id', id);
+    const supabase = getClient();
+    const writer = await requireSupportWriter(req, res, supabase);
+    if (!writer) return;
 
-    const { error } = await query;
+    const { data: chat, error: chatError } = await supabase
+      .from("chats")
+      .select("id, user_id, chat_type")
+      .eq("id", id)
+      .maybeSingle();
+    if (chatError) {
+      return res.status(500).json({ error: "CHAT_LOOKUP_FAILED" });
+    }
+    if (!chat) return res.status(404).json({ error: "CHAT_NOT_FOUND" });
+
+    const supportChat = isSupportChat(chat);
+    if (
+      !writer.isAdmin &&
+      (!supportChat || writer.actor.userId !== chat.user_id)
+    ) {
+      return res.status(403).json({ error: "CHAT_UPDATE_FORBIDDEN" });
+    }
+
+    const allowedKeys = new Set(
+      writer.isAdmin
+        ? [
+            "last_message",
+            "last_message_at",
+            "needs_admin_attention",
+            "updated_at",
+            "status",
+            "unread_count",
+            "assigned_admin_id",
+          ]
+        : [
+            "last_message",
+            "last_message_at",
+            "needs_admin_attention",
+            "updated_at",
+          ],
+    );
+    const updateFields = Object.keys(data);
+    if (
+      updateFields.length === 0 ||
+      updateFields.some((key) => !allowedKeys.has(key))
+    ) {
+      return res.status(400).json({
+        error: "CHAT_UPDATE_FIELDS_INVALID",
+      });
+    }
+
+    const { error } = await supabase
+      .from("chats")
+      .update(data)
+      .eq("id", id);
     if (error) throw error;
     return res.json({ success: true });
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
+  } catch {
+    console.error("[admin-update] update failed");
+    return res.status(500).json({ error: "UPDATE_FAILED" });
   }
 }
 
 async function handleDelete(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-  try {
-    const { collection, id } = req.body || JSON.parse(req.body);
-    if (!collection || !id) return res.status(400).json({ error: "Missing required fields" });
-    const { error } = await getClient().from(collection).delete().eq('id', id);
-    if (error) throw error;
-    return res.json({ success: true });
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
-  }
+  return res.status(405).json({ error: "ADMIN_DELETE_DISABLED" });
 }
 
 async function handleListSubscriptions(req, res) {
   try {
-    const callerClerkId = req.headers['x-caller-clerk-id'] || req.query.callerClerkId || req.body.callerClerkId;
-    if (!callerClerkId) return res.status(400).json({ success: false, error: "Caller Clerk ID required" });
-
     const supabase = getClient();
-    
-    // Verify admin
-    const { data: callerProfile } = await supabase.from("profiles").select("role").eq("clerk_id", callerClerkId).maybeSingle();
-    if (!callerProfile || callerProfile.role !== 'admin') {
-      return res.status(403).json({ success: false, error: "Unauthorized" });
-    }
+    const writer = await requireVerifiedAdmin(req, res, supabase);
+    if (!writer) return;
 
     const { data: subscriptions, error } = await supabase
       .from("subscriptions")
@@ -542,23 +678,16 @@ async function handleListSubscriptions(req, res) {
 
     if (error) throw error;
     return res.status(200).json({ success: true, subscriptions });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: e.message });
+  } catch {
+    return res.status(500).json({ success: false, error: "LIST_SUBSCRIPTIONS_FAILED" });
   }
 }
 
 async function handleListProfiles(req, res) {
   try {
-    const callerClerkId = req.headers['x-caller-clerk-id'] || req.query.callerClerkId || req.body.callerClerkId;
-    if (!callerClerkId) return res.status(400).json({ success: false, error: "Caller Clerk ID required" });
-
     const supabase = getClient();
-    
-    // Verify admin
-    const { data: callerProfile } = await supabase.from("profiles").select("role").eq("clerk_id", callerClerkId).maybeSingle();
-    if (!callerProfile || callerProfile.role !== 'admin') {
-      return res.status(403).json({ success: false, error: "Unauthorized" });
-    }
+    const writer = await requireVerifiedAdmin(req, res, supabase);
+    if (!writer) return;
 
     const { data: profiles, error } = await supabase
       .from("profiles")
@@ -568,23 +697,16 @@ async function handleListProfiles(req, res) {
 
     if (error) throw error;
     return res.status(200).json({ success: true, profiles });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: e.message });
+  } catch {
+    return res.status(500).json({ success: false, error: "LIST_PROFILES_FAILED" });
   }
 }
 
 async function handleListPortfolioPurchases(req, res) {
   try {
-    const callerClerkId = req.headers['x-caller-clerk-id'] || req.query.callerClerkId || req.body.callerClerkId;
-    if (!callerClerkId) return res.status(400).json({ success: false, error: "Caller Clerk ID required" });
-
     const supabase = getClient();
-    
-    // Verify admin
-    const { data: callerProfile } = await supabase.from("profiles").select("role").eq("clerk_id", callerClerkId).maybeSingle();
-    if (!callerProfile || callerProfile.role !== 'admin') {
-      return res.status(403).json({ success: false, error: "Unauthorized" });
-    }
+    const writer = await requireVerifiedAdmin(req, res, supabase);
+    if (!writer) return;
 
     const { data: portfolio_purchases, error } = await supabase
       .from("portfolio_purchases")
@@ -594,23 +716,16 @@ async function handleListPortfolioPurchases(req, res) {
 
     if (error) throw error;
     return res.status(200).json({ success: true, portfolio_purchases });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: e.message });
+  } catch {
+    return res.status(500).json({ success: false, error: "LIST_PORTFOLIO_PURCHASES_FAILED" });
   }
 }
 
 async function handleListOrders(req, res) {
   try {
-    const callerClerkId = req.headers['x-caller-clerk-id'] || req.query.callerClerkId || req.body.callerClerkId;
-    if (!callerClerkId) return res.status(400).json({ success: false, error: "Caller Clerk ID required" });
-
     const supabase = getClient();
-    
-    // Verify admin
-    const { data: callerProfile } = await supabase.from("profiles").select("role").eq("clerk_id", callerClerkId).maybeSingle();
-    if (!callerProfile || callerProfile.role !== 'admin') {
-      return res.status(403).json({ success: false, error: "Unauthorized" });
-    }
+    const writer = await requireVerifiedAdmin(req, res, supabase);
+    if (!writer) return;
 
     const { data: orders, error } = await supabase
       .from("orders")
@@ -620,13 +735,17 @@ async function handleListOrders(req, res) {
 
     if (error) throw error;
     return res.status(200).json({ success: true, orders });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: e.message });
+  } catch {
+    return res.status(500).json({ success: false, error: "LIST_ORDERS_FAILED" });
   }
 }
 
 async function handleListAdmins(req, res) {
   try {
+    const supabase = getClient();
+    const writer = await requireVerifiedAdmin(req, res, supabase);
+    if (!writer) return;
+
     const secretKey = process.env.CLERK_SECRET_KEY;
     if (!secretKey || secretKey === "your_clerk_secret_key" || secretKey.startsWith("your_")) {
       console.warn("[list-admins] CLERK_SECRET_KEY is not configured or is placeholder");
@@ -643,16 +762,17 @@ async function handleListAdmins(req, res) {
     );
 
     if (!clerkRes.ok) {
-      const errText = await clerkRes.text();
-      console.error("[list-admins] Clerk API error response:", errText);
-      throw new Error(`Clerk API returned status ${clerkRes.status}: ${errText}`);
+      console.error("[list-admins] Clerk lookup failed", {
+        status: clerkRes.status,
+      });
+      throw new Error("CLERK_ADMIN_LOOKUP_FAILED");
     }
     
     const allUsers = await clerkRes.json();
     console.log("[list-admins] total clerk users:", allUsers?.length);
 
     if (!Array.isArray(allUsers)) {
-      console.warn("[list-admins] Expected array of users, got:", allUsers);
+      console.warn("[list-admins] Clerk lookup returned an invalid shape");
       return res.status(200).json({ success: true, admins: [] });
     }
 
@@ -685,83 +805,20 @@ async function handleListAdmins(req, res) {
       admins 
     });
 
-  } catch (e) {
-    console.error("[list-admins] error:", e.message);
+  } catch {
+    console.error("[list-admins] request failed");
     return res.status(500).json({ 
       success: false, 
-      error: e.message 
+      error: "LIST_ADMINS_FAILED"
     });
   }
 }
 
 async function handleFinancialDashboard(req, res) {
   try {
-    const callerClerkId = req.headers['x-caller-clerk-id'] || req.query.callerClerkId || req.body.callerClerkId;
-    if (!callerClerkId) {
-      return res.status(400).json({ success: false, error: "Caller Clerk ID is required for security verification." });
-    }
-
     const supabase = getClient();
-
-    // Secure Gate check: verify caller is indeed an admin
-    let isAuthorized = false;
-    const { data: callerProfile, error: verifyErr } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("clerk_id", callerClerkId)
-      .maybeSingle();
-
-    if (callerProfile && callerProfile.role === 'admin') {
-      isAuthorized = true;
-    } else {
-      // Fallback check: verify with Clerk API directly using the secret key
-      const secretKey = process.env.CLERK_SECRET_KEY;
-      if (secretKey) {
-        try {
-          const clerkUserRes = await fetch(
-            `https://api.clerk.com/v1/users/${callerClerkId}`,
-            {
-              headers: {
-                Authorization: "Bearer " + secretKey
-              }
-            }
-          );
-          if (clerkUserRes.ok) {
-            const clerkUser = await clerkUserRes.json();
-            if (clerkUser?.public_metadata?.role === "admin") {
-              isAuthorized = true;
-              // Auto-heal/sync database role to admin!
-              if (callerProfile) {
-                await supabase
-                  .from("profiles")
-                  .update({ role: 'admin', updated_at: new Date().toISOString() })
-                  .eq("clerk_id", callerClerkId);
-              } else {
-                // profile does not exist yet, let's create it
-                const email = clerkUser.email_addresses?.[0]?.email_address || "";
-                const fullName = `${clerkUser.first_name || ''} ${clerkUser.last_name || ''}`.trim();
-                await supabase.from("profiles").insert({
-                  clerk_id: callerClerkId,
-                  email,
-                  full_name: fullName || "Admin User",
-                  role: "admin",
-                  balance: 0,
-                  updated_at: new Date().toISOString()
-                });
-              }
-            }
-          } else {
-            console.error(`[financial-dashboard] Clerk returned status ${clerkUserRes.status}`);
-          }
-        } catch (clerkErr) {
-          console.error("[financial-dashboard] Clerk role fallback check error:", clerkErr);
-        }
-      }
-    }
-
-    if (!isAuthorized) {
-      return res.status(403).json({ success: false, error: "Access denied. Unauthorized request." });
-    }
+    const writer = await requireVerifiedAdmin(req, res, supabase);
+    if (!writer) return;
 
     // 1. Global Balance Tracking (aggregate total of all balances)
     const { data: profiles, error: pErr } = await supabase
@@ -792,16 +849,16 @@ async function handleFinancialDashboard(req, res) {
       transactions: txs
     });
 
-  } catch (e) {
-    console.error("[financial-dashboard] error:", e.message);
-    return res.status(500).json({ success: false, error: e.message });
+  } catch {
+    console.error("[financial-dashboard] request failed");
+    return res.status(500).json({ success: false, error: "FINANCIAL_DASHBOARD_FAILED" });
   }
 }
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*")
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS, GET")
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type")
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
   if (req.method === "OPTIONS") return res.status(200).end()
 
   const urlObj = new URL(req.originalUrl || req.url, `http://${req.headers?.host || 'localhost'}`);

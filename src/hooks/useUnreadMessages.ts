@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
-import { useAuth, useUser } from "@clerk/clerk-react";
-import { supabase } from "../lib/supabase";
+import { useAuth } from "@clerk/clerk-react";
+import { getUnreadSupportMessageCount } from "../services/chatService";
 
 export function useUnreadMessages() {
   const { userId } = useAuth();
-  const { user } = useUser();
   const [unreadCount, setUnreadCount] = useState<number>(() => {
     const cached = localStorage.getItem("chat_unread_count");
     return cached ? parseInt(cached, 10) : 0;
@@ -24,25 +23,13 @@ export function useUnreadMessages() {
   useEffect(() => {
     if (!userId) return;
 
-    const userEmail = user?.primaryEmailAddress?.emailAddress;
-
     const fetchUnreadCount = async () => {
-      let query = supabase
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("read_by_user", false)
-        .neq("sender_role", "user");
-
-      if (userEmail) {
-        query = query.or(`user_id.eq.${userId},user_email.eq.${userEmail}`);
-      } else {
-        query = query.eq("user_id", userId);
-      }
-
-      const { count, error } = await query;
-      if (!error && count !== null) {
+      try {
+        const count = await getUnreadSupportMessageCount(userId);
         setUnreadCount(count);
         localStorage.setItem("chat_unread_count", String(count));
+      } catch {
+        console.error("Failed to refresh support unread count");
       }
     };
 
@@ -63,7 +50,7 @@ export function useUnreadMessages() {
     return () => {
       window.removeEventListener('unread-count-changed', handleUnreadChanged);
     };
-  }, [userId, user]);
+  }, [userId]);
 
   return { unreadCount, setUnreadCount };
 }

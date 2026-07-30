@@ -41,6 +41,7 @@ import { VoiceNotePlayer } from "../components/chat/VoiceNotePlayer";
 import { useVoiceRecorder } from "../hooks/useVoiceRecorder";
 import {
   filterSupportChatRows,
+  LEGACY_SUPPORT_MESSAGE_ROLES,
   mergeSupportChatMessages,
   markMessageFailed,
   markMessageSent,
@@ -169,8 +170,8 @@ export default function Chat() {
         .from("chats")
         .update({ typing_users: current })
         .eq("id", chat.id);
-    } catch (e) {
-      console.error("[typing] update error:", e);
+    } catch {
+      console.error("[typing] update failed", { chatId: chat?.id });
     }
   };
 
@@ -223,37 +224,14 @@ export default function Chat() {
         getToken,
       );
 
-      const isTextMessage =
-        !optimisticMsg.attachmentUrl && !optimisticMsg.audioUrl;
-
       setMessages((prev) =>
         markMessageSent(prev, optimisticMsg.id!, insertedId),
       );
-
-      if (isTextMessage) {
-        Promise.resolve()
-          .then(() => getToken())
-          .then((token) =>
-            fetch("/api/chat/alert", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                message: optimisticMsg.message,
-                email:
-                  user?.primaryEmailAddress?.emailAddress || "Unknown User",
-                userId,
-              }),
-            }),
-          )
-          .catch((error) =>
-            console.error("Telegram alert failed:", error),
-          );
-      }
-    } catch (error) {
-      console.error("Failed to send message:", error);
+    } catch {
+      console.error("Failed to send support message", {
+        chatId: chat.id,
+        senderRole: optimisticMsg.senderRole,
+      });
       setMessages((prev) => markMessageFailed(prev, optimisticMsg.id!));
 
       if (optimisticMsg.message) {
@@ -300,8 +278,8 @@ export default function Chat() {
       setMessages((prev) => [...prev, optimisticFileMsg]);
       await persistOptimisticMessage(optimisticFileMsg);
 
-    } catch (e) {
-      console.error(e);
+    } catch {
+      console.error("Voice note upload failed", { chatId: chat?.id });
       toast.error("Failed to upload voice note");
     } finally {
       setUploading(false);
@@ -351,8 +329,8 @@ export default function Chat() {
             setOrder(orderData);
           }
         }
-      } catch (error) {
-        console.error("Chat init failed:", error);
+      } catch {
+        console.error("Support chat initialization failed");
       } finally {
         setLoading(false);
       }
@@ -402,26 +380,44 @@ export default function Chat() {
 
     const fetchMessages = async () => {
       try {
-        const { data, error } = await supabase
-          .from("messages")
-          .select("*")
-          .eq("chat_id", chat.id)
-          .order("created_at", { ascending: true });
+        const canonicalUserId = String(userId || "").trim();
+        if (!canonicalUserId) return;
+        const supportChatIds =
+          chat.supportChatIds?.filter(Boolean) || [chat.id];
 
-        if (error) {
-          console.error("[support-chat] failed to fetch messages:", error);
+        const [canonicalResult, legacyResult] = await Promise.all([
+          supabase
+            .from("messages")
+            .select("*")
+            .in("chat_id", supportChatIds)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("messages")
+            .select("*")
+            .is("chat_id", null)
+            .eq("user_id", canonicalUserId)
+            .in("sender_role", [...LEGACY_SUPPORT_MESSAGE_ROLES])
+            .order("created_at", { ascending: true }),
+        ]);
+
+        if (canonicalResult.error || legacyResult.error) {
+          console.error("[support-chat] failed to fetch message history");
           toast.error("Messages could not be loaded. Please try again.", {
             id: "support-chat-history-error",
           });
           return;
         }
 
-        const chatRows = filterSupportChatRows(data || [], chat.id);
+        const chatRows = filterSupportChatRows(
+          [...(canonicalResult.data || []), ...(legacyResult.data || [])],
+          supportChatIds,
+          canonicalUserId,
+        );
 
         // Map Supabase columns to ChatMessage interface
         const msgs = chatRows.map((d: any) => ({
           ...d,
-          chatId: d.chat_id,
+          chatId: d.chat_id || chat.id,
           senderId: d.sender_id,
           senderName: d.sender_name,
           senderRole: d.sender_role,
@@ -471,20 +467,29 @@ export default function Chat() {
         });
 
         // Mark only messages in this chat that were not sent by this user.
-        if (userId) {
-          const { error: readError } = await supabase
-            .from("messages")
-            .update({ read_by_user: true })
-            .eq("chat_id", chat.id)
-            .eq("read_by_user", false)
-            .or(`sender_id.is.null,sender_id.neq.${String(userId)}`);
+        if (canonicalUserId) {
+          const [canonicalReadResult, legacyReadResult] = await Promise.all([
+            supabase
+              .from("messages")
+              .update({ read_by_user: true })
+              .in("chat_id", supportChatIds)
+              .eq("read_by_user", false)
+              .neq("sender_role", "user"),
+            supabase
+              .from("messages")
+              .update({ read_by_user: true })
+              .is("chat_id", null)
+              .eq("user_id", canonicalUserId)
+              .in("sender_role", [...LEGACY_SUPPORT_MESSAGE_ROLES])
+              .eq("read_by_user", false),
+          ]);
 
-          if (readError) {
-            console.error("Error marking messages as read:", readError);
+          if (canonicalReadResult.error || legacyReadResult.error) {
+            console.error("Failed to mark support messages as read");
           }
         }
-      } catch (error) {
-        console.error("[support-chat] failed to fetch messages:", error);
+      } catch {
+        console.error("[support-chat] failed to fetch message history");
         toast.error("Messages could not be loaded. Please try again.", {
           id: "support-chat-history-error",
         });
@@ -515,29 +520,33 @@ export default function Chat() {
     
       const channelName = "support-chat-" + chatId;
     
-      const channel = supabase.channel(channelName, {
+      let channel = supabase.channel(channelName, {
         config: {
           broadcast: { self: true },
         }
       });
     
-      channel
-        .on(
+      const supportChatIds =
+        chat.supportChatIds?.filter(Boolean) || [chatId];
+      supportChatIds.forEach((supportChatId) => {
+        channel = channel.on(
           "postgres_changes",
           {
             event: "INSERT",
             schema: "public",
             table: "messages",
-            filter: "chat_id=eq." + chatId
+            filter: "chat_id=eq." + supportChatId
           },
           (payload) => {
-            console.log("[realtime] NEW MESSAGE:", payload.new);
             const d = payload.new;
-            if (d.chat_id !== chatId) return;
+            if (!supportChatIds.includes(d.chat_id)) {
+              fetchMessages();
+              return;
+            }
 
             const newMsg = {
               ...d,
-              chatId: d.chat_id,
+              chatId: d.chat_id || chatId,
               senderId: d.sender_id,
               senderName: d.sender_name,
               senderRole: d.sender_role,
@@ -573,10 +582,12 @@ export default function Chat() {
                 behavior: "smooth" 
               });
             });
-          }
-        )
-        .subscribe((status, err) => {
-          console.log("[realtime] STATUS:", status, err || "");
+          },
+        );
+      });
+
+      channel.subscribe((status) => {
+          console.log("[realtime] STATUS:", status);
           setRealtimeStatus(status as any);
           
           if (status === "SUBSCRIBED") {
@@ -667,6 +678,7 @@ export default function Chat() {
             senderId: "ai-bot",
             senderName: "Support Bot",
             orderId: targetOrderId || undefined,
+            userId,
           },
           getToken,
         );
@@ -677,8 +689,8 @@ export default function Chat() {
             .update({ welcome_sent: true })
             .eq("id", targetOrderId);
         }
-      } catch (e) {
-        console.warn("Welcome flow fail:", e);
+      } catch {
+        console.warn("Support welcome flow failed", { chatId: chat?.id });
       }
     };
 
@@ -1168,12 +1180,7 @@ export default function Chat() {
 
                       try {
                         setUploadProgress(40);
-                        const cloudinaryUrl = await compressAndUpload(
-                          file,
-                          (status) => {
-                            console.log(status);
-                          },
-                        );
+                        const cloudinaryUrl = await compressAndUpload(file);
 
                         setUploadProgress(80);
 
@@ -1199,8 +1206,10 @@ export default function Chat() {
 
                           await persistOptimisticMessage(optimisticFileMsg);
                         }
-                      } catch (err) {
-                        console.error("Upload failed", err);
+                      } catch {
+                        console.error("Support attachment upload failed", {
+                          chatId: chat.id,
+                        });
                         toast.error("Upload failed");
                       } finally {
                         setUploading(false);

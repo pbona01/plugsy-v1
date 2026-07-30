@@ -51,6 +51,10 @@ import {
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { chatService } from '../services/chatService';
 import { useOnlinePresence } from '../contexts/OnlinePresenceContext';
+import {
+  isSupportChat,
+  selectCanonicalSupportChat,
+} from '../utils/supportChatMessages';
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -85,6 +89,38 @@ export default function Admin() {
 
   // Safety utility to ensure we always have an array
   const safeArray = (arr: any) => Array.isArray(arr) ? arr : [];
+
+  const resolveClerkUserId = (candidate: unknown) => {
+    const value = String(candidate || "").trim();
+    if (!value) return "";
+    if (value.startsWith("user_")) return value;
+
+    const profile = [...safeArray(allUsers), ...safeArray(users), ...safeArray(admins)]
+      .find((entry: any) => entry?.id === value || entry?.clerk_id === value);
+    return String(profile?.clerk_id || "").trim();
+  };
+
+  const supportChatHref = (candidateUserId: unknown, knownChatId?: unknown) => {
+    const chatId = String(knownChatId || "").trim();
+    const clerkUserId = resolveClerkUserId(candidateUserId);
+    const canonicalChat = clerkUserId
+      ? selectCanonicalSupportChat(
+          safeArray(chats).filter(
+            (chat: any) =>
+              isSupportChat(chat) &&
+              String(chat.user_id || chat.userId || "") === clerkUserId,
+          ),
+        )
+      : null;
+    if (canonicalChat?.id) {
+      return `/admin/chats?chat_id=${encodeURIComponent(String(canonicalChat.id))}`;
+    }
+    if (chatId) {
+      return `/admin/chats?chat_id=${encodeURIComponent(chatId)}`;
+    }
+    if (!clerkUserId) return "/admin/chats";
+    return `/admin/chats?user_id=${encodeURIComponent(clerkUserId)}`;
+  };
 
   // Safe formatting helper for currency
   const formatCurrency = (amount: any) => {
@@ -149,9 +185,9 @@ export default function Admin() {
       if (!token) return;
       await setSupabaseAuth(getToken, true);
 
-      const res = await fetch(`/api/admin?action=financial-dashboard&callerClerkId=${user?.id}`, {
+      const res = await fetch("/api/admin?action=financial-dashboard", {
         headers: {
-          'x-caller-clerk-id': user?.id || ''
+          Authorization: `Bearer ${token}`,
         }
       });
       const data = await res.json();
@@ -173,9 +209,8 @@ export default function Admin() {
 
   const handleUpdateTxStatus = async (txId: string, newStatus: 'success' | 'failed') => {
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co';
-      const serviceKey = await Promise.resolve(import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || import.meta.env.SUPABASE_SERVICE_ROLE_KEY);
-      const adminClient = serviceKey ? createClient(supabaseUrl, serviceKey as string, { auth: { persistSession: false } }) : supabase;
+      await setSupabaseAuth(getToken, true);
+      const adminClient = supabase;
 
       // Fetch transaction
       const { data: tx, error: fetchErr } = await adminClient
@@ -186,6 +221,16 @@ export default function Admin() {
 
       if (fetchErr || !tx) {
         toast.error("Failed to find transaction detail.");
+        return;
+      }
+
+      const txType = (tx.type || "").toUpperCase();
+      const isWalletCommerceWithdrawal =
+        txType === "WITHDRAW" ||
+        txType === "WITHDRAWAL" ||
+        String(tx.reference || "").startsWith("wallet_withdrawal_");
+      if (isWalletCommerceWithdrawal) {
+        toast.error("Withdrawal status is read-only and must be confirmed by the provider.");
         return;
       }
 
@@ -203,13 +248,12 @@ export default function Admin() {
 
         let newBalance = userProfile.balance || 0;
         
-        const txType = (tx.type || "").toUpperCase();
         if (txType === "FUND" || txType === "WALLET_FUNDING" || txType === "P2P_RECEIVE") {
           // If a deposit or received funds fail, do NOT refund and do NOT deduct. 
           // The money was never added to the balance because it was pending.
           newBalance = newBalance; // Unchanged
-        } else if (txType === "WITHDRAW" || txType === "P2P_SEND") {
-          // If a withdrawal or sent funds fail, refund them (add to balance)
+        } else if (txType === "P2P_SEND") {
+          // If sent funds fail, refund them (add to balance)
           const refundAmount = Number(tx.amount || 0) + Number(tx.fee || 0);
           newBalance = newBalance + refundAmount;
         } else {
@@ -227,26 +271,6 @@ export default function Admin() {
           toast.error("Failed to refund user balance: " + balanceErr.message);
           return;
         }
-
-        // Update corresponding withdrawal status if any
-        await adminClient
-          .from("withdrawals")
-          .update({ status: "failed", admin_note: "Manually marked failed" })
-          .eq("user_id", tx.user_id)
-          .eq("amount", tx.amount)
-          .eq("status", "pending");
-      } else if (newStatus === 'success') {
-        // Update corresponding withdrawal status if any
-        await adminClient
-          .from("withdrawals")
-          .update({
-            status: "confirmed",
-            confirmed_by: user?.id || 'admin',
-            confirmed_at: new Date().toISOString()
-          })
-          .eq("user_id", tx.user_id)
-          .eq("amount", tx.amount)
-          .eq("status", "pending");
       }
 
       // Update wallet transaction status
@@ -298,9 +322,8 @@ export default function Admin() {
   const fetchWithdrawals = async () => {
     setWithdrawalsLoading(true);
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co';
-      const serviceKey = await Promise.resolve(import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || import.meta.env.SUPABASE_SERVICE_ROLE_KEY);
-      const adminClient = serviceKey ? createClient(supabaseUrl, serviceKey as string, { auth: { persistSession: false } }) : supabase;
+      await setSupabaseAuth(getToken, true);
+      const adminClient = supabase;
 
       const { data, error } = await adminClient
         .from('withdrawals')
@@ -401,7 +424,11 @@ export default function Admin() {
                 // Use API for critical tables to bypass client-side RLS limits securely
                 if (collection === 'orders' || collection === 'profiles' || collection === 'subscriptions') {
                   console.log(`[executeFetch] Using API for ${collection} fetch...`);
-                  const res = await fetch(`/api/admin?action=list-${collection}&callerClerkId=${userId}`);
+                  const res = await fetch(`/api/admin?action=list-${collection}`, {
+                    headers: {
+                      Authorization: `Bearer ${token}`,
+                    },
+                  });
                   if (res.ok) {
                     const data = await res.json();
                     if (data.success) {
@@ -413,15 +440,8 @@ export default function Admin() {
                   console.warn(`[executeFetch] API fetch for ${collection} failed, falling back to direct Supabase...`);
                 }
 
-                let clientToUse = supabase;
-                const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co';
-                const serviceKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || import.meta.env.SUPABASE_SERVICE_ROLE_KEY;
-                
-                if (serviceKey && ['orders', 'profiles', 'withdrawals', 'subscriptions', 'chats', 'messages', 'portfolio_purchases'].includes(collection)) {
-                   console.log(`[executeFetch] Using service role for ${collection}`);
-                   clientToUse = createClient(supabaseUrl, serviceKey as string, { auth: { persistSession: false } });
-                }
-                
+                const clientToUse = supabase;
+
                 let query = clientToUse.from(table).select('*');
                 
                 if (['profiles', 'orders', 'plans', 'subscriptions', 'withdrawals', 'portfolio_purchases'].includes(collection)) {
@@ -524,7 +544,11 @@ export default function Admin() {
       
       // Fetch all admins from Clerk backend and set state (Bug 2)
       try {
-        const res = await fetch("/api/admin?action=list-admins");
+        const res = await fetch("/api/admin?action=list-admins", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
         if (res.ok) {
           const data = await res.json();
           if (data && data.success) {
@@ -644,9 +668,6 @@ export default function Admin() {
            console.log('Admin broadcast new_message');
            fetchAll();
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
-           fetchAll();
-        })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'chats' }, () => {
            fetchAll();
         })
@@ -707,10 +728,16 @@ export default function Admin() {
       console.log("[admin] loading stats from database via admin API proxy...");
       try {
         if (!userId) return;
+        const token = await getToken();
+        if (!token) return;
         await setSupabaseAuth(getToken, true);
         
         // Fetch ALL orders via admin API proxy to bypass RLS securely
-        const ordersRes = await fetch(`/api/admin?action=list-orders&callerClerkId=${userId}`);
+        const ordersRes = await fetch("/api/admin?action=list-orders", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
         if (!ordersRes.ok) throw new Error("Failed to fetch orders from admin API");
         const ordersData = await ordersRes.json();
         if (!ordersData.success) throw new Error(ordersData.error || "Unsuccessful orders API fetch");
@@ -749,14 +776,22 @@ export default function Admin() {
         }).length;
 
         // Portfolio revenue via admin API proxy
-        const portfolioRes = await fetch(`/api/admin?action=list-portfolio_purchases&callerClerkId=${userId}`);
+        const portfolioRes = await fetch("/api/admin?action=list-portfolio_purchases", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
         const portfolioData = portfolioRes.ok ? await portfolioRes.json() : { success: false };
         const portfolioPurchasesList = portfolioData.success ? (portfolioData.portfolio_purchases || []) : [];
         const portfolioRevenue = portfolioPurchasesList
           .reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0);
 
         // Total users via admin API proxy
-        const profilesRes = await fetch(`/api/admin?action=list-profiles&callerClerkId=${userId}`);
+        const profilesRes = await fetch("/api/admin?action=list-profiles", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
         const profilesData = profilesRes.ok ? await profilesRes.json() : { success: false };
         const profilesList = profilesData.success ? (profilesData.profiles || []) : [];
         const totalUsersCount = profilesList.length;
@@ -886,13 +921,17 @@ export default function Admin() {
     setSendingLogins(prev => ({ ...prev, [order.id]: true }));
 
     try {
+      const token = await getToken();
+      if (!token) throw new Error("Admin authentication is required.");
       const res = await fetch("/api/admin?action=send-login-email", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           orderId: order.id,
           loginDetails: text,
-          adminEmail: user?.primaryEmailAddress?.emailAddress || "admin"
         })
       });
 
@@ -935,16 +974,18 @@ export default function Admin() {
 
     setSendingBroadcast(true);
     try {
+      const token = await getToken();
+      if (!token) throw new Error("Admin authentication is required.");
       const res = await fetch("/api/admin?action=broadcast-email", {
         method: "POST",
         headers: { 
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           subject: broadcastSubject,
           html: broadcastContent,
           recipientEmails: recipients,
-          callerClerkId: user?.id
         })
       });
 
@@ -1395,7 +1436,7 @@ export default function Admin() {
                                 {order.paystack_ref || order.order_reference ? (
                                   <div className="text-[9px] font-mono text-brand-text-secondary mb-2">Ref: {order.paystack_ref || order.order_reference}</div>
                                 ) : null}
-                                <Link to={`/admin/chats?user_id=${order.user_id}`} className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-brand-accent hover:underline">
+                                <Link to={supportChatHref(order.user_id)} className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-brand-accent hover:underline">
                                   Open Chat <ChevronRight size={14} />
                                 </Link>
                               </td>
@@ -1638,7 +1679,7 @@ export default function Admin() {
                             <td className="p-6 text-[10px] font-mono text-brand-text-secondary uppercase opacity-40">{u.clerk_id}</td>
                             <td className="p-6 text-right">
                               <div className="flex items-center justify-end gap-2 text-xs">
-                                <Link to={`/admin/chats?userId=${u.id}`} className="p-2 hover:bg-brand-accent hover:text-white rounded-lg transition-all text-brand-text-secondary" title="Direct Chat"><MessageSquare size={16} /></Link>
+                                <Link to={supportChatHref(u.clerk_id)} className="p-2 hover:bg-brand-accent hover:text-white rounded-lg transition-all text-brand-text-secondary" title="Direct Chat"><MessageSquare size={16} /></Link>
                               </div>
                             </td>
                           </tr>
@@ -1737,7 +1778,7 @@ export default function Admin() {
                             <td className="p-6 text-right">
                                <div className="flex items-center justify-end gap-2 text-xs">
                                  <button className="p-2 hover:bg-brand-accent hover:text-white rounded-lg transition-all text-brand-text-secondary" title="View Details"><TrendingUp size={16} /></button>
-                                 <Link to={`/admin/chats?userId=${u.id}`} className="p-2 hover:bg-brand-accent hover:text-white rounded-lg transition-all text-brand-text-secondary" title="Direct Chat"><MessageSquare size={16} /></Link>
+                                 <Link to={supportChatHref(u.clerk_id)} className="p-2 hover:bg-brand-accent hover:text-white rounded-lg transition-all text-brand-text-secondary" title="Direct Chat"><MessageSquare size={16} /></Link>
                                  <button 
                                    onClick={() => handleDeleteUser(u.id, u.email)}
                                    className="p-2 hover:bg-red-500 hover:text-white rounded-lg transition-all text-brand-text-secondary" 
@@ -1840,7 +1881,7 @@ export default function Admin() {
                                </td>
                                <td className="p-6 text-right">
                                  <div className="flex flex-col sm:flex-row justify-end gap-2 text-xs">
-                                     <Link to={`/admin/chats?user_id=${order.user_id}`} className="h-10 px-4 flex items-center justify-center bg-brand-text/5 hover:bg-brand-accent hover:text-white rounded-xl transition-all text-brand-text-secondary shadow-sm font-black uppercase text-[9px] tracking-widest whitespace-nowrap">
+                                     <Link to={supportChatHref(order.user_id)} className="h-10 px-4 flex items-center justify-center bg-brand-text/5 hover:bg-brand-accent hover:text-white rounded-xl transition-all text-brand-text-secondary shadow-sm font-black uppercase text-[9px] tracking-widest whitespace-nowrap">
                                        <MessageSquare size={14} className="mr-1" /> Chat
                                      </Link>
                                    <button 
@@ -1951,7 +1992,7 @@ export default function Admin() {
                                  </span>
                                </td>
                                <td className="p-6 text-right">
-                                  <Link to={`/admin/chats?user_id=${order.user_id}`} className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-brand-accent hover:underline">
+                                  <Link to={supportChatHref(order.user_id)} className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-brand-accent hover:underline">
                                     View Chat <ChevronRight size={14} />
                                   </Link>
                                </td>
@@ -2017,7 +2058,7 @@ export default function Admin() {
                             Signal: {formatDate(community.last_message_at || community.created_at)}
                           </div>
                           <Link 
-                            to={`/admin/chats?chat_type=${community.chat_type}&id=${community.id}`}
+                            to={`/admin/chats?type=${encodeURIComponent(community.chat_type)}&chat_id=${encodeURIComponent(community.id)}`}
                             className="text-[10px] font-black uppercase tracking-widest text-brand-accent hover:underline flex items-center gap-2"
                           >
                             Open Chat <ChevronRight size={14} />
@@ -2057,7 +2098,7 @@ export default function Admin() {
                     {chats.filter(c => c.needs_admin_attention).map(chat => (
                       <Link 
                         key={chat.id} 
-                        to={`/admin/chats?order_id=${chat.order_id || chat.orderId}`}
+                        to={supportChatHref(chat.user_id || chat.userId, chat.id)}
                         className="card-premium p-6 hover:bg-brand-text/5 transition-all group relative"
                       >
                          <div className="absolute top-4 right-4 flex h-2 w-2">
@@ -2120,7 +2161,7 @@ export default function Admin() {
                                   </span>
                                </td>
                                <td className="p-6 text-right">
-                                  <Link to={`/admin/chats?order_id=${chat.order_id || chat.orderId}`} className="text-[10px] font-black text-brand-accent uppercase tracking-widest hover:underline">Launch Audit</Link>
+                                  <Link to={supportChatHref(chat.user_id || chat.userId, chat.id)} className="text-[10px] font-black text-brand-accent uppercase tracking-widest hover:underline">Launch Audit</Link>
                                </td>
                             </tr>
                           ))}
@@ -2421,28 +2462,36 @@ export default function Admin() {
                                         {tx.status}
                                       </span>
                                       {tx.status === 'pending' && (
-                                        <div className="flex gap-1.5">
-                                          <button
-                                            onClick={async () => {
-                                              if (window.confirm("Mark this pending payout as SUCCESS? This will clear it from the funding estimate.")) {
-                                                await handleUpdateTxStatus(tx.id, 'success');
-                                              }
-                                            }}
-                                            className="px-2 py-0.5 bg-green-500 hover:bg-green-600 text-white rounded text-[8px] font-bold uppercase tracking-wider transition-colors cursor-pointer"
-                                          >
-                                            Confirm Success
-                                          </button>
-                                          <button
-                                            onClick={async () => {
-                                              if (window.confirm("FAIL this pending payout? This will refund the amount + fee back to the user's wallet.")) {
-                                                await handleUpdateTxStatus(tx.id, 'failed');
-                                              }
-                                            }}
-                                            className="px-2 py-0.5 bg-red-500 hover:bg-red-600 text-white rounded text-[8px] font-bold uppercase tracking-wider transition-colors cursor-pointer"
-                                          >
-                                            Fail & Refund
-                                          </button>
-                                        </div>
+                                        ['withdraw', 'withdrawal'].includes(String(tx.type || '').toLowerCase()) ||
+                                        String(tx.reference || '').startsWith('wallet_withdrawal_') ? (
+                                          <div className="flex flex-col text-[8px] font-bold uppercase tracking-wider text-brand-text-secondary">
+                                            <span>{tx.metadata?.manual_review === true ? 'Manual review required' : 'Awaiting provider confirmation'}</span>
+                                            <span className="font-mono normal-case tracking-normal">{tx.reference || 'Reference unavailable'}</span>
+                                          </div>
+                                        ) : (
+                                          <div className="flex gap-1.5">
+                                            <button
+                                              onClick={async () => {
+                                                if (window.confirm("Mark this pending payout as SUCCESS? This will clear it from the funding estimate.")) {
+                                                  await handleUpdateTxStatus(tx.id, 'success');
+                                                }
+                                              }}
+                                              className="px-2 py-0.5 bg-green-500 hover:bg-green-600 text-white rounded text-[8px] font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                                            >
+                                              Confirm Success
+                                            </button>
+                                            <button
+                                              onClick={async () => {
+                                                if (window.confirm("FAIL this pending payout? This will refund the amount + fee back to the user's wallet.")) {
+                                                  await handleUpdateTxStatus(tx.id, 'failed');
+                                                }
+                                              }}
+                                              className="px-2 py-0.5 bg-red-500 hover:bg-red-600 text-white rounded text-[8px] font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                                            >
+                                              Fail & Refund
+                                            </button>
+                                          </div>
+                                        )
                                       )}
                                     </div>
                                   </td>
@@ -2505,7 +2554,7 @@ export default function Admin() {
                         <th className="p-6">Account Number</th>
                         <th className="p-6">Account Name</th>
                         <th className="p-6">Status</th>
-                        {withdrawalSubTab === 'pending' && <th className="p-6 text-right">Action</th>}
+                        {withdrawalSubTab === 'pending' && <th className="p-6 text-right">Provider Status</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-brand-border">
@@ -2530,112 +2579,20 @@ export default function Admin() {
                             </span>
                            </td>
                            {withdrawalSubTab === 'pending' && (
-                             <td className="p-6 text-right">
-                               <button 
-                                 onClick={async () => {
-                                    try {
-                                      console.log("[admin] confirming withdrawal:", w.id);
-                                      
-                                      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co';
-                                      const serviceKey = await Promise.resolve(import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || import.meta.env.SUPABASE_SERVICE_ROLE_KEY);
-                                      const adminClient = serviceKey ? createClient(supabaseUrl, serviceKey as string, { auth: { persistSession: false } }) : supabase;
-
-                                      const adminClerkUserId = user?.id || 'admin';
-                                      
-                                      // Step 1: Update withdrawal status
-                                      const { error: updateErr } = await adminClient
-                                        .from("withdrawals")
-                                        .update({
-                                          status: "confirmed",
-                                          confirmed_by: adminClerkUserId,
-                                          confirmed_at: new Date().toISOString()
-                                        })
-                                        .eq("id", w.id);
-
-                                      console.log("[admin] withdrawal update error:", updateErr);
-
-                                      if (updateErr) {
-                                        toast.error("Failed to confirm: " + updateErr.message);
-                                        return; // STOP here if update failed
-                                      }
-                                      
-                                      // Step 2: Fetch user current balance
-                                      const { data: userProfile, error: profileErr } = await adminClient
-                                        .from("profiles")
-                                        .select("balance")
-                                        .eq("clerk_id", w.user_id)
-                                        .single();
-                                        
-                                      console.log("[admin] user profile:", userProfile, profileErr);
-
-                                      // Step 3: Deduct balance
-                                      if (userProfile) {
-                                        // Balance was already deducted immediately when withdrawal was requested to prevent double spending.
-                                         const newBalance = userProfile.balance || 0;
-                                        const { error: balanceErr } = await adminClient
-                                          .from("profiles")
-                                          .update({ balance: newBalance })
-                                          .eq("clerk_id", w.user_id);
-
-                                        console.log("[admin] balance update error:", balanceErr);
-                                        if (balanceErr) {
-                                          toast.error("Balance update failed: " + balanceErr.message);
-                                          return;
-                                        }
-                                      }
-
-                                      // Step 3b: Update corresponding wallet transaction status to success
-                                      const { error: txErr } = await adminClient
-                                        .from("wallet_transactions")
-                                        .update({ status: "success", updated_at: new Date().toISOString() })
-                                        .eq("user_id", w.user_id)
-                                        .eq("type", "withdraw")
-                                        .eq("amount", w.amount)
-                                        .eq("status", "pending");
-
-                                      if (txErr) {
-                                        console.error("[admin] wallet transaction update error:", txErr);
-                                      }
-
-                                      // Step 4: Send confirmation message to user
-                                      await adminClient.from("messages").insert({
-                                        sender_id: "system",
-                                        sender_role: "system",
-                                        sender_name: "Plugsy",
-                                        content: "✅ Your withdrawal of ₦" + 
-                                                 Number(w.amount).toLocaleString() +
-                                                 " to " + w.bank_name +
-                                                 " (" + w.account_number + ") " +
-                                                 "has been confirmed and processed. " +
-                                                 "Allow 1-3 business days for transfer.",
-                                        user_id: w.user_id,
-                                        event: "withdrawal_confirmed",
-                                        topic: "withdrawal",
-                                        is_from_user: false,
-                                        is_bot: true,
-                                        is_bot_message: true,
-                                        read_by_admin: true,
-                                        read_by_user: false
-                                      });
-
-                                      // Step 5: Only remove from local state AFTER all updates succeed
-                                      setWithdrawals(prev => prev.filter(wd => wd.id !== w.id));
-                                      toast.success("Payment confirmed for " + (w.user_name || w.user_email || "User"));
-                                      
-                                      // Refetch withdrawals to stay in sync
-                                      fetchWithdrawals();
-
-                                    } catch (err) {
-                                      console.error(err);
-                                      toast.error("Failed to mark withdrawal paid.");
-                                    }
-                                 }}
-                                 className="px-6 py-3 bg-green-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all shadow-lg shadow-green-500/20 whitespace-nowrap"
-                               >
-                                 Confirm Payment
-                               </button>
-                           </td>
-                           )}
+                              <td className="p-6 text-right">
+                                <div className="inline-flex max-w-xs flex-col items-end gap-1 text-[10px] font-bold uppercase tracking-wider text-brand-text-secondary">
+                                  <span>
+                                    {String(w.provider_status || '').toLowerCase().includes('ambiguous') ||
+                                    String(w.provider_status || '').toLowerCase().includes('unknown')
+                                      ? 'Manual review required'
+                                      : 'Awaiting provider confirmation'}
+                                  </span>
+                                  <span className="font-mono normal-case tracking-normal">
+                                    {w.reference || 'Reference unavailable'}
+                                  </span>
+                                </div>
+                            </td>
+                            )}
                          </tr>
                       ))}
                     </tbody>

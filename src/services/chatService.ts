@@ -1,6 +1,10 @@
 import { supabase } from "../lib/supabase";
-import { sendOrderToTelegram } from "../lib/notifications";
 import { executeMessageSendContract } from "../utils/messageSendContract";
+import {
+  isSupportChat,
+  LEGACY_SUPPORT_MESSAGE_ROLES,
+  selectSupportChatsForUser,
+} from "../utils/supportChatMessages";
 
 export const sendBroadcastSafely = async (channelName: string, eventName: string, payload: any = {}) => {
   console.log(`[broadcast-safely] attempting to send '${eventName}' to '${channelName}'`);
@@ -125,7 +129,78 @@ export interface Chat {
   lastMessageAt?: number;
   createdAt: number;
   updatedAt: number;
+  supportChatIds?: string[];
 }
+
+const mapSupportChat = (
+  chat: any,
+  supportChatIds = [String(chat.id)],
+): Chat => ({
+  id: chat.id,
+  userId: chat.user_id,
+  userEmail: chat.user_email,
+  orderId: chat.order_id,
+  status: chat.status,
+  needsAdminAttention: chat.needs_admin_attention,
+  assignedAdminId: chat.assigned_admin_id,
+  lastMessage: chat.last_message,
+  lastMessageAt: chat.last_message_at
+    ? new Date(chat.last_message_at).getTime()
+    : undefined,
+  createdAt: new Date(chat.created_at).getTime(),
+  updatedAt: new Date(chat.updated_at).getTime(),
+  supportChatIds,
+});
+
+export const getSupportChatRows = async (userId: string) => {
+  const canonicalUserId = String(userId || "").trim();
+  if (!canonicalUserId) throw new Error("SUPPORT_CHAT_USER_REQUIRED");
+
+  const { data, error } = await supabase
+    .from("chats")
+    .select("*")
+    .eq("user_id", canonicalUserId);
+
+  if (error) throw new Error("SUPPORT_CHAT_LOOKUP_FAILED");
+  return selectSupportChatsForUser(data || [], canonicalUserId);
+};
+
+export const getCanonicalSupportChatRow = async (userId: string) =>
+  (await getSupportChatRows(userId))[0] || null;
+
+export const getUnreadSupportMessageCount = async (userId: string) => {
+  const canonicalUserId = String(userId || "").trim();
+  if (!canonicalUserId) return 0;
+
+  const supportChats = await getSupportChatRows(canonicalUserId);
+  const supportChatIds = supportChats
+    .map((chat) => String(chat.id || ""))
+    .filter(Boolean);
+  let canonicalCount = 0;
+
+  if (supportChatIds.length > 0) {
+    const { count, error } = await supabase
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .in("chat_id", supportChatIds)
+      .eq("read_by_user", false)
+      .neq("sender_role", "user");
+
+    if (error) throw new Error("SUPPORT_UNREAD_LOOKUP_FAILED");
+    canonicalCount = count || 0;
+  }
+
+  const { count: legacyCount, error: legacyError } = await supabase
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .is("chat_id", null)
+    .eq("user_id", canonicalUserId)
+    .in("sender_role", [...LEGACY_SUPPORT_MESSAGE_ROLES])
+    .eq("read_by_user", false);
+
+  if (legacyError) throw new Error("SUPPORT_UNREAD_LOOKUP_FAILED");
+  return canonicalCount + (legacyCount || 0);
+};
 
 export const CHAT_BOT_RULES = {
   START:
@@ -143,66 +218,38 @@ export const CHAT_BOT_RULES = {
 
 export const chatService = {
   async getOrCreateChat(userId: string, userEmail: string): Promise<Chat> {
-    try {
-      const { data: existingChat, error: fetchError } = await supabase
-        .from("chats")
-        .select("*")
-        .eq("user_id", String(userId))
-        .limit(1)
-        .maybeSingle();
+    const canonicalUserId = String(userId || "").trim();
+    if (!canonicalUserId) throw new Error("SUPPORT_CHAT_USER_REQUIRED");
 
-      if (existingChat) {
-        return {
-          id: existingChat.id,
-          userId: existingChat.user_id,
-          userEmail: existingChat.user_email,
-          orderId: existingChat.order_id,
-          status: existingChat.status,
-          needsAdminAttention: existingChat.needs_admin_attention,
-          assignedAdminId: existingChat.assigned_admin_id,
-          lastMessage: existingChat.last_message,
-          lastMessageAt: existingChat.last_message_at
-            ? new Date(existingChat.last_message_at).getTime()
-            : undefined,
-          createdAt: new Date(existingChat.created_at).getTime(),
-          updatedAt: new Date(existingChat.updated_at).getTime(),
-        };
-      }
-
-      // Create new chat
-      const { data: newChat, error: createError } = await supabase
-        .from("chats")
-        .insert([
-          {
-            user_id: String(userId),
-            user_email: userEmail,
-            status: "open",
-            needs_admin_attention: true,
-          },
-        ])
-        .select()
-        .maybeSingle();
-
-      if (createError) throw createError;
-
-      return {
-        id: newChat.id,
-        userId: newChat.user_id,
-        userEmail: newChat.user_email,
-        orderId: newChat.order_id,
-        status: newChat.status,
-        needsAdminAttention: newChat.needs_admin_attention,
-        assignedAdminId: newChat.assigned_admin_id,
-        lastMessage: newChat.last_message,
-        lastMessageAt: newChat.last_message_at
-          ? new Date(newChat.last_message_at).getTime()
-          : undefined,
-        createdAt: new Date(newChat.created_at).getTime(),
-        updatedAt: new Date(newChat.updated_at).getTime(),
-      };
-    } catch (error) {
-      throw error;
+    const existingChats = await getSupportChatRows(canonicalUserId);
+    const existingChat = existingChats[0];
+    if (existingChat) {
+      return mapSupportChat(
+        existingChat,
+        existingChats
+          .map((chat) => String(chat.id || ""))
+          .filter(Boolean),
+      );
     }
+
+    const { data: newChat, error: createError } = await supabase
+      .from("chats")
+      .insert([
+        {
+          user_id: canonicalUserId,
+          user_email: userEmail,
+          status: "open",
+          needs_admin_attention: true,
+        },
+      ])
+      .select()
+      .single();
+
+    if (createError || !newChat) {
+      throw new Error("SUPPORT_CHAT_CREATE_FAILED");
+    }
+
+    return mapSupportChat(newChat, [String(newChat.id)]);
   },
 
   async sendMessage(
@@ -211,6 +258,14 @@ export const chatService = {
     getToken?: any,
   ) {
     try {
+      const canonicalChatId = String(chatId || "").trim();
+      if (!canonicalChatId) throw new Error("CHAT_ID_REQUIRED");
+      const usesServerWriter =
+        payload.senderRole === "admin" ||
+        payload.senderRole === "system" ||
+        payload.senderRole === "bot";
+      let serverAuthToken = "";
+
       if (getToken) {
         let token = await getToken({ template: "supabase" }).catch(() => null);
         if (!token) {
@@ -225,10 +280,48 @@ export const chatService = {
           }
         }
       }
+      if (usesServerWriter) {
+        serverAuthToken = getToken
+          ? await getToken().catch(() => "")
+          : "";
+        if (!serverAuthToken) throw new Error("AUTH_REQUIRED");
+      }
 
-      console.log("SENDING MESSAGE:", payload.message, "to chat:", chatId);
+      const { data: chatData, error: chatFetchError } = await supabase
+        .from("chats")
+        .select("chat_type, user_email, user_id")
+        .eq("id", canonicalChatId)
+        .maybeSingle();
+      if (chatFetchError) throw new Error("CHAT_LOOKUP_FAILED");
+      if (!chatData) throw new Error("CHAT_NOT_FOUND");
+
+      const chatType = chatData.chat_type || "support";
+      const supportChat = isSupportChat(chatData);
+      const conversationOwnerUserId = supportChat
+        ? String(chatData.user_id || "").trim()
+        : String(payload.userId || chatData.user_id || "").trim();
+      if (
+        supportChat &&
+        (!conversationOwnerUserId ||
+          !conversationOwnerUserId.startsWith("user_"))
+      ) {
+        throw new Error("SUPPORT_CHAT_OWNER_REQUIRED");
+      }
+      if (supportChat) {
+        const canonicalSupportChat = await getCanonicalSupportChatRow(
+          conversationOwnerUserId,
+        );
+        if (canonicalSupportChat?.id !== canonicalChatId) {
+          throw new Error("SUPPORT_CHAT_NOT_CANONICAL");
+        }
+      }
+
+      console.log("Sending chat message", {
+        chatId: canonicalChatId,
+        senderRole: payload.senderRole,
+      });
       const dbPayload: any = {
-        chat_id: chatId,
+        chat_id: canonicalChatId,
         sender_id: payload.senderId,
         sender_name: payload.senderName,
         sender_role: payload.senderRole,
@@ -240,11 +333,9 @@ export const chatService = {
         read_by_admin: payload.readByAdmin || false,
         read_by_user: payload.readByUser || false,
         order_id: payload.orderId,
-        user_id: payload.userId,
+        user_id: conversationOwnerUserId || undefined,
         is_bot: payload.senderRole === "bot" || payload.senderRole === "system",
       };
-
-      console.log("PAYLOAD TO INSERT:", dbPayload);
 
       if (payload.senderRole === "user") {
         dbPayload.read_by_admin = false;
@@ -255,14 +346,13 @@ export const chatService = {
 
       return await executeMessageSendContract({
         insert: async () => {
-      if (
-        payload.senderRole === "admin" ||
-        payload.senderRole === "system" ||
-        payload.senderRole === "bot"
-      ) {
+      if (usesServerWriter) {
         const res = await fetch("/api/admin?action=add", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${serverAuthToken}`,
+          },
           body: JSON.stringify({ collection: "messages", data: dbPayload }),
         });
         const resultData = await res.json();
@@ -293,21 +383,13 @@ export const chatService = {
           createdMsgId,
           fullMessageObj,
         }) => {
-      const { data: chatData, error: chatFetchError } = await supabase
-        .from("chats")
-        .select("chat_type, user_email, user_id")
-        .eq("id", chatId)
-        .maybeSingle();
-      if (chatFetchError) throw chatFetchError;
-      const chatType = chatData?.chat_type || "support";
-
       // BROADCAST TO FIX REALTIME IF POSTGRES_CHANGES FAILS
       if (fullMessageObj) {
-        sendBroadcastSafely(`chat-presence:${chatId}`, "new_message", fullMessageObj);
-        sendBroadcastSafely(`support-chat-${chatId}`, "new_message", fullMessageObj);
+        sendBroadcastSafely(`chat-presence:${canonicalChatId}`, "new_message", fullMessageObj);
+        sendBroadcastSafely(`support-chat-${canonicalChatId}`, "new_message", fullMessageObj);
         sendBroadcastSafely('admin-broadcast', "new_message", fullMessageObj);
         
-        const targetUserId = payload.userId || chatData?.user_id;
+        const targetUserId = conversationOwnerUserId;
         if (targetUserId) {
           sendBroadcastSafely(`user-events-${targetUserId}`, "new_message", fullMessageObj);
         }
@@ -334,26 +416,11 @@ export const chatService = {
                 ((payload.message || "").length > 50 
                   ? (payload.message || "").slice(0, 50) + "..." 
                   : (payload.message || "Sent an attachment")),
-              url: "/admin/chats",
+              url: `/admin/chats?chat_id=${encodeURIComponent(canonicalChatId)}`,
               tag: "user-support-message"
             })
           }).catch(e => console.error("[admin-notif] error:", e.message));
 
-          // Trigger Telegram Alert only once per session per chat
-          const sessionKey = `telegram_alert_sent_${chatId}`;
-
-          if (
-            typeof window !== "undefined" &&
-            !sessionStorage.getItem(sessionKey)
-          ) {
-            sessionStorage.setItem(sessionKey, "true");
-            import("../lib/telegram").then(({ sendTelegramAlert }) => {
-              const email = chatData?.user_email || payload.senderName || "Customer";
-              sendTelegramAlert(
-                `💬 <b>NEW CUSTOMER MESSAGE:</b> ${payload.message || (payload.audioUrl ? "🎤 Voice Note" : "Sent an attachment")} (User: ${email})`
-              );
-            });
-          }
       const sendDMNotification = async (
         otherUserId: string,
         senderName: string,
@@ -412,8 +479,8 @@ export const chatService = {
           const currentUserName = payload.senderName;
 
           Promise.all([
-            supabase.from("chat_members").select("user_id").eq("chat_id", chatId).neq("user_id", currentUserId),
-            supabase.from("chats").select("name").eq("id", chatId).single()
+            supabase.from("chat_members").select("user_id").eq("chat_id", canonicalChatId).neq("user_id", currentUserId),
+            supabase.from("chats").select("name").eq("id", canonicalChatId).single()
           ]).then(([membersRes, chatRes]) => {
             const groupMembers = membersRes.data;
             const community = chatRes.data;
@@ -437,8 +504,8 @@ export const chatService = {
                   userId: member.user_id,
                   title: communityName,
                   body: (currentUserName || "Someone") + ": " + preview,
-                  url: "/chats/" + chatId,
-                  tag: "group-" + chatId
+                  url: "/chats/" + canonicalChatId,
+                  tag: "group-" + canonicalChatId
                 })
               }).catch(e => console.error("[group-notif]", e.message));
             });
@@ -448,7 +515,7 @@ export const chatService = {
         // Trigger push notification to user
         if (chatType === "support" || !chatType) {
           // TRIGGER 2: Support chat message received by user (Admin replied)
-          const targetUserId = payload.userId || chatData?.user_id;
+          const targetUserId = conversationOwnerUserId;
           const messageContent = payload.message || "";
 
           if (targetUserId) {
@@ -471,7 +538,7 @@ export const chatService = {
           }
         } else {
            // Admin sending in a group/channel/dm
-          supabase.from("chat_members").select("user_id").eq("chat_id", chatId).neq("user_id", payload.senderId).then(({ data: members }) => {
+          supabase.from("chat_members").select("user_id").eq("chat_id", canonicalChatId).neq("user_id", payload.senderId).then(({ data: members }) => {
              members?.forEach(m => {
                 // Restore realtime broadcast
                 sendBroadcastSafely(`user-events-${m.user_id}`, "new_unread");
@@ -483,7 +550,7 @@ export const chatService = {
                     userId: m.user_id,
                     title: chatType === "channel" ? "Announcement" : "Message from Admin",
                     body: payload.message || (payload.audioUrl ? "Sent a voice note" : "Sent an attachment"),
-                    url: `/chats/${chatId}`,
+                    url: `/chats/${canonicalChatId}`,
                     tag: "new-message",
                   }),
                 }).catch(console.error);
@@ -492,17 +559,16 @@ export const chatService = {
         }
       }
 
-      if (
-        payload.senderRole === "admin" ||
-        payload.senderRole === "system" ||
-        payload.senderRole === "bot"
-      ) {
+      if (usesServerWriter) {
         const res = await fetch("/api/admin?action=update", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${serverAuthToken}`,
+          },
           body: JSON.stringify({
             collection: "chats",
-            id: chatId,
+            id: canonicalChatId,
             data: updatePayload,
           }),
         });
@@ -514,7 +580,7 @@ export const chatService = {
         const { error: summaryError } = await supabase
           .from("chats")
           .update(updatePayload)
-          .eq("id", chatId);
+          .eq("id", canonicalChatId);
         if (summaryError) throw summaryError;
       }
 
@@ -522,8 +588,11 @@ export const chatService = {
       // we might want to log it for AI or just let the admin handle it.
 
         },
-        logPostInsertError: (message, error) =>
-          console.error(message, error),
+        logPostInsertError: (message) =>
+          console.error(message, {
+            chatId: canonicalChatId,
+            senderRole: payload.senderRole,
+          }),
       });
     } catch (error) {
       throw error;

@@ -33,6 +33,14 @@ import { Chat, ChatMessage, chatService } from "../services/chatService";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-hot-toast";
 import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
+import {
+  compareSupportChatsByActivity,
+  dedupeSupportChatsByUserId,
+  filterSupportChatRows,
+  isSupportChat,
+  LEGACY_SUPPORT_MESSAGE_ROLES,
+  mergeSupportChatMessages,
+} from "../utils/supportChatMessages";
 
 const getCleanMessageText = (content: string | null): string => {
   if (!content) return "";
@@ -53,6 +61,7 @@ export default function AdminChats() {
   const [searchParams, setSearchParams] = useSearchParams();
   const order_idParam = searchParams.get("order_id");
   const user_idParam = searchParams.get("user_id");
+  const legacyUserIdParam = searchParams.get("userId");
   const typeParam = searchParams.get("type");
   const chat_idParam = searchParams.get("id") || searchParams.get("chat_id");
 
@@ -139,8 +148,10 @@ export default function AdminChats() {
           )
         );
 
-      } catch (e) {
-        console.error(e);
+      } catch {
+        console.error("Admin voice note send failed", {
+          chatId: activeChatId,
+        });
         toast.error('Failed to send voice note');
       } finally {
         setUploading(false);
@@ -149,51 +160,6 @@ export default function AdminChats() {
     };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Need a ref that always has latest messages for the
-  // closure inside setInterval to read correctly:
-  const messagesRef = useRef<any[]>([]);
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-
-  useEffect(() => {
-    if (!activeChatId) return;
-
-    const pollInterval = setInterval(async () => {
-      const lastMsg = messagesRef.current[messagesRef.current.length - 1];
-      
-      let query = supabase
-        .from("messages")
-        .select("*")
-        .order("created_at", { ascending: true })
-        .eq("chat_id", activeChatId);
-
-      if (lastMsg?.created_at) {
-        query = query.gt("created_at", lastMsg.created_at);
-      }
-
-      try {
-        const { data } = await query;
-
-        if (data && data.length > 0) {
-          console.log("[polling] found new messages:", data.length);
-          setMessages(prev => {
-            const existingIds = new Set(prev.map(m => m.id));
-            const newOnes = data.filter(m => !existingIds.has(m.id));
-            return newOnes.length > 0 ? [...prev, ...newOnes] : prev;
-          });
-          setTimeout(() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-          }, 100);
-        }
-      } catch (err) {
-        console.error("[polling] error:", err);
-      }
-    }, 4000);
-
-    return () => clearInterval(pollInterval);
-  }, [activeChatId]);
 
   const fetchChats = async (retries = 1) => {
     try {
@@ -204,7 +170,7 @@ export default function AdminChats() {
         .then(({ data: profilesData }) => {
           if (profilesData) setProfiles(profilesData);
         })
-        .catch((e) => console.warn("Failed to fetch profiles in AdminChats:", e));
+        .catch(() => console.warn("Failed to fetch profiles in AdminChats"));
 
       const timeout = (ms: number) =>
         new Promise((_, reject) =>
@@ -230,8 +196,23 @@ export default function AdminChats() {
         timeout(8000),
       ])) as any[];
 
-      const mappedChats = data
-        .map((c: any) => ({
+      let requestedUserId = user_idParam;
+      if (!requestedUserId && legacyUserIdParam) {
+        if (legacyUserIdParam.startsWith("user_")) {
+          requestedUserId = legacyUserIdParam;
+        } else {
+          const { data: legacyProfile, error: legacyProfileError } =
+            await supabase
+              .from("profiles")
+              .select("clerk_id")
+              .eq("id", legacyUserIdParam)
+              .maybeSingle();
+          if (legacyProfileError) throw new Error("PROFILE_LOOKUP_FAILED");
+          requestedUserId = legacyProfile?.clerk_id || null;
+        }
+      }
+
+      const allMappedChats = data.map((c: any) => ({
           id: c.id,
           userId: c.user_id,
           userEmail: c.user_email,
@@ -248,6 +229,32 @@ export default function AdminChats() {
           chatType: c.chat_type,
           name: c.name,
           coverImageUrl: c.cover_image_url,
+        }));
+      const supportChatIdsByUserId = new Map<string, string[]>();
+      const supportUnreadCountByUserId = new Map<string, number>();
+      allMappedChats.forEach((chat: any) => {
+        if (!isSupportChat(chat) || !String(chat.userId).startsWith("user_")) {
+          return;
+        }
+        const ids = supportChatIdsByUserId.get(chat.userId) || [];
+        if (chat.id) ids.push(chat.id);
+        supportChatIdsByUserId.set(chat.userId, ids);
+        supportUnreadCountByUserId.set(
+          chat.userId,
+          (supportUnreadCountByUserId.get(chat.userId) || 0) +
+            Number(chat.unreadCount || 0),
+        );
+      });
+
+      const mappedChats = dedupeSupportChatsByUserId(allMappedChats)
+        .map((chat: any) => ({
+          ...chat,
+          supportChatIds: isSupportChat(chat)
+            ? supportChatIdsByUserId.get(chat.userId) || [chat.id]
+            : [chat.id],
+          unreadCount: isSupportChat(chat)
+            ? supportUnreadCountByUserId.get(chat.userId) || 0
+            : chat.unreadCount,
         }))
         .filter((c: any) => {
           if (chatTypeFilter === "support") return c.chatType !== "dm" && c.chatType !== "group" && c.chatType !== "channel";
@@ -256,47 +263,38 @@ export default function AdminChats() {
           if (chatTypeFilter === "all") return true;
           return c.chatType !== "dm";
         })
-        .sort(
-          (a, b) =>
-            (b.lastMessageAt || b.createdAt) -
-            (a.lastMessageAt || a.createdAt),
-        );
+        .sort(compareSupportChatsByActivity);
       setChats(mappedChats);
       setLoading(false);
       // Auto select chat
       if (chat_idParam) {
-        const found = mappedChats.find((c) => c.id === chat_idParam);
+        const requestedRawChat = data.find((chat) => chat.id === chat_idParam);
+        const found =
+          mappedChats.find((c) => c.id === chat_idParam) ||
+          (requestedRawChat && isSupportChat(requestedRawChat)
+            ? mappedChats.find(
+                (chat) => chat.userId === requestedRawChat.user_id,
+              )
+            : undefined);
         if (found) {
           setActiveChatId(found.id!);
           setShowMobileList(false);
-          supabase
-            .from("chats")
-            .update({ unread_count: 0 })
-            .eq("id", found.id!);
         }
       } else if (order_idParam) {
         const found = mappedChats.find((c) => c.orderId === order_idParam);
         if (found) {
           setActiveChatId(found.id!);
           setShowMobileList(false);
-          supabase
-            .from("chats")
-            .update({ unread_count: 0 })
-            .eq("id", found.id!);
         }
-      } else if (user_idParam) {
-        const found = mappedChats.find((c) => c.userId === user_idParam);
+      } else if (requestedUserId) {
+        const found = mappedChats.find((c) => c.userId === requestedUserId);
         if (found) {
           setActiveChatId(found.id!);
           setShowMobileList(false);
-          supabase
-            .from("chats")
-            .update({ unread_count: 0 })
-            .eq("id", found.id!);
         }
       }
     } catch (e: any) {
-      console.error("fetchChats error:", e);
+      console.error("Admin chat list fetch failed");
       if (e.message === "TIMEOUT" && retries > 0) {
         return fetchChats(retries - 1);
       }
@@ -318,10 +316,13 @@ export default function AdminChats() {
       .channel(chatChannelName)
       .on('broadcast', { event: 'new_message' }, (payload) => {
           const newMsg = payload.payload as any;
+          if (!newMsg?.chat_id) {
+            fetchChats();
+            return;
+          }
           setChats((prev) => {
             const chatIndex = prev.findIndex(
-              (c) =>
-                c.id === newMsg.chat_id || c.userEmail === newMsg.user_email,
+              (c) => c.id === newMsg.chat_id,
             );
             if (chatIndex === -1) {
               fetchChats();
@@ -343,35 +344,6 @@ export default function AdminChats() {
       })
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages" },
-        async (payload) => {
-          const newMsg = payload.new as any;
-          setChats((prev) => {
-            const chatIndex = prev.findIndex(
-              (c) =>
-                c.id === newMsg.chat_id || c.userEmail === newMsg.user_email,
-            );
-            if (chatIndex === -1) {
-              fetchChats();
-              return prev;
-            }
-            const updatedChat = {
-              ...prev[chatIndex],
-              lastMessage:
-                newMsg.content || (newMsg.attachment_url ? "📷 Image" : ""),
-              lastMessageAt: new Date(newMsg.created_at).getTime(),
-              unreadCount:
-                newMsg.sender_role === "user" || newMsg.is_from_user
-                  ? (prev[chatIndex].unreadCount || 0) + 1
-                  : prev[chatIndex].unreadCount,
-            };
-            const newList = prev.filter((_, i) => i !== chatIndex);
-            return [updatedChat, ...newList];
-          });
-        },
-      )
-      .on(
-        "postgres_changes",
         { event: "*", schema: "public", table: "chats" },
         () => fetchChats(),
       )
@@ -382,7 +354,7 @@ export default function AdminChats() {
           const updatedProfile = payload.new as any;
           setProfiles((prev) =>
             prev.map((p) =>
-              p.clerk_id === updatedProfile.clerk_id || p.id === updatedProfile.id
+              p.clerk_id === updatedProfile.clerk_id
                 ? { ...p, last_login_at: updatedProfile.last_login_at }
                 : p
             )
@@ -394,7 +366,7 @@ export default function AdminChats() {
     return () => {
       supabase.removeChannel(chatChannel);
     };
-  }, [order_idParam, user_idParam]);
+  }, [order_idParam, user_idParam, legacyUserIdParam]);
 
   // Load all orders for filtering
   useEffect(() => {
@@ -432,27 +404,73 @@ export default function AdminChats() {
   };
 
   // Load messages for active chat
+  const activeHistoryChat = chats.find((chat) => chat.id === activeChatId);
+  const activeHistoryOwnerCandidate = String(activeHistoryChat?.userId || "");
+  const activeHistoryOwnerUserId = activeHistoryOwnerCandidate.startsWith(
+    "user_",
+  )
+    ? activeHistoryOwnerCandidate
+    : "";
+  const activeHistoryIsSupport = Boolean(
+    activeHistoryChat && isSupportChat(activeHistoryChat as any),
+  );
+  const activeHistoryChatIdsKey = (
+    activeHistoryIsSupport
+      ? ((activeHistoryChat as any)?.supportChatIds || [activeChatId])
+      : [activeChatId]
+  )
+    .filter(Boolean)
+    .join(",");
+
   useEffect(() => {
     if (!activeChatId) return;
+    const activeHistoryChatIds = activeHistoryChatIdsKey
+      .split(",")
+      .filter(Boolean);
 
     let pollingInterval: NodeJS.Timeout;
 
     const fetchMessages = async () => {
-      const { data } = await supabase
+      const canonicalResult = await supabase
         .from("messages")
         .select("*")
-        .eq("chat_id", activeChatId)
+        .in("chat_id", activeHistoryChatIds)
         .order("created_at", { ascending: true });
 
-      // HTML Protection
-      if (typeof data === "string" && (data as string).includes("<!doctype"))
-        return;
+      let legacyRows: any[] = [];
+      if (activeHistoryIsSupport && activeHistoryOwnerUserId) {
+        const legacyResult = await supabase
+          .from("messages")
+          .select("*")
+          .is("chat_id", null)
+          .eq("user_id", activeHistoryOwnerUserId)
+          .in("sender_role", [...LEGACY_SUPPORT_MESSAGE_ROLES])
+          .order("created_at", { ascending: true });
+        if (legacyResult.error) {
+          console.error("Failed to load legacy support message history");
+          return;
+        }
+        legacyRows = legacyResult.data || [];
+      }
 
-      if (data) {
-        const msgs = data.map((msg: any) => ({
+      if (canonicalResult.error) {
+        console.error("Failed to load support message history");
+        return;
+      }
+
+      if (canonicalResult.data) {
+        const rawRows = activeHistoryIsSupport
+          ? filterSupportChatRows(
+              [...canonicalResult.data, ...legacyRows],
+              activeHistoryChatIds,
+              activeHistoryOwnerUserId,
+            )
+          : canonicalResult.data;
+        const msgs = mergeSupportChatMessages(rawRows).map((msg: any) => ({
           id: msg.id,
-          chatId: msg.chat_id,
+          chatId: msg.chat_id || activeChatId,
           orderId: msg.order_id,
+          userId: msg.user_id,
           senderRole: msg.sender_role,
           message: getCleanMessageText(msg.content),
           attachmentUrl: msg.attachment_url,
@@ -472,6 +490,33 @@ export default function AdminChats() {
           }
           return prev;
         });
+
+        const readOperations: any[] = [
+          supabase
+            .from("messages")
+            .update({ read_by_admin: true })
+            .in("chat_id", activeHistoryChatIds)
+            .eq("read_by_admin", false),
+          supabase
+            .from("chats")
+            .update({ unread_count: 0 })
+            .in("id", activeHistoryChatIds),
+        ];
+        if (activeHistoryIsSupport && activeHistoryOwnerUserId) {
+          readOperations.push(
+            supabase
+              .from("messages")
+              .update({ read_by_admin: true })
+              .is("chat_id", null)
+              .eq("user_id", activeHistoryOwnerUserId)
+              .in("sender_role", [...LEGACY_SUPPORT_MESSAGE_ROLES])
+              .eq("read_by_admin", false),
+          );
+        }
+        const readResults = await Promise.all(readOperations);
+        if (readResults.some((result) => result.error)) {
+          console.error("Failed to mark displayed support messages as read");
+        }
       }
     };
 
@@ -479,19 +524,35 @@ export default function AdminChats() {
     pollingInterval = setInterval(fetchMessages, 3000); // 3-second fallback polling
 
     const channelId = `chat-presence:${activeChatId}`;
-    const msgChannel = supabase
+    let msgChannel = supabase
       .channel(channelId)
-      .on("broadcast", { event: "new_message" }, () => {
-         fetchMessages();
-      })
-      .on(
+      .on("broadcast", { event: "new_message" }, (payload) => {
+        const message = payload.payload as any;
+        if (
+          activeHistoryChatIds.includes(message?.chat_id) ||
+          (message?.chat_id == null &&
+            activeHistoryIsSupport &&
+            message?.user_id === activeHistoryOwnerUserId &&
+            LEGACY_SUPPORT_MESSAGE_ROLES.includes(message?.sender_role))
+        ) {
+          fetchMessages();
+        }
+      });
+    activeHistoryChatIds.forEach((supportChatId) => {
+      msgChannel = msgChannel.on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "messages" },
+        {
+          event: "*",
+          schema: "public",
+          table: "messages",
+          filter: `chat_id=eq.${supportChatId}`,
+        },
         () => {
           fetchMessages();
         },
-      )
-      .subscribe(async (status) => {
+      );
+    });
+    msgChannel.subscribe(async (status) => {
         console.log("Realtime Status:", status);
         if (status === "SUBSCRIBED") {
           await msgChannel.track({
@@ -518,7 +579,12 @@ export default function AdminChats() {
       }
       presenceChannelRef.current = null;
     };
-  }, [activeChatId]); // Do not re-subscribe on chats or orders changing just activeChatId
+  }, [
+    activeChatId,
+    activeHistoryChatIdsKey,
+    activeHistoryIsSupport,
+    activeHistoryOwnerUserId,
+  ]);
 
   useEffect(() => {
     if (!activeChatId) return;
@@ -662,8 +728,11 @@ export default function AdminChats() {
           updated_at: new Date().toISOString(),
         },
       });
-    } catch (error) {
-      console.error(error);
+    } catch {
+      console.error("Admin support message send failed", {
+        chatId: activeChatId,
+        senderRole: "admin",
+      });
       setMessages((prev) =>
         prev.map((m) =>
           m.id === optimisticMsg.id ? { ...m, status: "failed" } : m,
@@ -709,6 +778,8 @@ export default function AdminChats() {
 
   const handleConfirmPayment = async () => {
     if (!activeOrder || !activeChatId) return;
+    const activeChat = chats.find((chat) => chat.id === activeChatId);
+    if (!activeChat?.userId) return;
     const safeAmount = Number(activeOrder.amount || 0);
     if (
       !window.confirm(
@@ -719,6 +790,8 @@ export default function AdminChats() {
 
     const now = new Date().toISOString();
     const nowMs = Date.now();
+    const optimisticMessageId = `temp-sys-${nowMs}`;
+    let systemMessageInserted = false;
     const confirmMessage =
       "Payment Confirmed! 🚀 We are currently preparing your login details. Please stay active; they will be sent here shortly.";
 
@@ -738,7 +811,7 @@ export default function AdminChats() {
     setMessages((prev) => [
       ...prev,
       {
-        id: `temp-sys-${nowMs}`,
+        id: optimisticMessageId,
         chatId: activeChatId,
         orderId: activeOrder.id,
         senderRole: "system",
@@ -746,6 +819,7 @@ export default function AdminChats() {
         senderId: userId || "",
         senderName: "System Protocol",
         createdAt: nowMs,
+        status: "pending",
       },
     ]);
 
@@ -763,16 +837,28 @@ export default function AdminChats() {
       });
 
       // Send automated message
-      await chatService.sendMessage(
+      const insertedMessageId = await chatService.sendMessage(
         activeChatId,
         {
           senderRole: "system",
           message: confirmMessage,
           senderName: "System Protocol",
           orderId: activeOrder.id,
-          userId: activeOrder.user_id,
+          userId: activeChat.userId,
         },
         getToken,
+      );
+      systemMessageInserted = true;
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === optimisticMessageId
+            ? {
+                ...message,
+                id: insertedMessageId,
+                status: "sent",
+              }
+            : message,
+        ),
       );
 
       // Create subscription
@@ -829,6 +915,15 @@ export default function AdminChats() {
 
       toast.success("Payment Confirmed and Subscription provisioned.");
     } catch (error: any) {
+      if (!systemMessageInserted) {
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === optimisticMessageId
+              ? { ...message, status: "failed" }
+              : message,
+          ),
+        );
+      }
       console.error("Confirm payment error:", error);
       toast.error(
         `Confirm payment failed: ${error.message || "Unknown error"}`,
@@ -1013,7 +1108,7 @@ export default function AdminChats() {
                 else if (days >= 1 && days < 7) timeStr = days + "d";
                 else if (days >= 7) timeStr = time.toLocaleDateString();
 
-                const chatProfile = profiles.find((p) => p.clerk_id === chat.userId || p.id === chat.userId);
+                const chatProfile = profiles.find((p) => p.clerk_id === chat.userId);
                 const isOnline = chatProfile && isUserOnline(chatProfile.clerk_id || chatProfile.id, chatProfile.last_login_at);
 
                 return (
@@ -1440,8 +1535,10 @@ export default function AdminChats() {
                               toast.success("Image sent!", {
                                 id: "admin-upload",
                               });
-                            } catch (err) {
-                              console.error(err);
+                            } catch {
+                              console.error("Admin image message save failed", {
+                                chatId: activeChatId,
+                              });
                               toast.error("Failed to save message", {
                                 id: "admin-upload",
                               });
@@ -1454,8 +1551,10 @@ export default function AdminChats() {
                               );
                             }
                           }
-                        } catch (err) {
-                          console.error("Upload failed", err);
+                        } catch {
+                          console.error("Admin image upload failed", {
+                            chatId: activeChatId,
+                          });
                           toast.error("Upload failed", { id: "admin-upload" });
                           setMessages((prev) =>
                             prev.filter((m) => m.id !== tempId),

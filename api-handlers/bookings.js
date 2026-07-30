@@ -1,7 +1,23 @@
 import { createClient } from "@supabase/supabase-js"
 import { Resend } from "resend"
+import { resolveOrCreateSupportChat } from "./_supportChats.js"
 
 const resend = new Resend(process.env.RESEND_API_KEY || "re_mock_key")
+
+async function insertSupportTimelineMessage(supabase, order, messageData) {
+  const supportChat = await resolveOrCreateSupportChat(
+    supabase,
+    order.user_id,
+    order.user_email
+  )
+  const { error: insertError } = await supabase.from("messages").insert({
+    ...messageData,
+    chat_id: supportChat.id,
+    user_id: supportChat.user_id,
+    user_email: order.user_email
+  })
+  if (insertError) throw new Error("SUPPORT_MESSAGE_INSERT_FAILED")
+}
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*")
@@ -47,12 +63,13 @@ export default async function handler(req, res) {
         const windowEnd = new Date(threeDaysFromNow)
         windowEnd.setHours(23, 59, 59, 999)
 
-        const { data: expiringOrders } = await supabase
+        const { data: expiringOrders, error: expiringOrdersError } = await supabase
           .from("orders")
           .select("id, user_id, user_email, product_name, subscription_expires_at")
           .eq("status", "completed")
           .gte("subscription_expires_at", windowStart.toISOString())
           .lte("subscription_expires_at", windowEnd.toISOString())
+        if (expiringOrdersError) throw new Error("EXPIRING_ORDERS_LOOKUP_FAILED")
 
         console.log("[expiry-notify] expiring in 3 days:", expiringOrders?.length)
 
@@ -79,22 +96,27 @@ export default async function handler(req, res) {
           ).catch(e => console.error("[expiry-notify] push error:", e.message))
 
           // Send chat message so they see it in the app
-          await supabase.from("messages").insert({
-            sender_id: "system",
-            sender_role: "system",
-            sender_name: "Plugsy",
-            content: "⏰ Your " + (order.product_name || "subscription") + " subscription expires on " +
-              expiryDate + ". Renew before it expires to avoid losing access.",
-            user_id: order.user_id,
-            user_email: order.user_email,
-            event: "expiry_warning",
-            topic: "subscription",
-            is_from_user: false,
-            is_bot: true,
-            is_bot_message: true,
-            read_by_admin: true,
-            read_by_user: false
-          }).catch(e => console.error("[expiry-notify] chat insert error:", e.message))
+          try {
+            await insertSupportTimelineMessage(supabase, order, {
+              sender_id: "system",
+              sender_role: "system",
+              sender_name: "Plugsy",
+              content: "⏰ Your " + (order.product_name || "subscription") + " subscription expires on " +
+                expiryDate + ". Renew before it expires to avoid losing access.",
+              event: "expiry_warning",
+              topic: "subscription",
+              is_from_user: false,
+              is_bot: true,
+              is_bot_message: true,
+              read_by_admin: true,
+              read_by_user: false
+            })
+          } catch {
+            console.error("[expiry-notify] support timeline write failed", {
+              orderId: order.id,
+              code: "SUPPORT_TIMELINE_WRITE_FAILED"
+            })
+          }
 
           // Send Email via Resend
           if (order.user_email) {
@@ -135,7 +157,9 @@ export default async function handler(req, res) {
                 details: { email: order.user_email, product: order.product_name },
                 sent_at: new Date().toISOString()
               }]);
-              console.log("[expiry-notify] expiring email sent successfully to:", order.user_email);
+              console.log("[expiry-notify] expiring email sent", {
+                orderId: order.id
+              });
             } catch (emailErr) {
               console.error("[expiry-notify] expiring email error:", emailErr.message);
             }
@@ -148,12 +172,13 @@ export default async function handler(req, res) {
         const todayEnd = new Date(now)
         todayEnd.setHours(23, 59, 59, 999)
 
-        const { data: expiredToday } = await supabase
+        const { data: expiredToday, error: expiredTodayError } = await supabase
           .from("orders")
           .select("id, user_id, user_email, product_name, subscription_expires_at")
           .eq("status", "completed")
           .gte("subscription_expires_at", todayStart.toISOString())
           .lte("subscription_expires_at", todayEnd.toISOString())
+        if (expiredTodayError) throw new Error("EXPIRED_ORDERS_LOOKUP_FAILED")
 
         console.log("[expiry-notify] expired today:", expiredToday?.length)
 
@@ -176,21 +201,26 @@ export default async function handler(req, res) {
           ).catch(e => console.error("[expiry-notify] push error:", e.message))
 
           // Send chat message so they see it in the app
-          await supabase.from("messages").insert({
-            sender_id: "system",
-            sender_role: "system",
-            sender_name: "Plugsy",
-            content: "🔴 Your subscription for " + (order.product_name || "your active service") + " has expired today. Renew now to restore access.",
-            user_id: order.user_id,
-            user_email: order.user_email,
-            event: "expired",
-            topic: "subscription",
-            is_from_user: false,
-            is_bot: true,
-            is_bot_message: true,
-            read_by_admin: true,
-            read_by_user: false
-          }).catch(e => console.error("[expiry-notify] chat insert error:", e.message))
+          try {
+            await insertSupportTimelineMessage(supabase, order, {
+              sender_id: "system",
+              sender_role: "system",
+              sender_name: "Plugsy",
+              content: "🔴 Your subscription for " + (order.product_name || "your active service") + " has expired today. Renew now to restore access.",
+              event: "expired",
+              topic: "subscription",
+              is_from_user: false,
+              is_bot: true,
+              is_bot_message: true,
+              read_by_admin: true,
+              read_by_user: false
+            })
+          } catch {
+            console.error("[expiry-notify] support timeline write failed", {
+              orderId: order.id,
+              code: "SUPPORT_TIMELINE_WRITE_FAILED"
+            })
+          }
 
           // Send Email via Resend
           if (order.user_email) {
@@ -231,7 +261,9 @@ export default async function handler(req, res) {
                 details: { email: order.user_email, product: order.product_name },
                 sent_at: new Date().toISOString()
               }]);
-              console.log("[expiry-notify] expired email sent successfully to:", order.user_email);
+              console.log("[expiry-notify] expired email sent", {
+                orderId: order.id
+              });
             } catch (emailErr) {
               console.error("[expiry-notify] expired email error:", emailErr.message);
             }

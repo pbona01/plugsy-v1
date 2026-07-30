@@ -36,7 +36,10 @@ const sendViaOneSignal = async (playerIds, title, body, url, tag) => {
     priority: 10
   }
 
-  console.log("[onesignal] sending payload:", JSON.stringify(payload))
+  console.log("[onesignal] sending notification", {
+    recipientCount: playerIds.length,
+    tag: tag || "plugsy"
+  })
 
   const res = await fetch("https://onesignal.com/api/v1/notifications", {
     method: "POST",

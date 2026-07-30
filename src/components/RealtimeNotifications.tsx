@@ -3,6 +3,11 @@ import { supabase } from '../lib/supabase';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import toast from 'react-hot-toast';
 import { Film, Zap, MessageSquare, Phone } from 'lucide-react';
+import {
+  getSupportChatRows,
+  getUnreadSupportMessageCount,
+} from '../services/chatService';
+import { isSupportChat } from '../utils/supportChatMessages';
 
 function playNotificationSound() {
   try {
@@ -37,33 +42,27 @@ export default function RealtimeNotifications() {
     if (!userId) return;
 
     const uniqueSuffix = Math.random().toString(36).slice(2, 9);
+    const isUserAdmin = user?.publicMetadata?.role === 'admin';
+    const handledMessageIds = new Set<string>();
     
     // Proactive re-fetch of unread message counts upon mount or window focus
     const triggerUnreadCountRefresh = async () => {
       if (!userId) return;
-      const userEmail = user?.primaryEmailAddress?.emailAddress;
-
-      let query = supabase
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("read_by_user", false)
-        .neq("sender_role", "user");
-
-      if (userEmail) {
-        query = query.or(`user_id.eq.${userId},user_email.eq.${userEmail}`);
-      } else {
-        query = query.eq("user_id", userId);
-      }
-
-      const { count, error } = await query;
-      if (!error && count !== null) {
+      try {
+        const count = await getUnreadSupportMessageCount(userId);
         localStorage.setItem("chat_unread_count", String(count));
         window.dispatchEvent(new CustomEvent('unread-count-changed', { detail: count }));
+      } catch {
+        console.error("[RealtimeNotifications] unread refresh failed");
       }
     };
 
     triggerUnreadCountRefresh();
     window.addEventListener('focus', triggerUnreadCountRefresh);
+    const unreadRefreshInterval = window.setInterval(
+      triggerUnreadCountRefresh,
+      30000,
+    );
 
     // Channel 1: Portfolio Reactions
     const reactChannel = supabase
@@ -116,6 +115,12 @@ export default function RealtimeNotifications() {
     // Channel 3: Real-time Messages & Chat Notifications
     const handleNewMessageReceived = async (newMsg: any) => {
       if (!newMsg) return;
+      const messageId = String(newMsg.id || "");
+      if (messageId && handledMessageIds.has(messageId)) return;
+      if (messageId) {
+        handledMessageIds.add(messageId);
+        window.setTimeout(() => handledMessageIds.delete(messageId), 15000);
+      }
       
       // Global real-time call alert notification
       if (newMsg.message_type === "call_event" && newMsg.sender_id !== userId && newMsg.content?.includes("started")) {
@@ -171,17 +176,22 @@ export default function RealtimeNotifications() {
             );
             return;
           }
-        } catch (err) {
-          console.error("[RealtimeNotifications] call_event check error:", err);
+        } catch {
+          console.error("[RealtimeNotifications] call event lookup failed");
         }
       }
 
       const messageText = newMsg.message || newMsg.content || (newMsg.audio_url ? "🎤 Voice Note" : (newMsg.attachment_url ? "📷 Attachment" : ""));
-      const isUserAdmin = user?.publicMetadata?.role === 'admin';
       const currentPath = window.location.pathname;
 
       if (isUserAdmin) {
         if (newMsg.sender_role === 'user' && !currentPath.startsWith('/admin/chats')) {
+          const messageOwnerUserId = String(newMsg.user_id || '');
+          const supportHref = newMsg.chat_id
+            ? `/admin/chats?chat_id=${encodeURIComponent(newMsg.chat_id)}`
+            : messageOwnerUserId.startsWith('user_')
+              ? `/admin/chats?user_id=${encodeURIComponent(messageOwnerUserId)}`
+              : '/admin/chats';
           playNotificationSound();
           toast(
             (t) => (
@@ -189,7 +199,7 @@ export default function RealtimeNotifications() {
                 className="flex items-center gap-3 cursor-pointer"
                 onClick={() => {
                   toast.dismiss(t.id);
-                  window.location.href = `/admin/chats?userId=${newMsg.user_id}`;
+                  window.location.href = supportHref;
                 }}
               >
                 <div className="bg-brand-accent/20 p-2 rounded-xl">
@@ -211,23 +221,38 @@ export default function RealtimeNotifications() {
           );
         }
       } else {
-        const userEmail = user?.primaryEmailAddress?.emailAddress;
-        let isForThisUser = newMsg.user_id === userId || (userEmail && newMsg.user_email === userEmail);
-        
-        if (!isForThisUser && newMsg.chat_id) {
-          try {
-            const { data: chatData } = await supabase
-              .from('chats')
-              .select('user_id, user_email')
-              .eq('id', newMsg.chat_id)
-              .maybeSingle();
+        if (!newMsg.chat_id) {
+          triggerUnreadCountRefresh();
+          return;
+        }
 
-            if (chatData) {
-              isForThisUser = chatData.user_id === userId || (userEmail && chatData.user_email === userEmail);
-            }
-          } catch (err) {
-            console.error("[RealtimeNotifications] Failed to resolve chat dynamically:", err);
+        let isForThisUser = false;
+        try {
+          const { data: chatData, error: chatError } = await supabase
+            .from('chats')
+            .select('id, user_id, chat_type')
+            .eq('id', newMsg.chat_id)
+            .maybeSingle();
+          if (chatError || !chatData) throw new Error("CHAT_LOOKUP_FAILED");
+
+          if (isSupportChat(chatData)) {
+            const supportChats = await getSupportChatRows(userId);
+            isForThisUser =
+              supportChats.some((chat) => chat.id === newMsg.chat_id) &&
+              chatData.user_id === userId &&
+              newMsg.user_id === userId;
+          } else {
+            const { data: membership, error: membershipError } = await supabase
+              .from('chat_members')
+              .select('id')
+              .eq('chat_id', newMsg.chat_id)
+              .eq('user_id', userId)
+              .maybeSingle();
+            if (membershipError) throw new Error("CHAT_MEMBERSHIP_LOOKUP_FAILED");
+            isForThisUser = Boolean(membership);
           }
+        } catch {
+          console.error("[RealtimeNotifications] support chat resolution failed");
         }
 
         if (isForThisUser && newMsg.sender_role !== 'user' && !currentPath.startsWith('/dashboard/messages') && !currentPath.startsWith('/chat')) {
@@ -268,24 +293,9 @@ export default function RealtimeNotifications() {
     if (!isSubscribed.current) {
       chatMsgChannel
         .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'messages' },
-          (payload) => {
-            if (payload.new) handleNewMessageReceived(payload.new);
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'messages' },
-          () => {
-            triggerUnreadCountRefresh();
-          }
-        )
-        .on(
           'broadcast',
           { event: 'new_message' },
           (payload) => {
-            console.log("[RealtimeNotifications] Received new_message broadcast payload:", payload.payload);
             handleNewMessageReceived(payload.payload);
             triggerUnreadCountRefresh();
           }
@@ -303,8 +313,38 @@ export default function RealtimeNotifications() {
       isSubscribed.current = true;
     }
 
+    let supportMessageChannel: any = null;
+    let supportSubscriptionCancelled = false;
+    if (!isUserAdmin) {
+      getSupportChatRows(userId)
+        .then((supportChats) => {
+          if (supportSubscriptionCancelled || supportChats.length === 0) return;
+          supportMessageChannel = supabase.channel(
+            `support-message-notifications-${userId}-${uniqueSuffix}`,
+          );
+          supportChats.forEach((supportChat) => {
+            supportMessageChannel = supportMessageChannel.on(
+              'postgres_changes',
+              {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'messages',
+                filter: `chat_id=eq.${supportChat.id}`,
+              },
+              (payload) => {
+                handleNewMessageReceived(payload.new);
+                triggerUnreadCountRefresh();
+              },
+            );
+          });
+          supportMessageChannel.subscribe();
+        })
+        .catch(() => {
+          console.error("[RealtimeNotifications] support subscription failed");
+        });
+    }
+
     // Setup Admin-only broadcast channel if user is admin
-    const isUserAdmin = user?.publicMetadata?.role === 'admin';
     let adminChannel: any = null;
     if (isUserAdmin) {
       adminChannel = supabase
@@ -321,12 +361,17 @@ export default function RealtimeNotifications() {
     }
 
     return () => {
+      supportSubscriptionCancelled = true;
+      window.clearInterval(unreadRefreshInterval);
       window.removeEventListener('focus', triggerUnreadCountRefresh);
       supabase.removeChannel(reactChannel);
       supabase.removeChannel(orderChannel);
       supabase.removeChannel(chatMsgChannel);
       if (adminChannel) {
         supabase.removeChannel(adminChannel);
+      }
+      if (supportMessageChannel) {
+        supabase.removeChannel(supportMessageChannel);
       }
       isSubscribed.current = false;
     };
