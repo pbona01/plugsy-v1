@@ -44,6 +44,7 @@ export interface VPPortfolio {
   slug: string
   view_count: number
   is_paid: boolean
+  extra_category_name?: string | null
   work_layout?: "grid" | "horizontal"
   created_at: string
   updated_at: string

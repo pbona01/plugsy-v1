@@ -74,6 +74,14 @@ import { WorkGrid } from "../components/portfolio/WorkGrid";
 import { YoutubeThumbnail } from "../components/portfolio/YoutubeThumbnail";
 import { getCategoryConfig, CATEGORY_CONFIG } from "../utils/categoryConfig";
 import { showToast } from "../components/Toast";
+import {
+  EXTRA_CATEGORY_MAX_LENGTH,
+  EXTRA_CATEGORY_MIN_LENGTH,
+  ExtraCategoryValidationError,
+  getPurchasedCategoryValues,
+  normalizeExtraCategoryName,
+  validateExtraCategoryName,
+} from "../../shared/portfolioExtraCategory.js";
 
 // Old MetaTagsUpdater removed in favor of Helmet
 
@@ -393,12 +401,14 @@ export function PublicPortfolio({
   previewMode = false,
   isEditMode = false,
   onUpdatePortfolio,
+  onExtraCategoryUpdated,
 }: {
   slugOrId?: string;
   previewData?: VPPortfolio;
   previewMode?: boolean;
   isEditMode?: boolean;
   onUpdatePortfolio?: (updates: Partial<VPPortfolio>) => void;
+  onExtraCategoryUpdated?: (name: string | null) => void;
 }) {
   const { slug } = useParams<{ slug: string }>();
   const activeSlug = slugOrId || slug;
@@ -416,6 +426,11 @@ export function PublicPortfolio({
     null,
   );
   const [activePlayerId, setActivePlayerId] = useState<string | null>(null);
+  const [extraCategoryEditorOpen, setExtraCategoryEditorOpen] =
+    useState(false);
+  const [extraCategoryDraft, setExtraCategoryDraft] = useState("");
+  const [extraCategorySaving, setExtraCategorySaving] = useState(false);
+  const [extraCategoryError, setExtraCategoryError] = useState("");
 
   const [profileImageLoaded, setProfileImageLoaded] = useState(false);
   const [bioGraphicLoaded, setBioGraphicLoaded] = useState(false);
@@ -439,6 +454,96 @@ export function PublicPortfolio({
     isUploading: boolean;
   }>({ title: "", url: "", file: null, isUploading: false });
   const { getToken } = useAuth();
+
+  const purchasedCategoryValues = getPurchasedCategoryValues({
+    category: portfolio?.category,
+    categories: (
+      portfolio as (VPPortfolio & { categories?: string[] }) | null
+    )?.categories,
+  });
+  const normalizedExtraCategoryDraft =
+    normalizeExtraCategoryName(extraCategoryDraft);
+  const extraCategoryDraftTooShort =
+    !normalizedExtraCategoryDraft ||
+    Array.from(normalizedExtraCategoryDraft).length < EXTRA_CATEGORY_MIN_LENGTH;
+
+  const startExtraCategoryEdit = () => {
+    setExtraCategoryDraft(portfolio?.extra_category_name || "");
+    setExtraCategoryError("");
+    setExtraCategoryEditorOpen(true);
+  };
+
+  const saveExtraCategory = async (name: string | null) => {
+    if (!portfolio?.id || extraCategorySaving) return;
+    setExtraCategorySaving(true);
+    setExtraCategoryError("");
+    try {
+      const normalizedName = validateExtraCategoryName(
+        name,
+        purchasedCategoryValues,
+      );
+      const token = await getToken();
+      if (!token) throw new Error("Your sign-in session has expired.");
+
+      const response = await fetch(
+        "/api/portfolio?action=update-extra-category",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            portfolioId: portfolio.id,
+            name: normalizedName,
+          }),
+        },
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.portfolio) {
+        throw new Error(
+          typeof payload?.error === "string"
+            ? payload.error
+            : "The category badge could not be saved.",
+        );
+      }
+
+      const savedName =
+        typeof payload.portfolio.extra_category_name === "string"
+          ? payload.portfolio.extra_category_name
+          : null;
+      setPortfolio((current) =>
+        current
+          ? { ...current, extra_category_name: savedName }
+          : current,
+      );
+      onExtraCategoryUpdated?.(savedName);
+      setExtraCategoryDraft(savedName || "");
+      setExtraCategoryEditorOpen(false);
+      showToast(
+        savedName
+          ? "Category badge saved."
+          : "Category badge removed.",
+        "success",
+      );
+    } catch (error) {
+      const message =
+        error instanceof ExtraCategoryValidationError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "The category badge could not be saved.";
+      setExtraCategoryError(message);
+      showToast(message, "error");
+    } finally {
+      setExtraCategorySaving(false);
+    }
+  };
+
+  const removeExtraCategory = () => {
+    if (!window.confirm("Remove your custom category badge?")) return;
+    void saveExtraCategory(null);
+  };
 
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1521,6 +1626,88 @@ export function PublicPortfolio({
                       );
                     });
                   })()}
+                  {portfolio.extra_category_name && (
+                    <span
+                      className="max-w-full break-words px-3 py-1 text-[10px] uppercase font-bold bg-brand-accent/10 border border-brand-accent/20 rounded-full tracking-widest text-brand-accent"
+                      title={portfolio.extra_category_name}
+                    >
+                      {portfolio.extra_category_name}
+                    </span>
+                  )}
+                  {isEditMode && !extraCategoryEditorOpen && (
+                    portfolio.extra_category_name ? (
+                      <span className="flex max-w-full flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={startExtraCategoryEdit}
+                          disabled={extraCategorySaving}
+                          className="min-h-9 rounded-lg border border-brand-accent/30 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-brand-accent transition hover:bg-brand-accent/10 disabled:opacity-50"
+                        >
+                          Edit badge
+                        </button>
+                        <button
+                          type="button"
+                          onClick={removeExtraCategory}
+                          disabled={extraCategorySaving}
+                          className="min-h-9 rounded-lg border border-red-400/30 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={startExtraCategoryEdit}
+                        className="min-h-9 rounded-lg border border-dashed border-brand-accent/40 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-brand-accent transition hover:bg-brand-accent/10"
+                      >
+                        + Add category badge
+                      </button>
+                    )
+                  )}
+                  {isEditMode && extraCategoryEditorOpen && (
+                    <div className="w-full max-w-md rounded-xl border border-brand-accent/20 bg-brand-accent/5 p-3 text-left">
+                      <label className="sr-only" htmlFor="extra-category-name">
+                        Custom category badge
+                      </label>
+                      <input
+                        id="extra-category-name"
+                        value={extraCategoryDraft}
+                        onChange={(event) =>
+                          setExtraCategoryDraft(event.target.value)
+                        }
+                        maxLength={EXTRA_CATEGORY_MAX_LENGTH}
+                        placeholder="e.g. Drone Pilot"
+                        className="min-h-11 w-full rounded-lg border border-brand-border bg-brand-card px-3 py-2 text-sm text-brand-text outline-none focus:border-brand-accent"
+                        autoFocus
+                      />
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void saveExtraCategory(extraCategoryDraft)}
+                          disabled={extraCategorySaving || extraCategoryDraftTooShort}
+                          className="min-h-10 rounded-lg bg-brand-accent px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-white disabled:opacity-50"
+                        >
+                          {extraCategorySaving ? "Saving..." : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExtraCategoryEditorOpen(false);
+                            setExtraCategoryError("");
+                          }}
+                          disabled={extraCategorySaving}
+                          className="min-h-10 rounded-lg border border-brand-border px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-brand-text disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                        {extraCategoryError && (
+                          <p className="basis-full text-xs text-red-500">
+                            {extraCategoryError}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

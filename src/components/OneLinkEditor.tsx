@@ -21,7 +21,6 @@ import {
   Save,
   Settings,
   Share2,
-  Smartphone,
   Trash2,
   User,
 } from "lucide-react";
@@ -148,8 +147,6 @@ export default function OneLinkEditor({
   );
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const [showMobilePreview, setShowMobilePreview] =
-    useState(false);
   const [analyticsState, setAnalyticsState] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
@@ -371,8 +368,8 @@ export default function OneLinkEditor({
   };
 
   return (
-    <div className="min-h-screen bg-[#08080b] text-white lg:flex lg:h-screen lg:overflow-hidden">
-      <aside className="flex min-h-screen w-full flex-col border-white/10 bg-[#0d0d11] lg:min-h-0 lg:w-[430px] lg:shrink-0 lg:border-r">
+    <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-[#08080b] text-white lg:flex-row">
+      <aside className="order-2 flex min-h-0 flex-1 flex-col border-white/10 bg-[#0d0d11] lg:order-1 lg:h-screen lg:w-[430px] lg:flex-none lg:border-r">
         <header className="border-b border-white/10 p-5">
           <div className="flex items-center justify-between gap-4">
             <button
@@ -440,7 +437,7 @@ export default function OneLinkEditor({
           })}
         </nav>
 
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {activeSection === "page" && (
             <div className="space-y-5">
               <SectionHeading
@@ -1004,17 +1001,9 @@ export default function OneLinkEditor({
         <div className="sticky bottom-0 grid grid-cols-2 gap-3 border-t border-white/10 bg-[#0d0d11]/95 p-4 backdrop-blur">
           <button
             type="button"
-            onClick={() => setShowMobilePreview(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] lg:hidden"
-          >
-            <Smartphone aria-hidden="true" size={15} />
-            Preview
-          </button>
-          <button
-            type="button"
             onClick={viewLive}
             disabled={saving}
-            className="hidden items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] disabled:opacity-50 lg:inline-flex"
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] disabled:opacity-50"
           >
             <Eye aria-hidden="true" size={15} />
             View Live
@@ -1045,9 +1034,17 @@ export default function OneLinkEditor({
 
       <section
         aria-label="One Link live preview"
-        className="hidden flex-1 items-center justify-center overflow-auto bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.1),transparent_55%)] p-8 lg:flex"
+        className="order-1 flex h-[clamp(120px,40dvh,380px)] min-h-0 shrink-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.1),transparent_55%)] p-3 [@media(max-height:620px)]:h-[clamp(104px,28dvh,220px)] lg:order-2 lg:h-auto lg:flex-1 lg:items-center lg:justify-center lg:overflow-auto lg:p-8"
       >
-        <div className="h-[720px] w-[390px] overflow-hidden rounded-[3rem] border-[9px] border-black bg-black shadow-2xl">
+        <div className="mb-2 flex shrink-0 items-center justify-between px-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
+          <span>Live preview</span>
+          {isDirty && (
+            <span className="rounded-full bg-amber-400/10 px-2 py-1 text-[9px] tracking-normal text-amber-300">
+              Unsaved
+            </span>
+          )}
+        </div>
+        <div className="min-h-0 w-full max-w-[390px] flex-1 self-center overflow-hidden rounded-[2rem] border-[6px] border-black bg-black shadow-2xl lg:h-[720px] lg:w-[390px] lg:flex-none lg:rounded-[3rem] lg:border-[9px]">
           <div className="h-full overflow-y-auto">
             <OneLinkPublicView
               profile={previewProfile}
@@ -1056,34 +1053,6 @@ export default function OneLinkEditor({
           </div>
         </div>
       </section>
-
-      {showMobilePreview && (
-        <div
-          className="fixed inset-0 z-[100] flex items-end justify-center bg-black/85 p-3 backdrop-blur-sm lg:hidden"
-          role="dialog"
-          aria-modal="true"
-          aria-label="One Link preview"
-        >
-          <div className="h-[88vh] w-full max-w-sm overflow-hidden rounded-[2rem] border border-white/10 bg-black shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/10 bg-[#111116] px-4 py-3">
-              <span className="text-sm font-bold">Live Preview</span>
-              <button
-                type="button"
-                onClick={() => setShowMobilePreview(false)}
-                className="rounded-lg px-3 py-1.5 text-xs font-bold text-white/60 hover:bg-white/5 hover:text-white"
-              >
-                Close
-              </button>
-            </div>
-            <div className="h-[calc(100%-49px)] overflow-y-auto">
-              <OneLinkPublicView
-                profile={previewProfile}
-                preview
-              />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

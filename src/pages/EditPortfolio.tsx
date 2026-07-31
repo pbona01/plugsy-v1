@@ -283,6 +283,13 @@ export function EditPortfolio() {
           previewMode={true} 
           isEditMode={isEditMode}
           onUpdatePortfolio={updatePortfolio}
+          onExtraCategoryUpdated={(name) =>
+            setPortfolio((current) =>
+              current
+                ? { ...current, extra_category_name: name }
+                : current,
+            )
+          }
         />
       </div>
 

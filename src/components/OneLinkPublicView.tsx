@@ -1,5 +1,5 @@
 import React from "react";
-import { ExternalLink, MessageSquare } from "lucide-react";
+import { ChevronRight, ExternalLink, MessageSquare } from "lucide-react";
 import { OneLinkProfile } from "../types";
 import { getOneLinkTheme } from "../constants/onelink-themes";
 import { getPlatformIcon } from "../utils/onelink";
@@ -11,6 +11,20 @@ interface OneLinkPublicViewProps {
   onMessage?: () => void;
   preview?: boolean;
 }
+
+const getPlatformLabel = (platform: string) =>
+  platform
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+
+const getSafeUrlSubtitle = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "");
+  } catch {
+    return "";
+  }
+};
 
 export default function OneLinkPublicView({
   profile,
@@ -61,18 +75,23 @@ export default function OneLinkPublicView({
 
       <main
         className={cn(
-          "mx-auto flex w-full max-w-xl flex-col items-center px-4 text-center",
+          "mx-auto flex w-full max-w-xl flex-col items-center px-4 text-center sm:px-6",
           preview ? "py-8" : "min-h-screen py-12 sm:py-16",
         )}
       >
         <section
           aria-label={`${displayName}'s One Link`}
           className={cn(
-            "w-full rounded-[2rem] border px-5 py-8 shadow-2xl backdrop-blur-xl sm:px-8",
+            "w-full rounded-[2rem] border px-4 py-8 shadow-2xl backdrop-blur-xl sm:px-8",
             theme.cardBg,
           )}
         >
-          <div className="mx-auto mb-5 h-24 w-24 overflow-hidden rounded-full border border-current/10 bg-black/10 shadow-xl">
+          <div
+            className={cn(
+              "mx-auto mb-5 h-24 w-24 overflow-hidden rounded-full border-2 shadow-xl ring-4 ring-current/10",
+              theme.accent,
+            )}
+          >
             {profile.imageUrl ? (
               <img
                 src={profile.imageUrl}
@@ -90,12 +109,12 @@ export default function OneLinkPublicView({
             )}
           </div>
 
-          <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
+          <h1 className="break-words text-2xl font-black tracking-tight sm:text-3xl">
             {displayName}
           </h1>
           <p
             className={cn(
-              "mt-1 text-sm font-semibold",
+              "mt-1 break-all text-sm font-semibold",
               theme.textSecondary,
             )}
           >
@@ -105,7 +124,7 @@ export default function OneLinkPublicView({
           {profile.biography && (
             <p
               className={cn(
-                "mx-auto mt-5 max-w-md whitespace-pre-wrap text-sm leading-6",
+                "mx-auto mt-5 max-w-md whitespace-pre-wrap break-words text-sm leading-6",
                 theme.textSecondary,
               )}
             >
@@ -113,32 +132,23 @@ export default function OneLinkPublicView({
             </p>
           )}
 
-          {socials.length > 0 && (
-            <nav
-              aria-label="Creator social links"
-              className="mt-6 flex flex-wrap justify-center gap-2.5"
+          {profile.settings.messageEnabled && (
+            <button
+              type="button"
+              onClick={onMessage}
+              disabled={!onMessage}
+              className={cn(
+                "mt-6 flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3.5 text-sm font-bold shadow-lg transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2 focus-visible:ring-offset-transparent disabled:cursor-default disabled:opacity-60",
+                theme.accent,
+              )}
             >
-              {socials.map((social) => (
-                <a
-                  key={social.id}
-                  href={social.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`Open ${social.platform}`}
-                  title={social.platform}
-                  className={cn(
-                    "flex h-11 w-11 items-center justify-center rounded-2xl border transition hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2 focus-visible:ring-offset-transparent",
-                    theme.accent,
-                  )}
-                >
-                  {getPlatformIcon(social.platform, { size: 19 })}
-                </a>
-              ))}
-            </nav>
+              <MessageSquare aria-hidden="true" size={17} />
+              DM Me
+            </button>
           )}
 
           {projects.length > 0 && (
-            <div className="mt-7 space-y-3">
+            <nav aria-label="Featured links" className="mt-7 w-full space-y-3">
               {projects.map((project) => (
                 <a
                   key={project.id}
@@ -146,19 +156,28 @@ export default function OneLinkPublicView({
                   target="_blank"
                   rel="noopener noreferrer"
                   className={cn(
-                    "group flex w-full items-center justify-between gap-4 rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2 focus-visible:ring-offset-transparent",
+                    "group flex min-h-14 w-full items-center gap-3 rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2 focus-visible:ring-offset-transparent",
                     theme.buttonBg,
                   )}
                   aria-label={`Open ${project.title}`}
                 >
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-bold">
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border",
+                      theme.accent,
+                    )}
+                  >
+                    <ExternalLink size={17} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block break-words text-sm font-bold">
                       {project.title}
                     </span>
                     {project.description && (
                       <span
                         className={cn(
-                          "mt-1 block text-xs leading-5",
+                          "mt-1 block break-words text-xs leading-5",
                           theme.textSecondary,
                         )}
                       >
@@ -166,26 +185,63 @@ export default function OneLinkPublicView({
                       </span>
                     )}
                   </span>
-                  <ExternalLink
+                  <ChevronRight
                     aria-hidden="true"
-                    size={16}
+                    size={18}
                     className="shrink-0 opacity-70 transition group-hover:opacity-100"
                   />
                 </a>
               ))}
-            </div>
+            </nav>
           )}
 
-          {profile.settings.messageEnabled && (
-            <button
-              type="button"
-              onClick={onMessage}
-              disabled={!onMessage}
-              className="mt-7 flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-950/20 transition hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2 disabled:cursor-default disabled:opacity-90"
+          {socials.length > 0 && (
+            <nav
+              aria-label="Creator social links"
+              className="mt-7 w-full space-y-3"
             >
-              <MessageSquare aria-hidden="true" size={17} />
-              Message on Plugsy
-            </button>
+              {socials.map((social) => (
+                <a
+                  key={social.id}
+                  href={social.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open ${getPlatformLabel(social.platform)}`}
+                  className={cn(
+                    "group flex min-h-14 w-full items-center gap-3 rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2 focus-visible:ring-offset-transparent",
+                    theme.buttonBg,
+                  )}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border",
+                      theme.accent,
+                    )}
+                  >
+                    {getPlatformIcon(social.platform, { size: 19 })}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-bold">
+                      {getPlatformLabel(social.platform)}
+                    </span>
+                    <span
+                      className={cn(
+                        "block truncate text-xs",
+                        theme.textSecondary,
+                      )}
+                    >
+                      {getSafeUrlSubtitle(social.url)}
+                    </span>
+                  </span>
+                  <ChevronRight
+                    aria-hidden="true"
+                    size={18}
+                    className="shrink-0 opacity-70 transition group-hover:opacity-100"
+                  />
+                </a>
+              ))}
+            </nav>
           )}
         </section>
 
