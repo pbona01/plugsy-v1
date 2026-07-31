@@ -1,291 +1,1276 @@
-import React, { useState, useEffect } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "motion/react";
-import { 
-  Github, 
-  Linkedin, 
-  Instagram, 
-  Youtube, 
-  Globe, 
-  Plus, 
-  Trash2, 
-  ExternalLink, 
-  Sparkles, 
-  Link2, 
-  Palette, 
-  Layout, 
-  FolderPlus,
+import {
+  ArrowDown,
   ArrowLeft,
-  Share2,
-  Settings,
+  ArrowUp,
   BarChart3,
+  Copy,
+  ExternalLink,
+  Eye,
+  Link2,
+  Loader2,
+  Palette,
+  Plus,
+  RefreshCw,
+  Save,
+  Settings,
+  Share2,
+  Smartphone,
+  Trash2,
   User,
-  Smartphone
 } from "lucide-react";
-import { OneLinkSettings, OneLinkSocial, OneLinkProject } from "../types";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import toast from "react-hot-toast";
+import OneLinkPublicView from "./OneLinkPublicView";
+import {
+  OneLinkAnalytics,
+  OneLinkProfile,
+  OneLinkProject,
+  OneLinkSettings,
+  OneLinkSocial,
+} from "../types";
 import { THEME_PRESETS } from "../constants/onelink-themes";
-import { getPlatformIcon } from "../utils/onelink";
+import {
+  createOneLinkItemId,
+  getCanonicalOneLinkUrl,
+  getOneLinkPath,
+} from "../utils/onelink";
 import { cn } from "../lib/utils";
+import {
+  ONE_LINK_LIMITS,
+  normalizeExternalUrl,
+  validateOneLinkSavePayload,
+} from "../../shared/onelink.js";
 
-interface OneLinkEditorProps {
-  initialSettings: OneLinkSettings;
-  username: string;
-  avatarUrl?: string;
-  fullName?: string;
-  bioText?: string;
-  onSave: (settings: OneLinkSettings) => Promise<void>;
+interface OneLinkDraft {
+  displayName: string;
+  biography: string;
+  settings: OneLinkSettings;
 }
 
-const SECTIONS = [
-  { id: "page", label: "My Page", icon: "👤" },
-  { id: "design", label: "Design", icon: "🎨" },
-  { id: "links", label: "Links & Socials", icon: "🔗" },
-  { id: "analytics", label: "Analytics", icon: "📊" },
-  { id: "settings", label: "Settings", icon: "⚙️" }
+interface OneLinkEditorProps {
+  initialProfile: OneLinkProfile;
+  onSave: (draft: OneLinkDraft) => Promise<OneLinkProfile>;
+  loadAnalytics: () => Promise<OneLinkAnalytics>;
+}
+
+type SectionId =
+  | "page"
+  | "design"
+  | "links"
+  | "analytics"
+  | "settings";
+
+const SECTIONS: Array<{
+  id: SectionId;
+  label: string;
+  icon: React.ComponentType<{ size?: number }>;
+}> = [
+  { id: "page", label: "My Page", icon: User },
+  { id: "design", label: "Design", icon: Palette },
+  { id: "links", label: "Links & Socials", icon: Link2 },
+  { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "settings", label: "Settings", icon: Settings },
 ];
 
+const SOCIAL_PLATFORM_SUGGESTIONS = [
+  "website",
+  "instagram",
+  "x",
+  "linkedin",
+  "youtube",
+  "github",
+  "tiktok",
+  "facebook",
+  "discord",
+  "spotify",
+  "telegram",
+];
+
+const toDraft = (profile: OneLinkProfile): OneLinkDraft => ({
+  displayName: profile.displayName,
+  biography: profile.biography,
+  settings: {
+    ...profile.settings,
+    socials: profile.settings.socials.map((social) => ({
+      ...social,
+    })),
+    projects: profile.settings.projects.map((project) => ({
+      ...project,
+    })),
+  },
+});
+
+const moveItem = <T,>(
+  items: T[],
+  index: number,
+  direction: -1 | 1,
+) => {
+  const target = index + direction;
+  if (target < 0 || target >= items.length) return items;
+  const next = [...items];
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
+};
+
+const safeErrorMessage = (error: unknown) =>
+  error instanceof Error && error.message
+    ? error.message
+    : "One Link changes could not be saved.";
+
 export default function OneLinkEditor({
-  initialSettings,
-  username,
-  avatarUrl,
-  fullName,
-  bioText,
-  onSave
+  initialProfile,
+  onSave,
+  loadAnalytics,
 }: OneLinkEditorProps) {
   const navigate = useNavigate();
-  const [activeSection, setActiveSection] = useState("page");
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [theme, setTheme] = useState<OneLinkSettings["theme"]>(initialSettings.theme || "dark-twilight");
-  const [socials, setSocials] = useState<OneLinkSocial[]>(initialSettings.socials || []);
-  const [projects, setProjects] = useState<OneLinkProject[]>(initialSettings.projects || []);
-  
+  const [activeSection, setActiveSection] =
+    useState<SectionId>("page");
+  const [draft, setDraft] = useState<OneLinkDraft>(() =>
+    toDraft(initialProfile),
+  );
+  const [savedSnapshot, setSavedSnapshot] = useState(() =>
+    JSON.stringify(toDraft(initialProfile)),
+  );
   const [saving, setSaving] = useState(false);
-  
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 1024);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-  
-  const activePreset = THEME_PRESETS[theme];
+  const savingRef = useRef(false);
+  const [showMobilePreview, setShowMobilePreview] =
+    useState(false);
+  const [analyticsState, setAnalyticsState] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [analytics, setAnalytics] =
+    useState<OneLinkAnalytics | null>(null);
 
-  const handleSave = async () => {
+  useEffect(() => {
+    const next = toDraft(initialProfile);
+    setDraft(next);
+    setSavedSnapshot(JSON.stringify(next));
+  }, [initialProfile]);
+
+  const currentSnapshot = useMemo(
+    () => JSON.stringify(draft),
+    [draft],
+  );
+  const isDirty = currentSnapshot !== savedSnapshot;
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () =>
+      window.removeEventListener(
+        "beforeunload",
+        warnBeforeUnload,
+      );
+  }, [isDirty]);
+
+  const previewProfile: OneLinkProfile = useMemo(
+    () => ({
+      username: initialProfile.username,
+      displayName: draft.displayName,
+      biography: draft.biography,
+      imageUrl: initialProfile.imageUrl,
+      settings: draft.settings,
+    }),
+    [draft, initialProfile.imageUrl, initialProfile.username],
+  );
+
+  const updateSettings = (
+    update:
+      | Partial<OneLinkSettings>
+      | ((current: OneLinkSettings) => OneLinkSettings),
+  ) => {
+    setDraft((current) => ({
+      ...current,
+      settings:
+        typeof update === "function"
+          ? update(current.settings)
+          : { ...current.settings, ...update },
+    }));
+  };
+
+  const copyPublicUrl = async () => {
+    if (!initialProfile.username) {
+      toast.error("Claim a Wallet Tag before sharing One Link.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(
+        getCanonicalOneLinkUrl(initialProfile.username),
+      );
+      toast.success("One Link URL copied.");
+    } catch {
+      toast.error("The One Link URL could not be copied.");
+    }
+  };
+
+  const sharePublicUrl = async () => {
+    if (!initialProfile.username) {
+      toast.error("Claim a Wallet Tag before sharing One Link.");
+      return;
+    }
+    const url = getCanonicalOneLinkUrl(initialProfile.username);
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `${draft.displayName}'s One Link`,
+          text: `Visit ${draft.displayName} on Plugsy.`,
+          url,
+        });
+        return;
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        ) {
+          return;
+        }
+      }
+    }
+    await copyPublicUrl();
+  };
+
+  const saveChanges = async () => {
+    if (savingRef.current) return null;
+    savingRef.current = true;
     setSaving(true);
     try {
-      const updatedSettings: OneLinkSettings = {
-        theme,
-        socials,
-        projects
-      };
-      await onSave(updatedSettings);
-      toast.success("OneLink published successfully!");
-    } catch (err: any) {
-      toast.error(err.message || "Failed to publish OneLink settings");
+      const validated = validateOneLinkSavePayload(draft);
+      const saved = await onSave(validated as OneLinkDraft);
+      const savedDraft = toDraft(saved);
+      setDraft(savedDraft);
+      setSavedSnapshot(JSON.stringify(savedDraft));
+      toast.success(
+        saved.settings.published
+          ? "One Link saved and published."
+          : "One Link changes saved.",
+      );
+      return saved;
+    } catch (error) {
+      toast.error(safeErrorMessage(error));
+      return null;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
 
-  return (
-    <div className="flex h-screen bg-[#0a0a0c] overflow-hidden text-white">
-      {/* LEFT: Editor sidebar */}
-      <div className="w-[320px] flex-shrink-0 border-r border-white/8 flex flex-col overflow-y-auto">
-        {/* Top: Logo/back + nav */}
-        <div className="p-5 border-b border-white/8">
-            <div className="flex items-center gap-3 mb-6">
-                <ArrowLeft size={16} className="text-white/50 cursor-pointer" onClick={() => navigate(-1)} />
-                <span className="font-bold">OneLink</span>
-            </div>
-            <div className="bg-white/5 rounded-lg p-3 text-xs text-white/50 flex justify-between items-center">
-                <span>plugsy.ng/one/{username}</span>
-                <Share2 size={14} />
-            </div>
-        </div>
+  const viewLive = async () => {
+    let liveWindow: Window | null = null;
+    try {
+      liveWindow = window.open("about:blank", "_blank");
+      if (liveWindow) liveWindow.opener = null;
+    } catch {
+      liveWindow = null;
+    }
 
-        {/* Section Navigation */}
-        <nav className="flex-1 py-4">
-          {SECTIONS.map(section => (
+    const saved = await saveChanges();
+    if (!saved?.username) {
+      if (liveWindow && !liveWindow.closed) liveWindow.close();
+      return;
+    }
+
+    if (!liveWindow || liveWindow.closed) {
+      toast.success(
+        "Saved. Your browser blocked the preview tab. Use Copy Link to open it.",
+      );
+      return;
+    }
+
+    liveWindow.location.replace(getOneLinkPath(saved.username));
+  };
+
+  const goBack = () => {
+    if (
+      isDirty &&
+      !window.confirm(
+        "You have unsaved One Link changes. Leave anyway?",
+      )
+    ) {
+      return;
+    }
+    navigate(-1);
+  };
+
+  const refreshAnalytics = async () => {
+    setAnalyticsState("loading");
+    try {
+      const result = await loadAnalytics();
+      setAnalytics(result);
+      setAnalyticsState("ready");
+    } catch {
+      setAnalytics(null);
+      setAnalyticsState("error");
+    }
+  };
+
+  const selectSection = (section: SectionId) => {
+    setActiveSection(section);
+    if (
+      section === "analytics" &&
+      analyticsState === "idle"
+    ) {
+      refreshAnalytics();
+    }
+  };
+
+  const updateSocial = (
+    id: string,
+    patch: Partial<OneLinkSocial>,
+  ) => {
+    updateSettings((settings) => ({
+      ...settings,
+      socials: settings.socials.map((social) => {
+        if (social.id !== id) return social;
+        const next = { ...social, ...patch };
+        if (patch.url !== undefined) {
+          const valid = Boolean(normalizeExternalUrl(patch.url));
+          next.invalid = !valid;
+          if (!valid) next.enabled = false;
+        }
+        return next;
+      }),
+    }));
+  };
+
+  const updateProject = (
+    id: string,
+    patch: Partial<OneLinkProject>,
+  ) => {
+    updateSettings((settings) => ({
+      ...settings,
+      projects: settings.projects.map((project) => {
+        if (project.id !== id) return project;
+        const next = { ...project, ...patch };
+        if (patch.url !== undefined) {
+          const valid = Boolean(normalizeExternalUrl(patch.url));
+          next.invalid = !valid;
+          if (!valid) next.enabled = false;
+        }
+        return next;
+      }),
+    }));
+  };
+
+  return (
+    <div className="min-h-screen bg-[#08080b] text-white lg:flex lg:h-screen lg:overflow-hidden">
+      <aside className="flex min-h-screen w-full flex-col border-white/10 bg-[#0d0d11] lg:min-h-0 lg:w-[430px] lg:shrink-0 lg:border-r">
+        <header className="border-b border-white/10 p-5">
+          <div className="flex items-center justify-between gap-4">
             <button
-              key={section.id}
-              onClick={() => setActiveSection(section.id)}
-              className={cn(
-                "flex items-center gap-4 w-full px-6 py-4 border-l-[3px] text-sm font-medium transition-all",
-                activeSection === section.id 
-                  ? "bg-red-500/10 border-red-500 text-white" 
-                  : "border-transparent text-white/50 hover:text-white hover:bg-white/5"
-              )}
+              type="button"
+              onClick={goBack}
+              className="inline-flex items-center gap-2 rounded-xl px-2 py-2 text-sm font-bold text-white/70 transition hover:bg-white/5 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
-              <span className="text-xl">{section.icon}</span>
-              {section.label}
+              <ArrowLeft aria-hidden="true" size={16} />
+              One Link
             </button>
-          ))}
+            {isDirty && (
+              <span className="rounded-full bg-amber-400/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                Unsaved
+              </span>
+            )}
+          </div>
+
+          <div className="mt-4 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] p-2.5">
+            <span className="min-w-0 flex-1 truncate pl-1 text-xs text-white/55">
+              {initialProfile.username
+                ? `plugsy.ng/one/${initialProfile.username}`
+                : "Claim a Wallet Tag to publish"}
+            </span>
+            <button
+              type="button"
+              onClick={copyPublicUrl}
+              aria-label="Copy public One Link URL"
+              className="rounded-lg p-2 text-white/60 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              <Copy aria-hidden="true" size={15} />
+            </button>
+            <button
+              type="button"
+              onClick={sharePublicUrl}
+              aria-label="Share public One Link URL"
+              className="rounded-lg p-2 text-white/60 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              <Share2 aria-hidden="true" size={15} />
+            </button>
+          </div>
+        </header>
+
+        <nav
+          aria-label="One Link editor sections"
+          className="flex gap-1 overflow-x-auto border-b border-white/10 px-3 py-3 lg:grid lg:grid-cols-5"
+        >
+          {SECTIONS.map((section) => {
+            const Icon = section.icon;
+            return (
+              <button
+                key={section.id}
+                type="button"
+                onClick={() => selectSection(section.id)}
+                className={cn(
+                  "flex min-w-[76px] flex-col items-center gap-1 rounded-xl px-2 py-2 text-[10px] font-bold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-white",
+                  activeSection === section.id
+                    ? "bg-red-500/15 text-red-300"
+                    : "text-white/45 hover:bg-white/5 hover:text-white",
+                )}
+              >
+                <Icon size={16} />
+                {section.label}
+              </button>
+            );
+          })}
         </nav>
 
-        {/* Section Content Area */}
-        <div className="p-6 border-t border-white/8 flex-1 overflow-y-auto">
-          <AnimatePresence mode="wait">
+        <div className="flex-1 overflow-y-auto p-5">
           {activeSection === "page" && (
-            <motion.div
-              key="page"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-              className="space-y-4"
-            >
-              <h3 className="font-bold text-sm">My Page</h3>
-              <input type="text" placeholder="Full Name" value={fullName || ""} className="w-full bg-white/5 p-3 rounded-lg text-sm" />
-              <textarea placeholder="Bio" value={bioText || ""} className="w-full bg-white/5 p-3 rounded-lg text-sm" rows={3} />
-            </motion.div>
+            <div className="space-y-5">
+              <SectionHeading
+                title="My Page"
+                description="Your creator identity across this mini-site."
+              />
+
+              <div className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="h-16 w-16 overflow-hidden rounded-full border border-white/10 bg-white/5">
+                  {initialProfile.imageUrl ? (
+                    <img
+                      src={initialProfile.imageUrl}
+                      alt="Current profile"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-xl font-black">
+                      {(draft.displayName || "?")
+                        .slice(0, 1)
+                        .toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm font-bold">Profile image</p>
+                  <p className="mt-1 text-xs leading-5 text-white/45">
+                    Uses your existing Plugsy profile image.
+                  </p>
+                </div>
+              </div>
+
+              <Field
+                label="Display name"
+                value={draft.displayName}
+                onChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    displayName: value,
+                  }))
+                }
+                maxLength={ONE_LINK_LIMITS.displayName}
+              />
+              <TextAreaField
+                label="Biography"
+                value={draft.biography}
+                onChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    biography: value,
+                  }))
+                }
+                maxLength={ONE_LINK_LIMITS.biography}
+                rows={5}
+              />
+              <div>
+                <label className="mb-2 block text-xs font-bold text-white/65">
+                  Username / Wallet Tag
+                </label>
+                <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-3 text-sm text-white/45">
+                  @{initialProfile.username || "unclaimed"}
+                </div>
+                <p className="mt-2 text-[11px] leading-5 text-white/35">
+                  Read-only here because this identity is account-wide.
+                </p>
+              </div>
+            </div>
           )}
+
           {activeSection === "design" && (
-            <motion.div
-              key="design"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-              className="space-y-4"
-            >
-              <h3 className="font-bold text-sm">Design</h3>
-              {Object.entries(THEME_PRESETS).map(([key, value]) => (
-                <button key={key} onClick={() => setTheme(key as any)} className={cn("w-full p-3 rounded-lg text-sm text-left", theme === key ? "bg-white/10" : "bg-white/5")}>
-                  {value.name}
-                </button>
-              ))}
-            </motion.div>
+            <div className="space-y-5">
+              <SectionHeading
+                title="Design"
+                description="Theme changes appear in the live preview immediately."
+              />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {Object.entries(THEME_PRESETS).map(
+                  ([themeId, theme]) => (
+                    <button
+                      key={themeId}
+                      type="button"
+                      onClick={() =>
+                        updateSettings({
+                          theme:
+                            themeId as OneLinkSettings["theme"],
+                        })
+                      }
+                      className={cn(
+                        "rounded-2xl border p-3 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-white",
+                        theme.background,
+                        theme.textPrimary,
+                        draft.settings.theme === themeId
+                          ? "border-red-400 ring-1 ring-red-400"
+                          : "border-white/10 hover:border-white/25",
+                      )}
+                    >
+                      <span className="block text-sm font-bold">
+                        {theme.name}
+                      </span>
+                      <span
+                        className={cn(
+                          "mt-1 block text-[11px]",
+                          theme.textSecondary,
+                        )}
+                      >
+                        Preview theme
+                      </span>
+                    </button>
+                  ),
+                )}
+              </div>
+            </div>
           )}
+
           {activeSection === "links" && (
-            <motion.div
-              key="links"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-              className="text-sm"
-            >
-              Links Section (Work in Progress)
-            </motion.div>
-          )}
-          {activeSection === "analytics" && (
-            <motion.div
-              key="analytics"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-              className="text-sm"
-            >
-              Analytics Section (Work in Progress)
-            </motion.div>
-          )}
-          {activeSection === "settings" && (
-            <motion.div
-              key="settings"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-              className="text-sm"
-            >
-              Settings Section (Work in Progress)
-            </motion.div>
-          )}
-        </AnimatePresence>
-        </div>
+            <div className="space-y-8">
+              <div className="space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <SectionHeading
+                    title="Social links"
+                    description={`${draft.settings.socials.length}/${ONE_LINK_LIMITS.socialLinks} used`}
+                  />
+                  <button
+                    type="button"
+                    disabled={
+                      draft.settings.socials.length >=
+                      ONE_LINK_LIMITS.socialLinks
+                    }
+                    onClick={() =>
+                      updateSettings((settings) => ({
+                        ...settings,
+                        socials: [
+                          ...settings.socials,
+                          {
+                            id: createOneLinkItemId("social"),
+                            platform: "website",
+                            url: "",
+                            enabled: true,
+                          },
+                        ],
+                      }))
+                    }
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-black transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Plus aria-hidden="true" size={14} />
+                    Add
+                  </button>
+                </div>
 
-        {isMobile && (
-          <button
-            onClick={() => setShowPreviewModal(true)}
-            className="fixed bottom-20 right-6 bg-red-500 text-white p-4 rounded-full shadow-lg z-50"
-          >
-            👁 Preview
-          </button>
-        )}
-
-        {/* Sticky Bottom Actions */}
-        <div className="p-6 border-t border-white/8 space-y-3">
-          <button className="w-full py-3 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-bold">View Live</button>
-          <button 
-            onClick={handleSave}
-            disabled={saving}
-            className="w-full py-3 bg-red-500 hover:bg-red-600 rounded-xl text-sm font-bold"
-          >
-            {saving ? "Publishing..." : "Share Link"}
-          </button>
-        </div>
-      </div>
-
-      {/* RIGHT: Live preview */}
-      <div className={cn("flex-1 flex items-center justify-center bg-[radial-gradient(circle_at_50%_30%,rgba(239,68,68,0.08),transparent_60%)] overflow-y-auto p-10", isMobile && "hidden")}>
-        {/* Phone-frame preview */}
-        <div className="w-[300px] h-[600px] rounded-[3rem] border-[8px] border-black bg-black shadow-2xl overflow-hidden relative">
-             <div className={`w-full h-full p-6 flex flex-col items-center text-center overflow-y-auto ${activePreset.background}`}>
-              <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-white/10 mb-4 shrink-0 bg-white/5">
-                {avatarUrl ? (
-                  <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                {draft.settings.socials.length === 0 ? (
+                  <EmptyState text="Add the places where people can find you." />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-white/50 text-2xl font-bold">
-                    {(fullName || username || "?")[0].toUpperCase()}
+                  <div className="space-y-3">
+                    {draft.settings.socials.map((social, index) => (
+                      <div
+                        key={social.id}
+                        className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <label className="flex items-center gap-2 text-xs font-bold">
+                            <input
+                              type="checkbox"
+                              checked={social.enabled}
+                              disabled={social.invalid}
+                              onChange={(event) =>
+                                updateSocial(social.id, {
+                                  enabled: event.target.checked,
+                                })
+                              }
+                              className="h-4 w-4 accent-red-500"
+                            />
+                            Enabled
+                          </label>
+                          <ItemActions
+                            index={index}
+                            length={draft.settings.socials.length}
+                            onMove={(direction) =>
+                              updateSettings((settings) => ({
+                                ...settings,
+                                socials: moveItem(
+                                  settings.socials,
+                                  index,
+                                  direction,
+                                ),
+                              }))
+                            }
+                            onDelete={() =>
+                              updateSettings((settings) => ({
+                                ...settings,
+                                socials: settings.socials.filter(
+                                  (entry) => entry.id !== social.id,
+                                ),
+                              }))
+                            }
+                          />
+                        </div>
+                        <input
+                          list="onelink-platforms"
+                          value={social.platform}
+                          onChange={(event) =>
+                            updateSocial(social.id, {
+                              platform: event.target.value,
+                            })
+                          }
+                          maxLength={ONE_LINK_LIMITS.socialPlatform}
+                          aria-label="Social platform"
+                          placeholder="Platform"
+                          className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none focus:border-white/30"
+                        />
+                        {social.invalid && (
+                          <p className="text-xs text-amber-300">
+                            This legacy URL is invalid and stays hidden until corrected.
+                          </p>
+                        )}
+                        <input
+                          type="url"
+                          value={social.url}
+                          onChange={(event) =>
+                            updateSocial(social.id, {
+                              url: event.target.value,
+                            })
+                          }
+                          maxLength={ONE_LINK_LIMITS.url}
+                          aria-label={`${social.platform} URL`}
+                          placeholder="https://example.com/you"
+                          className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none focus:border-white/30"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <datalist id="onelink-platforms">
+                  {SOCIAL_PLATFORM_SUGGESTIONS.map((platform) => (
+                    <option key={platform} value={platform} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div className="space-y-4 border-t border-white/10 pt-7">
+                <div className="flex items-start justify-between gap-3">
+                  <SectionHeading
+                    title="Featured links"
+                    description={`${draft.settings.projects.length}/${ONE_LINK_LIMITS.featuredLinks} used`}
+                  />
+                  <button
+                    type="button"
+                    disabled={
+                      draft.settings.projects.length >=
+                      ONE_LINK_LIMITS.featuredLinks
+                    }
+                    onClick={() =>
+                      updateSettings((settings) => ({
+                        ...settings,
+                        projects: [
+                          ...settings.projects,
+                          {
+                            id: createOneLinkItemId("link"),
+                            title: "",
+                            description: "",
+                            url: "",
+                            enabled: true,
+                          },
+                        ],
+                      }))
+                    }
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-black transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Plus aria-hidden="true" size={14} />
+                    Add
+                  </button>
+                </div>
+
+                {draft.settings.projects.length === 0 ? (
+                  <EmptyState text="Feature your best project, product, or page." />
+                ) : (
+                  <div className="space-y-3">
+                    {draft.settings.projects.map((project, index) => (
+                      <div
+                        key={project.id}
+                        className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <label className="flex items-center gap-2 text-xs font-bold">
+                            <input
+                              type="checkbox"
+                              checked={project.enabled}
+                              disabled={project.invalid}
+                              onChange={(event) =>
+                                updateProject(project.id, {
+                                  enabled: event.target.checked,
+                                })
+                              }
+                              className="h-4 w-4 accent-red-500"
+                            />
+                            Enabled
+                          </label>
+                          <ItemActions
+                            index={index}
+                            length={draft.settings.projects.length}
+                            onMove={(direction) =>
+                              updateSettings((settings) => ({
+                                ...settings,
+                                projects: moveItem(
+                                  settings.projects,
+                                  index,
+                                  direction,
+                                ),
+                              }))
+                            }
+                            onDelete={() =>
+                              updateSettings((settings) => ({
+                                ...settings,
+                                projects: settings.projects.filter(
+                                  (entry) => entry.id !== project.id,
+                                ),
+                              }))
+                            }
+                          />
+                        </div>
+                        <input
+                          value={project.title}
+                          onChange={(event) =>
+                            updateProject(project.id, {
+                              title: event.target.value,
+                            })
+                          }
+                          maxLength={ONE_LINK_LIMITS.featuredTitle}
+                          aria-label="Featured link title"
+                          placeholder="Featured link title"
+                          className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none focus:border-white/30"
+                        />
+                        {project.invalid && (
+                          <p className="text-xs text-amber-300">
+                            This legacy URL is invalid and stays hidden until corrected.
+                          </p>
+                        )}
+                        <textarea
+                          value={project.description}
+                          onChange={(event) =>
+                            updateProject(project.id, {
+                              description: event.target.value,
+                            })
+                          }
+                          maxLength={
+                            ONE_LINK_LIMITS.featuredDescription
+                          }
+                          aria-label="Featured link description"
+                          placeholder="Short description (optional)"
+                          rows={2}
+                          className="w-full resize-none rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none focus:border-white/30"
+                        />
+                        <input
+                          type="url"
+                          value={project.url}
+                          onChange={(event) =>
+                            updateProject(project.id, {
+                              url: event.target.value,
+                            })
+                          }
+                          maxLength={ONE_LINK_LIMITS.url}
+                          aria-label="Featured link URL"
+                          placeholder="https://example.com/project"
+                          className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none focus:border-white/30"
+                        />
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
-              <h4 className={`text-lg font-black tracking-tight ${activePreset.textPrimary}`}>
-                {fullName || "Your Name"}
-              </h4>
-              <p className={`text-xs mt-1 ${activePreset.textSecondary}`}>
-                @{username || "username"}
-              </p>
-              {bioText && (
-                <p className={`text-xs mt-4 leading-relaxed ${activePreset.textSecondary}`}>
-                  {bioText}
-                </p>
+            </div>
+          )}
+
+          {activeSection === "analytics" && (
+            <div className="space-y-5">
+              <div className="flex items-start justify-between gap-3">
+                <SectionHeading
+                  title="Page views"
+                  description="Privacy-conscious daily page-view totals."
+                />
+                <button
+                  type="button"
+                  onClick={refreshAnalytics}
+                  disabled={analyticsState === "loading"}
+                  aria-label="Refresh One Link analytics"
+                  className="rounded-xl border border-white/10 p-2 text-white/60 transition hover:bg-white/5 hover:text-white disabled:opacity-40"
+                >
+                  <RefreshCw
+                    aria-hidden="true"
+                    size={15}
+                    className={
+                      analyticsState === "loading"
+                        ? "animate-spin"
+                        : ""
+                    }
+                  />
+                </button>
+              </div>
+
+              {analyticsState === "loading" && (
+                <div className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 py-12 text-sm text-white/50">
+                  <Loader2
+                    aria-hidden="true"
+                    className="animate-spin"
+                    size={17}
+                  />
+                  Loading analytics…
+                </div>
               )}
-              <div className="w-full h-[1px] bg-white/5 my-6" />
-              <div className="w-full space-y-3">
-                {projects.map((proj) => (
-                    <div key={proj.id} className={`w-full p-4 rounded-2xl flex justify-between items-center ${activePreset.buttonBg}`}>
-                        <span className={`text-sm font-bold ${activePreset.textPrimary}`}>{proj.title}</span>
-                        <ExternalLink size={14} />
-                    </div>
-                ))}
+              {analyticsState === "error" && (
+                <div className="rounded-2xl border border-red-400/20 bg-red-500/5 p-5">
+                  <p className="text-sm font-bold">
+                    Analytics could not be loaded.
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-white/50">
+                    No placeholder values are being shown.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={refreshAnalytics}
+                    className="mt-4 rounded-xl bg-white px-3 py-2 text-xs font-bold text-black"
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
+              {analyticsState === "ready" && analytics && (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Metric
+                      label="Total"
+                      value={analytics.totalViews}
+                    />
+                    <Metric
+                      label="Today"
+                      value={analytics.todayViews}
+                    />
+                    <Metric
+                      label="7 days"
+                      value={analytics.sevenDayViews}
+                    />
+                  </div>
+                  <div className="h-64 rounded-2xl border border-white/10 bg-white/[0.025] p-3">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={analytics.daily}>
+                        <CartesianGrid
+                          stroke="rgba(255,255,255,0.06)"
+                          vertical={false}
+                        />
+                        <XAxis
+                          dataKey="date"
+                          tickFormatter={(value) =>
+                            String(value).slice(5)
+                          }
+                          stroke="rgba(255,255,255,0.25)"
+                          fontSize={10}
+                          minTickGap={18}
+                        />
+                        <YAxis
+                          allowDecimals={false}
+                          stroke="rgba(255,255,255,0.25)"
+                          fontSize={10}
+                          width={28}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            background: "#111116",
+                            border: "1px solid rgba(255,255,255,.12)",
+                            borderRadius: 12,
+                            color: "white",
+                            fontSize: 12,
+                          }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="views"
+                          stroke="#f87171"
+                          strokeWidth={2}
+                          dot={false}
+                          activeDot={{ r: 4 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <p className="text-[11px] leading-5 text-white/35">
+                    Counts page views only. No visitor identity,
+                    location, device, referrer, or link clicks are
+                    collected.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
+          {activeSection === "settings" && (
+            <div className="space-y-6">
+              <SectionHeading
+                title="Settings"
+                description="Control publishing and search previews."
+              />
+              <ToggleRow
+                label="Published"
+                description="Make /one/{username} publicly available."
+                checked={draft.settings.published}
+                onChange={(published) =>
+                  updateSettings({ published })
+                }
+              />
+              <ToggleRow
+                label="Message on Plugsy"
+                description="Let visitors open Plugsy chat search for your handle."
+                checked={draft.settings.messageEnabled}
+                onChange={(messageEnabled) =>
+                  updateSettings({ messageEnabled })
+                }
+              />
+              <Field
+                label="SEO title"
+                value={draft.settings.seoTitle}
+                onChange={(seoTitle) =>
+                  updateSettings({ seoTitle })
+                }
+                maxLength={ONE_LINK_LIMITS.seoTitle}
+                placeholder="Optional custom page title"
+              />
+              <TextAreaField
+                label="SEO description"
+                value={draft.settings.seoDescription}
+                onChange={(seoDescription) =>
+                  updateSettings({ seoDescription })
+                }
+                maxLength={ONE_LINK_LIMITS.seoDescription}
+                placeholder="Optional search and social description"
+                rows={3}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={copyPublicUrl}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08]"
+                >
+                  <Copy aria-hidden="true" size={15} />
+                  Copy URL
+                </button>
+                <button
+                  type="button"
+                  onClick={viewLive}
+                  disabled={saving}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] disabled:opacity-50"
+                >
+                  <ExternalLink aria-hidden="true" size={15} />
+                  View page
+                </button>
+              </div>
+              <div className="rounded-2xl border border-blue-400/15 bg-blue-500/5 p-4 text-xs leading-5 text-blue-100/70">
+                Powered by Plugsy is always displayed on every public
+                One Link page.
               </div>
             </div>
+          )}
         </div>
-      </div>
-      
-      {/* Mobile Preview Modal */}
-      {isMobile && showPreviewModal && (
-        <div className="fixed inset-0 bg-black/80 z-[100] p-4 flex flex-col justify-end" onClick={() => setShowPreviewModal(false)}>
-            <div className="bg-[#0a0a0c] rounded-t-3xl h-[80vh] p-6" onClick={(e) => e.stopPropagation()}>
-                <div className="flex justify-between mb-4">
-                    <h3 className="font-bold">Live Preview</h3>
-                    <button onClick={() => setShowPreviewModal(false)}>✕</button>
-                </div>
-                 <div className="w-[300px] h-[500px] rounded-[3rem] border-[8px] border-black bg-black shadow-2xl overflow-hidden mx-auto">
-                    <div className={`w-full h-full p-6 flex flex-col items-center text-center overflow-y-auto ${activePreset.background}`}>
-                        <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-white/10 mb-4 shrink-0 bg-white/5">
-                            {avatarUrl ? (
-                            <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                            ) : (
-                            <div className="w-full h-full flex items-center justify-center text-white/50 text-2xl font-bold">
-                                {(fullName || username || "?")[0].toUpperCase()}
-                            </div>
-                            )}
-                        </div>
-                        <h4 className={`text-lg font-black tracking-tight ${activePreset.textPrimary}`}>
-                            {fullName || "Your Name"}
-                        </h4>
-                        <p className={`text-xs mt-1 ${activePreset.textSecondary}`}>
-                            @{username || "username"}
-                        </p>
-                    </div>
-                 </div>
+
+        <div className="sticky bottom-0 grid grid-cols-2 gap-3 border-t border-white/10 bg-[#0d0d11]/95 p-4 backdrop-blur">
+          <button
+            type="button"
+            onClick={() => setShowMobilePreview(true)}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] lg:hidden"
+          >
+            <Smartphone aria-hidden="true" size={15} />
+            Preview
+          </button>
+          <button
+            type="button"
+            onClick={viewLive}
+            disabled={saving}
+            className="hidden items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] disabled:opacity-50 lg:inline-flex"
+          >
+            <Eye aria-hidden="true" size={15} />
+            View Live
+          </button>
+          <button
+            type="button"
+            onClick={saveChanges}
+            disabled={saving || !isDirty}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-500 px-3 py-3 text-xs font-bold transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? (
+              <Loader2
+                aria-hidden="true"
+                className="animate-spin"
+                size={15}
+              />
+            ) : (
+              <Save aria-hidden="true" size={15} />
+            )}
+            {saving
+              ? "Saving…"
+              : draft.settings.published
+                ? "Save & Publish"
+                : "Save Changes"}
+          </button>
+        </div>
+      </aside>
+
+      <section
+        aria-label="One Link live preview"
+        className="hidden flex-1 items-center justify-center overflow-auto bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.1),transparent_55%)] p-8 lg:flex"
+      >
+        <div className="h-[720px] w-[390px] overflow-hidden rounded-[3rem] border-[9px] border-black bg-black shadow-2xl">
+          <div className="h-full overflow-y-auto">
+            <OneLinkPublicView
+              profile={previewProfile}
+              preview
+            />
+          </div>
+        </div>
+      </section>
+
+      {showMobilePreview && (
+        <div
+          className="fixed inset-0 z-[100] flex items-end justify-center bg-black/85 p-3 backdrop-blur-sm lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="One Link preview"
+        >
+          <div className="h-[88vh] w-full max-w-sm overflow-hidden rounded-[2rem] border border-white/10 bg-black shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/10 bg-[#111116] px-4 py-3">
+              <span className="text-sm font-bold">Live Preview</span>
+              <button
+                type="button"
+                onClick={() => setShowMobilePreview(false)}
+                className="rounded-lg px-3 py-1.5 text-xs font-bold text-white/60 hover:bg-white/5 hover:text-white"
+              >
+                Close
+              </button>
             </div>
+            <div className="h-[calc(100%-49px)] overflow-y-auto">
+              <OneLinkPublicView
+                profile={previewProfile}
+                preview
+              />
+            </div>
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function SectionHeading({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div>
+      <h2 className="text-base font-black">{title}</h2>
+      <p className="mt-1 text-xs leading-5 text-white/45">
+        {description}
+      </p>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  maxLength,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  maxLength: number;
+  placeholder?: string;
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <label className="text-xs font-bold text-white/65">
+          {label}
+        </label>
+        <span className="text-[10px] text-white/30">
+          {value.length}/{maxLength}
+        </span>
+      </div>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        maxLength={maxLength}
+        placeholder={placeholder}
+        className="w-full rounded-xl border border-white/10 bg-white/[0.035] px-3 py-3 text-sm outline-none transition placeholder:text-white/25 focus:border-white/30"
+      />
+    </div>
+  );
+}
+
+function TextAreaField({
+  label,
+  value,
+  onChange,
+  maxLength,
+  placeholder,
+  rows,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  maxLength: number;
+  placeholder?: string;
+  rows: number;
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <label className="text-xs font-bold text-white/65">
+          {label}
+        </label>
+        <span className="text-[10px] text-white/30">
+          {value.length}/{maxLength}
+        </span>
+      </div>
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        maxLength={maxLength}
+        placeholder={placeholder}
+        rows={rows}
+        className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.035] px-3 py-3 text-sm leading-6 outline-none transition placeholder:text-white/25 focus:border-white/30"
+      />
+    </div>
+  );
+}
+
+function ItemActions({
+  index,
+  length,
+  onMove,
+  onDelete,
+}: {
+  index: number;
+  length: number;
+  onMove: (direction: -1 | 1) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => onMove(-1)}
+        disabled={index === 0}
+        aria-label="Move item up"
+        className="rounded-lg p-1.5 text-white/45 hover:bg-white/5 hover:text-white disabled:opacity-20"
+      >
+        <ArrowUp aria-hidden="true" size={14} />
+      </button>
+      <button
+        type="button"
+        onClick={() => onMove(1)}
+        disabled={index === length - 1}
+        aria-label="Move item down"
+        className="rounded-lg p-1.5 text-white/45 hover:bg-white/5 hover:text-white disabled:opacity-20"
+      >
+        <ArrowDown aria-hidden="true" size={14} />
+      </button>
+      <button
+        type="button"
+        onClick={onDelete}
+        aria-label="Delete item"
+        className="rounded-lg p-1.5 text-red-300/70 hover:bg-red-500/10 hover:text-red-300"
+      >
+        <Trash2 aria-hidden="true" size={14} />
+      </button>
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+      <span>
+        <span className="block text-sm font-bold">{label}</span>
+        <span className="mt-1 block text-xs leading-5 text-white/45">
+          {description}
+        </span>
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-1 h-5 w-5 shrink-0 accent-red-500"
+      />
+    </label>
+  );
+}
+
+function Metric({
+  label,
+  value,
+}: {
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-white/35">
+        {label}
+      </p>
+      <p className="mt-1 text-xl font-black">
+        {value.toLocaleString()}
+      </p>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-white/10 px-4 py-8 text-center text-xs leading-5 text-white/35">
+      {text}
     </div>
   );
 }

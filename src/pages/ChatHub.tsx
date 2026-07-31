@@ -16,7 +16,11 @@ import StatusHub from "../components/chat/StatusHub";
 import toast from "react-hot-toast";
 import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import plugsyLogo from "../assets/images/plugsy_icon.svg";
-import OneLinkEditor from "../components/OneLinkEditor";
+import { getCanonicalOneLinkUrl } from "../utils/onelink";
+import {
+  parseOneLinkProfileBio,
+  serializeOneLinkProfileBio,
+} from "../../shared/onelink.js";
 
 interface Profile {
   clerk_id: string;
@@ -124,14 +128,9 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
   useEffect(() => {
     if (myProfile) {
       setProfileUsername(myProfile.username || user?.username || "");
-      let plainBio = myProfile.bio || "";
-      if (plainBio.startsWith("{")) {
-        try {
-          const parsed = JSON.parse(plainBio);
-          plainBio = parsed.bio || "";
-        } catch (e) {}
-      }
-      setProfileBio(plainBio);
+      setProfileBio(
+        parseOneLinkProfileBio(myProfile.bio).biography,
+      );
       setProfileFullName(myProfile.full_name || "");
       setProfilePic(myProfile.profile_pic_url || myProfile.image_url || "");
     }
@@ -188,18 +187,14 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
         return;
       }
 
-      let onelinkSettings = { theme: "dark-twilight" as any, socials: [], projects: [] };
-      if (myProfile?.bio && myProfile.bio.startsWith("{")) {
-        try {
-          const parsed = JSON.parse(myProfile.bio);
-          if (parsed.onelink) onelinkSettings = parsed.onelink;
-        } catch (e) {}
-      }
-
-      const finalBioString = JSON.stringify({
-        bio: profileBio,
-        onelink: onelinkSettings
-      });
+      const existingOneLink = parseOneLinkProfileBio(
+        myProfile?.bio,
+      ).settings;
+      const finalBioString = serializeOneLinkProfileBio(
+        myProfile?.bio,
+        profileBio,
+        existingOneLink,
+      );
 
       const { error } = await supabase
         .from("profiles")
@@ -225,6 +220,16 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
       setActiveTab(tabParam as any);
     } else if (defaultTab) {
       setActiveTab(defaultTab);
+    }
+    const oneLinkSearch = String(
+      searchParams.get("search") || "",
+    )
+      .trim()
+      .toLowerCase();
+    if (/^[a-z0-9_]{1,64}$/.test(oneLinkSearch)) {
+      setActiveTab("dm");
+      setSearchQuery(oneLinkSearch);
+      setSearchOpen(true);
     }
   }, [defaultTab]);
 
@@ -639,16 +644,18 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
               {activeTab === "you" && myProfile?.username && (
                 <button
                   onClick={() => {
-                    const profileUrl = `${window.location.origin}/u/${myProfile.username}`;
+                    const profileUrl = getCanonicalOneLinkUrl(
+                      myProfile.username,
+                    );
                     if (navigator.share) {
                       navigator.share({
-                        title: `Plugsy - ${myProfile.full_name || myProfile.username}`,
-                        text: `Check out my Plugsy profile!`,
+                        title: `${myProfile.full_name || myProfile.username}'s One Link`,
+                        text: "Check out my One Link on Plugsy.",
                         url: profileUrl,
                       }).catch(err => console.log("Error sharing", err));
                     } else {
                       navigator.clipboard.writeText(profileUrl);
-                      toast.success("Account link copied to clipboard!");
+                      toast.success("One Link URL copied.");
                     }
                   }}
                   className="p-2.5 rounded-full bg-blue-500/10 hover:bg-blue-500/20 text-[#3b82f6] border border-blue-500/20 transition-all cursor-pointer"
@@ -1603,7 +1610,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
                 </button>
                 {userProfileModal.username && (
                   <Link
-                    to={`/u/${userProfileModal.username}`}
+                    to={`/one/${encodeURIComponent(userProfileModal.username)}`}
                     className="py-3 px-4 bg-white/5 hover:bg-white/10 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center border border-slate-200 dark:border-white/10"
                     onClick={() => setUserProfileModal(null)}
                   >

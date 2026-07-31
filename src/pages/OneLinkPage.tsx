@@ -1,84 +1,159 @@
-import React, { useState, useEffect } from "react";
-import { motion } from "motion/react";
-import { useAuth, useUser } from "@clerk/clerk-react";
-import { useProfile } from "../hooks/useProfile";
-import { supabase } from "../lib/supabase";
-import { compressAndUpload } from "../utils/uploadMedia";
+import React, { useCallback, useEffect, useState } from "react";
+import { useAuth } from "@clerk/clerk-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import OneLinkEditor from "../components/OneLinkEditor";
+import {
+  OneLinkAnalytics,
+  OneLinkProfile,
+  OneLinkSettings,
+} from "../types";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
-import toast from "react-hot-toast";
-import { 
-  ArrowLeft, 
-  Sparkles, 
-  ShieldCheck, 
-  Image as ImageIcon, 
-  Lock, 
-  Loader2, 
-  User as UserIcon,
-  Link2,
-  ExternalLink
-} from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
-import { LiquidGlass } from "../components/ui/LiquidGlass";
-import { cn } from "../lib/utils";
+import {
+  normalizeOneLinkSettings,
+  normalizeOneLinkUsername,
+} from "../../shared/onelink.js";
+
+interface OneLinkDraft {
+  displayName: string;
+  biography: string;
+  settings: OneLinkSettings;
+}
+
+const normalizeOwnerProfile = (value: any): OneLinkProfile => ({
+  username: normalizeOneLinkUsername(value?.username),
+  displayName: String(value?.displayName || "").trim(),
+  biography: String(value?.biography || ""),
+  imageUrl:
+    typeof value?.imageUrl === "string" ? value.imageUrl : null,
+  settings: normalizeOneLinkSettings(
+    value?.settings,
+  ) as OneLinkSettings,
+});
 
 export default function OneLinkPage() {
-  useDocumentTitle("Plugsy - OneLink Builder");
-  const { userId } = useAuth();
-  const { user } = useUser();
-  const navigate = useNavigate();
-  
-  const { profile: myProfile, loading: profileLoading, mutate: mutateProfile } = useProfile(userId || undefined);
+  useDocumentTitle("One Link Editor | Plugsy");
+  const { getToken } = useAuth();
+  const [profile, setProfile] = useState<OneLinkProfile | null>(
+    null,
+  );
+  const [state, setState] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
 
-  // Local editor states
-  const [profilePic, setProfilePic] = useState<string>("");
-  const [profileUsername, setProfileUsername] = useState<string>("");
-  const [bioText, setBioText] = useState<string>("");
-  const [onelinkSettings, setOnelinkSettings] = useState<any>({ theme: "dark-twilight", socials: [], projects: [] });
-  const [profileFullName, setProfileFullName] = useState<string>("");
-  const [savingBio, setSavingBio] = useState<boolean>(false);
-  const [savingTag, setSavingTag] = useState<boolean>(false);
+  const getVerifiedToken = useCallback(async () => {
+    const token = await getToken();
+    if (!token) {
+      throw new Error("Your session has expired. Sign in again.");
+    }
+    return token;
+  }, [getToken]);
+
+  const loadOwnerProfile = useCallback(async () => {
+    setState("loading");
+    try {
+      const token = await getVerifiedToken();
+      const response = await fetch("/api/onelink?action=owner", {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.profile) {
+        throw new Error("Your One Link could not be loaded.");
+      }
+      setProfile(normalizeOwnerProfile(payload.profile));
+      setState("ready");
+    } catch {
+      setProfile(null);
+      setState("error");
+    }
+  }, [getVerifiedToken]);
 
   useEffect(() => {
-    if (myProfile) {
-      setProfilePic(myProfile.profile_pic_url || myProfile.image_url || "");
-      setProfileUsername(myProfile.username || user?.username || "");
-      setProfileFullName(myProfile.full_name || "");
-      
-      let plainBio = myProfile.bio || "";
-      let settings = { theme: "dark-twilight" as any, socials: [], projects: [] };
-      if (plainBio.startsWith("{")) {
-        try {
-          const parsed = JSON.parse(plainBio);
-          plainBio = parsed.bio || "";
-          if (parsed.onelink) {
-            settings = parsed.onelink;
-          }
-        } catch (e) {}
-      }
-      setBioText(plainBio);
-      setOnelinkSettings(settings);
-    }
-  }, [myProfile, user]);
+    loadOwnerProfile();
+  }, [loadOwnerProfile]);
 
-  const handleCopyLink = () => {
-    if (!profileUsername) {
-      toast.error("Please claim a Wallet Tag first!");
-      return;
+  const saveProfile = async (
+    draft: OneLinkDraft,
+  ): Promise<OneLinkProfile> => {
+    const token = await getVerifiedToken();
+    const response = await fetch("/api/onelink?action=save", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(draft),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.profile) {
+      throw new Error(
+        typeof payload?.error === "string"
+          ? payload.error
+          : "One Link changes could not be saved.",
+      );
     }
-    const link = `${window.location.origin}/u/${profileUsername}`;
-    navigator.clipboard.writeText(link);
-    toast.success("OneLink URL copied to clipboard!");
+    const saved = normalizeOwnerProfile(payload.profile);
+    setProfile(saved);
+    return saved;
   };
 
-  const isProfileComplete = !!myProfile?.username;
+  const loadAnalytics = async (): Promise<OneLinkAnalytics> => {
+    const token = await getVerifiedToken();
+    const response = await fetch(
+      "/api/onelink?action=analytics",
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.analytics) {
+      throw new Error("One Link analytics could not be loaded.");
+    }
+    return payload.analytics as OneLinkAnalytics;
+  };
 
-  if (profileLoading) {
+  if (state === "loading") {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-[#0a0a0a] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-          <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Loading your OneLink settings...</p>
+      <div className="flex min-h-screen items-center justify-center bg-[#08080b] px-4 text-white">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <Loader2
+            aria-hidden="true"
+            className="h-7 w-7 animate-spin text-red-400"
+          />
+          <p className="text-sm text-white/50">
+            Loading your One Link editor…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === "error" || !profile) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#08080b] px-4 text-white">
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
+          <h1 className="text-2xl font-black">
+            One Link could not be loaded
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-white/45">
+            Your existing settings were not changed. Retry when your
+            connection is available.
+          </p>
+          <button
+            type="button"
+            onClick={loadOwnerProfile}
+            className="mx-auto mt-6 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-bold text-black transition hover:bg-slate-200"
+          >
+            <RefreshCw aria-hidden="true" size={16} />
+            Try again
+          </button>
         </div>
       </div>
     );
@@ -86,27 +161,9 @@ export default function OneLinkPage() {
 
   return (
     <OneLinkEditor
-      username={profileUsername || myProfile.username}
-      avatarUrl={profilePic}
-      fullName={profileFullName || undefined}
-      bioText={bioText}
-      initialSettings={onelinkSettings}
-      onSave={async (newSettings) => {
-        const serialized = JSON.stringify({
-          bio: bioText,
-          onelink: newSettings
-        });
-        
-        const { error } = await supabase
-          .from("profiles")
-          .update({ bio: serialized })
-          .eq("clerk_id", userId);
-          
-        if (error) throw error;
-        setOnelinkSettings(newSettings);
-        await mutateProfile();
-        toast.success("OneLink published successfully!");
-      }}
+      initialProfile={profile}
+      onSave={saveProfile}
+      loadAnalytics={loadAnalytics}
     />
   );
 }

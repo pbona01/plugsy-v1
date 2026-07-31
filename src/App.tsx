@@ -107,6 +107,17 @@ const EditPortfolioGuard = () => {
   return <EditPortfolio />
 }
 
+const LegacyOneLinkRedirect = () => {
+  const { username = "" } = useParams<{ username: string }>();
+  const location = useLocation();
+  return (
+    <Navigate
+      replace
+      to={`/one/${encodeURIComponent(username)}${location.search}${location.hash}`}
+    />
+  );
+};
+
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -574,10 +585,10 @@ function AppContent({
           />
           <Route
             path="/u/:username"
-            element={<PublicProfile />}
+            element={<LegacyOneLinkRedirect />}
           />
           <Route
-            path="/one/:slug"
+            path="/one/:username"
             element={<PublicProfile />}
           />
           <Route

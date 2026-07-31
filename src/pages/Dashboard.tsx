@@ -15,6 +15,10 @@ import {
   Gift, Award, MoreHorizontal, X, Camera, Loader2, Users, Link2 
 } from 'lucide-react';
 import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
+import {
+  parseOneLinkProfileBio,
+  serializeOneLinkProfileBio,
+} from "../../shared/onelink.js";
 
 export default function Dashboard() {
   const { userId } = useAuth();
@@ -48,7 +52,9 @@ export default function Dashboard() {
     if (hookProfile) {
       setProfilePic(hookProfile.profile_pic_url || hookProfile.image_url || '');
       setProfileUsername(hookProfile.username || user?.username || '');
-      setProfileBio(hookProfile.bio || '');
+      setProfileBio(
+        parseOneLinkProfileBio(hookProfile.bio).biography,
+      );
       setProfileFullName(hookProfile.full_name || '');
     }
   }, [hookProfile, user]);
@@ -534,12 +540,22 @@ export default function Dashboard() {
                                 }
                               }
 
+                              const existingOneLink =
+                                parseOneLinkProfileBio(
+                                  hookProfile?.bio,
+                                ).settings;
+                              const preservedBio =
+                                serializeOneLinkProfileBio(
+                                  hookProfile?.bio,
+                                  profileBio,
+                                  existingOneLink,
+                                );
                               const { error } = await supabase
                                 .from("profiles")
                                 .update({
                                   full_name: profileFullName,
                                   username: profileUsername,
-                                  bio: profileBio,
+                                  bio: preservedBio,
                                   profile_pic_url: profilePic
                                 })
                                 .eq("clerk_id", userId);

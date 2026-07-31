@@ -193,8 +193,10 @@ export interface StatusView {
 
 export interface OneLinkSocial {
   id: string;
-  platform: string; // 'github' | 'behance' | 'x' | 'linkedin' | 'instagram' | 'youtube' | 'website'
+  platform: string;
   url: string;
+  enabled: boolean;
+  invalid?: boolean;
 }
 
 export interface OneLinkProject {
@@ -202,13 +204,40 @@ export interface OneLinkProject {
   title: string;
   description: string;
   url: string;
+  enabled: boolean;
   icon?: string;
+  invalid?: boolean;
 }
 
 export interface OneLinkSettings {
+  schemaVersion: number;
   theme: 'dark-twilight' | 'cosmic-slate' | 'neon-sunset' | 'cyberpunk' | 'minimalist-light';
   socials: OneLinkSocial[];
   projects: OneLinkProject[];
+  published: boolean;
+  seoTitle: string;
+  seoDescription: string;
+  messageEnabled: boolean;
+}
+
+export interface OneLinkProfile {
+  username: string;
+  displayName: string;
+  biography: string;
+  imageUrl: string | null;
+  settings: OneLinkSettings;
+}
+
+export interface OneLinkAnalyticsDay {
+  date: string;
+  views: number;
+}
+
+export interface OneLinkAnalytics {
+  totalViews: number;
+  todayViews: number;
+  sevenDayViews: number;
+  daily: OneLinkAnalyticsDay[];
 }
 
 
