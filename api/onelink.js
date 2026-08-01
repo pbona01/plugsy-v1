@@ -1,20 +1,23 @@
 import { createClient } from "@supabase/supabase-js";
+import { createHash, randomUUID } from "node:crypto";
 import { requireVerifiedClerkUser } from "./_clerkAuth.js";
 import {
   ONE_LINK_LIMITS,
   normalizeExternalUrl,
   normalizeOneLinkSettings,
+  normalizeOneLinkTextMode,
   normalizeOneLinkUsername,
   OneLinkValidationError,
   parseOneLinkProfileBio,
-  serializeOneLinkProfileBio,
   validateOneLinkSavePayload,
 } from "../shared/onelink.js";
 
 const PROFILE_COLUMNS =
-  "clerk_id,username,full_name,profile_pic_url,image_url,bio";
+  "clerk_id,username,full_name,profile_pic_url,image_url,bio,one_link_username,one_link_display_name,one_link_biography,one_link_avatar_url,one_link_avatar_public_id,one_link_wallpaper_url,one_link_wallpaper_public_id,one_link_wallpaper_text_mode,one_link_settings,one_link_updated_at";
 const escapeLikePattern = (value) =>
   value.replace(/[\\%_]/g, "\\$&");
+const CLOUDINARY_PUBLIC_ID_PATTERN =
+  /^plugsy\/onelink\/[a-f0-9]{40}\/(avatar|wallpaper)\/[a-f0-9-]{36}$/;
 
 function sendError(res, status, code, error) {
   return res.status(status).json({
@@ -92,9 +95,19 @@ const hasJsonContentType = (req) => {
 };
 
 async function findProfileByUsername(supabase, username) {
+  const { data: explicit, error: explicitError } = await supabase
+    .from("profiles")
+    .select(PROFILE_COLUMNS)
+    .eq("one_link_username", username)
+    .maybeSingle();
+
+  if (explicitError) return { profile: null, failed: true };
+  if (explicit) return { profile: explicit, failed: false };
+
   const { data, error } = await supabase
     .from("profiles")
     .select(PROFILE_COLUMNS)
+    .is("one_link_username", null)
     .ilike("username", escapeLikePattern(username))
     .maybeSingle();
 
@@ -115,15 +128,50 @@ async function findOwnerProfile(supabase, ownerUserId) {
 
 function toOwnerResponse(profile) {
   const parsed = parseOneLinkProfileBio(profile.bio);
+  const independentInitialized = profile.one_link_updated_at !== null;
+  const hasIndependentUsername =
+    independentInitialized || profile.one_link_username !== null;
+  const hasIndependentDisplayName =
+    independentInitialized || profile.one_link_display_name !== null;
+  const hasIndependentBiography =
+    independentInitialized || profile.one_link_biography !== null;
+  const hasIndependentAvatar =
+    independentInitialized || profile.one_link_avatar_url !== null;
+  const hasIndependentSettings =
+    independentInitialized || profile.one_link_settings !== null;
   return {
-    username: normalizeOneLinkUsername(profile.username),
-    displayName: String(profile.full_name || "").trim(),
-    biography: parsed.biography,
+    username: normalizeOneLinkUsername(
+      hasIndependentUsername
+        ? profile.one_link_username
+        : profile.username,
+    ),
+    displayName: String(
+      hasIndependentDisplayName
+        ? profile.one_link_display_name
+        : profile.full_name || "",
+    ).trim(),
+    biography: String(
+      hasIndependentBiography
+        ? profile.one_link_biography || ""
+        : parsed.biography,
+    ),
     imageUrl:
       normalizeExternalUrl(
-        profile.profile_pic_url || profile.image_url,
+        hasIndependentAvatar
+          ? profile.one_link_avatar_url
+          : profile.profile_pic_url || profile.image_url,
       ) || null,
-    settings: parsed.settings,
+    imagePublicId: profile.one_link_avatar_public_id || null,
+    wallpaperUrl:
+      normalizeExternalUrl(profile.one_link_wallpaper_url) || null,
+    wallpaperPublicId: profile.one_link_wallpaper_public_id || null,
+    wallpaperTextMode: normalizeOneLinkTextMode(
+      profile.one_link_wallpaper_text_mode,
+    ),
+    messageUsername: normalizeOneLinkUsername(profile.username) || null,
+    settings: normalizeOneLinkSettings(
+      hasIndependentSettings ? profile.one_link_settings : parsed.settings,
+    ),
   };
 }
 
@@ -140,6 +188,11 @@ function toPublicResponse(profile) {
       ONE_LINK_LIMITS.biography,
     ),
     imageUrl: owner.imageUrl,
+    wallpaperUrl: owner.wallpaperUrl,
+    wallpaperTextMode: owner.wallpaperTextMode,
+    messageUsername: settings.messageEnabled
+      ? owner.messageUsername
+      : null,
     settings: {
       theme: settings.theme,
       socials: settings.socials.filter(
@@ -159,6 +212,95 @@ function toPublicResponse(profile) {
       messageEnabled: settings.messageEnabled,
     },
   };
+}
+
+function getCloudinaryConfig() {
+  const cloudName = String(process.env.CLOUDINARY_CLOUD_NAME || "").trim();
+  const apiKey = String(process.env.CLOUDINARY_API_KEY || "").trim();
+  const apiSecret = String(process.env.CLOUDINARY_API_SECRET || "").trim();
+  const uploadPreset = String(
+    process.env.CLOUDINARY_ONELINK_UPLOAD_PRESET || "",
+  ).trim();
+  if (!cloudName || !apiKey || !apiSecret || !uploadPreset) return null;
+  return { cloudName, apiKey, apiSecret, uploadPreset };
+}
+
+const ownerFolderToken = (ownerUserId, cloudName) =>
+  createHash("sha256")
+    .update(`${cloudName}:${ownerUserId}`)
+    .digest("hex")
+    .slice(0, 40);
+
+const ownerAssetPrefix = (ownerUserId, cloudName, kind) =>
+  `plugsy/onelink/${ownerFolderToken(ownerUserId, cloudName)}/${kind}/`;
+
+const signCloudinaryParameters = (parameters, apiSecret) => {
+  const serialized = Object.entries(parameters)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+  return createHash("sha256")
+    .update(`${serialized}${apiSecret}`)
+    .digest("hex");
+};
+
+const cloudinaryUrlMatches = (urlValue, publicId, cloudName) => {
+  try {
+    const parsed = new URL(urlValue);
+    const decodedPath = decodeURIComponent(parsed.pathname);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.hostname === "res.cloudinary.com" &&
+      decodedPath.startsWith(`/${cloudName}/image/upload/`) &&
+      new RegExp(`/${publicId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.[A-Za-z0-9]+$`).test(
+        decodedPath,
+      )
+    );
+  } catch {
+    return false;
+  }
+};
+
+const validateOwnedMedia = ({
+  ownerUserId,
+  kind,
+  url,
+  publicId,
+  cloudinary,
+}) => {
+  if (!url && !publicId) return true;
+  if (!url || !publicId || !cloudinary) return false;
+  if (
+    !CLOUDINARY_PUBLIC_ID_PATTERN.test(publicId) ||
+    !publicId.startsWith(
+      ownerAssetPrefix(ownerUserId, cloudinary.cloudName, kind),
+    )
+  ) {
+    return false;
+  }
+  return cloudinaryUrlMatches(url, publicId, cloudinary.cloudName);
+};
+
+async function destroyCloudinaryAsset(cloudinary, publicId) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const parameters = { invalidate: "true", public_id: publicId, timestamp };
+  const body = new URLSearchParams({
+    ...parameters,
+    api_key: cloudinary.apiKey,
+    signature_algorithm: "sha256",
+    signature: signCloudinaryParameters(parameters, cloudinary.apiSecret),
+  });
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${encodeURIComponent(
+      cloudinary.cloudName,
+    )}/image/destroy`,
+    { method: "POST", body, signal: AbortSignal.timeout(8000) },
+  );
+  const result = await response.json().catch(() => null);
+  return (
+    response.ok &&
+    (result?.result === "ok" || result?.result === "not found")
+  );
 }
 
 async function handlePublic(req, res) {
@@ -316,28 +458,74 @@ async function handleSave(req, res) {
     );
   }
 
-  const username = normalizeOneLinkUsername(
-    ownerResult.profile.username,
-  );
+  const currentOwner = toOwnerResponse(ownerResult.profile);
+  const username = currentOwner.username;
   if (!username) {
     return sendError(
       res,
       409,
       "ONELINK_USERNAME_REQUIRED",
-      "Claim a Wallet Tag before publishing One Link.",
+      "Set up your One Link handle before publishing.",
     );
   }
 
-  const serializedBio = serializeOneLinkProfileBio(
-    ownerResult.profile.bio,
-    payload.biography,
-    payload.settings,
-  );
+  const cloudinary = getCloudinaryConfig();
+  const unchangedLegacyAvatar =
+    Boolean(payload.imageUrl) &&
+    !payload.imagePublicId &&
+    !ownerResult.profile.one_link_avatar_public_id &&
+    payload.imageUrl === currentOwner.imageUrl;
+  const avatarIsOwned = validateOwnedMedia({
+    ownerUserId: actor.userId,
+    kind: "avatar",
+    url: payload.imageUrl,
+    publicId: payload.imagePublicId,
+    cloudinary,
+  });
+  const wallpaperIsOwned = validateOwnedMedia({
+    ownerUserId: actor.userId,
+    kind: "wallpaper",
+    url: payload.wallpaperUrl,
+    publicId: payload.wallpaperPublicId,
+    cloudinary,
+  });
+  if ((!avatarIsOwned && !unchangedLegacyAvatar) || !wallpaperIsOwned) {
+    return sendError(
+      res,
+      400,
+      "ONELINK_MEDIA_OWNERSHIP_INVALID",
+      "One Link media could not be verified for this account.",
+    );
+  }
+
+  const oldAssets = [
+    {
+      kind: "avatar",
+      publicId: ownerResult.profile.one_link_avatar_public_id,
+      replacement: payload.imagePublicId,
+    },
+    {
+      kind: "wallpaper",
+      publicId: ownerResult.profile.one_link_wallpaper_public_id,
+      replacement: payload.wallpaperPublicId,
+    },
+  ];
   const { data: updated, error: updateError } = await supabase
     .from("profiles")
     .update({
-      full_name: payload.displayName,
-      bio: serializedBio,
+      one_link_username:
+        ownerResult.profile.one_link_username === null
+          ? username
+          : ownerResult.profile.one_link_username,
+      one_link_display_name: payload.displayName,
+      one_link_biography: payload.biography,
+      one_link_avatar_url: payload.imageUrl,
+      one_link_avatar_public_id: payload.imagePublicId,
+      one_link_wallpaper_url: payload.wallpaperUrl,
+      one_link_wallpaper_public_id: payload.wallpaperPublicId,
+      one_link_wallpaper_text_mode: payload.wallpaperTextMode,
+      one_link_settings: payload.settings,
+      one_link_updated_at: new Date().toISOString(),
     })
     .eq("clerk_id", actor.userId)
     .select(PROFILE_COLUMNS)
@@ -352,10 +540,175 @@ async function handleSave(req, res) {
     );
   }
 
+  if (cloudinary) {
+    await Promise.all(
+      oldAssets.map(async ({ kind, publicId, replacement }) => {
+        if (!publicId || publicId === replacement) return;
+        try {
+          const destroyed = await destroyCloudinaryAsset(
+            cloudinary,
+            publicId,
+          );
+          if (!destroyed) {
+            console.warn("One Link asset cleanup was not confirmed", {
+              kind,
+              publicId,
+            });
+          }
+        } catch {
+          console.warn("One Link asset cleanup failed", { kind, publicId });
+        }
+      }),
+    );
+  }
+
   return res.status(200).json({
     success: true,
     profile: toOwnerResponse(updated),
   });
+}
+
+async function handleUploadSignature(req, res) {
+  if (req.method !== "POST") {
+    return sendError(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
+  }
+  const actor = await requireVerifiedClerkUser(req, res);
+  if (!actor) return;
+
+  let body;
+  try {
+    body = getJsonBody(req);
+  } catch {
+    body = null;
+  }
+  if (
+    !body ||
+    typeof body !== "object" ||
+    Array.isArray(body) ||
+    Object.keys(body).some((key) => key !== "kind") ||
+    (body.kind !== "avatar" && body.kind !== "wallpaper")
+  ) {
+    return sendError(
+      res,
+      400,
+      "ONELINK_UPLOAD_KIND_INVALID",
+      "Select a valid One Link image type.",
+    );
+  }
+
+  const cloudinary = getCloudinaryConfig();
+  if (!cloudinary) {
+    return sendError(
+      res,
+      503,
+      "ONELINK_UPLOAD_UNAVAILABLE",
+      "Secure image upload is temporarily unavailable.",
+    );
+  }
+  const timestamp = Math.floor(Date.now() / 1000);
+  const publicId = `${ownerAssetPrefix(
+    actor.userId,
+    cloudinary.cloudName,
+    body.kind,
+  )}${randomUUID()}`;
+  const parameters = {
+    overwrite: "false",
+    public_id: publicId,
+    timestamp,
+    upload_preset: cloudinary.uploadPreset,
+  };
+  return res.status(200).json({
+    success: true,
+    cloudName: cloudinary.cloudName,
+    apiKey: cloudinary.apiKey,
+    uploadPreset: cloudinary.uploadPreset,
+    timestamp,
+    publicId,
+    signatureAlgorithm: "sha256",
+    signature: signCloudinaryParameters(parameters, cloudinary.apiSecret),
+  });
+}
+
+async function handleDestroyAsset(req, res) {
+  if (req.method !== "POST") {
+    return sendError(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
+  }
+  const actor = await requireVerifiedClerkUser(req, res);
+  if (!actor) return;
+  const supabase = getServiceClient(res);
+  if (!supabase) return;
+  const cloudinary = getCloudinaryConfig();
+  if (!cloudinary) {
+    return sendError(
+      res,
+      503,
+      "ONELINK_UPLOAD_UNAVAILABLE",
+      "Secure image cleanup is temporarily unavailable.",
+    );
+  }
+
+  let body;
+  try {
+    body = getJsonBody(req);
+  } catch {
+    body = null;
+  }
+  if (
+    !body ||
+    typeof body !== "object" ||
+    Array.isArray(body) ||
+    Object.keys(body).some(
+      (key) => key !== "kind" && key !== "publicId",
+    ) ||
+    (body.kind !== "avatar" && body.kind !== "wallpaper") ||
+    typeof body.publicId !== "string" ||
+    !body.publicId.startsWith(
+      ownerAssetPrefix(actor.userId, cloudinary.cloudName, body.kind),
+    ) ||
+    !CLOUDINARY_PUBLIC_ID_PATTERN.test(body.publicId)
+  ) {
+    return sendError(
+      res,
+      400,
+      "ONELINK_MEDIA_OWNERSHIP_INVALID",
+      "One Link media could not be verified for this account.",
+    );
+  }
+
+  const ownerResult = await findOwnerProfile(supabase, actor.userId);
+  if (ownerResult.failed || !ownerResult.profile) {
+    return sendError(
+      res,
+      503,
+      "ONELINK_OWNER_LOOKUP_FAILED",
+      "One Link media could not be checked.",
+    );
+  }
+  const currentPublicId =
+    body.kind === "avatar"
+      ? ownerResult.profile.one_link_avatar_public_id
+      : ownerResult.profile.one_link_wallpaper_public_id;
+  if (currentPublicId === body.publicId) {
+    return sendError(
+      res,
+      409,
+      "ONELINK_ASSET_STILL_ACTIVE",
+      "Save the One Link change before cleaning up this image.",
+    );
+  }
+
+  try {
+    const destroyed = await destroyCloudinaryAsset(cloudinary, body.publicId);
+    if (!destroyed) throw new Error("cleanup not confirmed");
+  } catch {
+    return sendError(
+      res,
+      503,
+      "ONELINK_ASSET_CLEANUP_FAILED",
+      "The unused image could not be cleaned up yet.",
+    );
+  }
+  return res.status(200).json({ success: true });
 }
 
 async function resolvePublishedOwner(supabase, username) {
@@ -545,7 +898,10 @@ export default async function handler(req, res) {
   const action = getAction(req);
   if (
     req.method === "POST" &&
-    (action === "save" || action === "view") &&
+    (action === "save" ||
+      action === "view" ||
+      action === "upload-signature" ||
+      action === "destroy-asset") &&
     !hasJsonContentType(req)
   ) {
     return sendError(
@@ -558,6 +914,10 @@ export default async function handler(req, res) {
   if (action === "public") return handlePublic(req, res);
   if (action === "owner") return handleOwner(req, res);
   if (action === "save") return handleSave(req, res);
+  if (action === "upload-signature") {
+    return handleUploadSignature(req, res);
+  }
+  if (action === "destroy-asset") return handleDestroyAsset(req, res);
   if (action === "view") return handleRecordView(req, res);
   if (action === "analytics") return handleAnalytics(req, res);
 

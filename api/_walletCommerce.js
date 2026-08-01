@@ -490,16 +490,16 @@ export async function handleP2PTransfer(req, res) {
   const key = requireIdempotency(req, res, context.body);
   if (!key) return;
 
-  const username = lower(context.body.recipientUsername).replace(/^@/, "");
+  const walletTag = lower(context.body.recipientUsername).replace(/^@/, "");
   const amount = Number(context.body.amount);
   const note = text(context.body.note).slice(0, 80);
 
-  if (!USERNAME_PATTERN.test(username)) {
+  if (!USERNAME_PATTERN.test(walletTag)) {
     return send(
       res,
       400,
       "RECIPIENT_USERNAME_INVALID",
-      "The recipient username is invalid.",
+      "The recipient Wallet TAG is invalid.",
     );
   }
 
@@ -522,7 +522,7 @@ export async function handleP2PTransfer(req, res) {
   const result = await callRpc(supabase, res, "transfer_wallet_p2p_v2", {
     p_actor_user_id: context.actor.userId,
     p_actor_email: context.actor.email,
-    p_recipient_username: username,
+    p_recipient_username: walletTag,
     p_amount: amount,
     p_note: note || null,
     p_idempotency_key: key,
@@ -543,13 +543,13 @@ export async function handleResolveUsername(req, res) {
   const context = await requireMutationContext(req, res);
   if (!context) return;
 
-  const username = lower(context.body.username).replace(/^@/, "");
-  if (!USERNAME_PATTERN.test(username)) {
+  const walletTag = lower(context.body.username).replace(/^@/, "");
+  if (!USERNAME_PATTERN.test(walletTag)) {
     return send(
       res,
       400,
       "USERNAME_INVALID",
-      "The username is invalid.",
+      "The Wallet TAG is invalid.",
     );
   }
 
@@ -558,8 +558,8 @@ export async function handleResolveUsername(req, res) {
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("clerk_id,full_name,username")
-    .eq("username", username)
+    .select("clerk_id,full_name,wallet_tag")
+    .eq("wallet_tag", walletTag)
     .maybeSingle();
 
   if (error || !data) {
@@ -567,7 +567,7 @@ export async function handleResolveUsername(req, res) {
       res,
       404,
       "RECIPIENT_NOT_FOUND",
-      "No Plugsy user has that username.",
+      "No Plugsy user has that Wallet TAG.",
     );
   }
 
@@ -582,7 +582,7 @@ export async function handleResolveUsername(req, res) {
 
   return res.status(200).json({
     success: true,
-    fullName: data.full_name || `@${data.username}`,
+    fullName: data.full_name || `@${data.wallet_tag}`,
   });
 }
 
@@ -1119,13 +1119,13 @@ export async function handleUpdateUsername(req, res) {
   const context = await requireMutationContext(req, res);
   if (!context) return;
 
-  const username = lower(context.body.username);
-  if (!USERNAME_PATTERN.test(username)) {
+  const walletTag = lower(context.body.username);
+  if (!USERNAME_PATTERN.test(walletTag)) {
     return send(
       res,
       400,
       "USERNAME_INVALID",
-      "Username must contain 3–30 lowercase letters, numbers, or underscores.",
+      "Wallet TAG must contain 3–30 lowercase letters, numbers, or underscores.",
     );
   }
 
@@ -1135,7 +1135,7 @@ export async function handleUpdateUsername(req, res) {
   const { data: existing, error: lookupError } = await supabase
     .from("profiles")
     .select("clerk_id")
-    .eq("username", username)
+    .eq("wallet_tag", walletTag)
     .maybeSingle();
 
   if (lookupError) {
@@ -1143,7 +1143,7 @@ export async function handleUpdateUsername(req, res) {
       res,
       503,
       "USERNAME_CHECK_FAILED",
-      "Username availability could not be checked.",
+      "Wallet TAG availability could not be checked.",
     );
   }
 
@@ -1152,30 +1152,39 @@ export async function handleUpdateUsername(req, res) {
       res,
       409,
       "USERNAME_TAKEN",
-      "That username is already taken.",
+      "That Wallet TAG is already taken.",
     );
   }
 
   const { error } = await supabase
     .from("profiles")
     .update({
-      username,
+      wallet_tag: walletTag,
       updated_at: new Date().toISOString(),
     })
     .eq("clerk_id", context.actor.userId);
 
+  if (error?.code === "23505") {
+    return send(
+      res,
+      409,
+      "USERNAME_TAKEN",
+      "That Wallet TAG is already taken.",
+    );
+  }
   if (error) {
     return send(
       res,
       503,
       "USERNAME_UPDATE_FAILED",
-      "The username could not be updated.",
+      "The Wallet TAG could not be updated.",
     );
   }
 
   return res.status(200).json({
     success: true,
-    username,
+    username: walletTag,
+    walletTag,
   });
 }
 

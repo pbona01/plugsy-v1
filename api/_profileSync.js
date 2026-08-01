@@ -109,21 +109,33 @@ async function performVerifiedClerkProfileSync({ supabase, actor }) {
     existing = candidate;
   }
 
-  const identityPatch = {
-    clerk_id: clerkId,
-    email,
-    role: clerkRole,
-    updated_at: new Date().toISOString(),
-  };
-
-  if (fullName) identityPatch.full_name = fullName;
-  if (imageUrl) identityPatch.image_url = imageUrl;
-  if (clerkUsername && !text(existing?.username)) {
+  const identityPatch = {};
+  if (text(existing?.clerk_id) !== clerkId) {
+    identityPatch.clerk_id = clerkId;
+  }
+  if (normalizedEmail(existing?.email) !== email) {
+    identityPatch.email = email;
+  }
+  if ((text(existing?.role).toLowerCase() || "user") !== clerkRole) {
+    identityPatch.role = clerkRole;
+  }
+  if (!text(existing?.full_name) && fullName) {
+    identityPatch.full_name = fullName;
+  }
+  if (!text(existing?.image_url) && imageUrl) {
+    identityPatch.image_url = imageUrl;
+  }
+  if (!text(existing?.username) && clerkUsername) {
     identityPatch.username = clerkUsername;
   }
 
   let result;
   if (existing) {
+    if (Object.keys(identityPatch).length === 0) {
+      const profile = normalizeProfile(existing);
+      return { success: true, status: 200, profile };
+    }
+    identityPatch.updated_at = new Date().toISOString();
     result = await supabase
       .from("profiles")
       .update(identityPatch)
@@ -131,6 +143,10 @@ async function performVerifiedClerkProfileSync({ supabase, actor }) {
       .select(PROFILE_FIELDS)
       .single();
   } else {
+    identityPatch.clerk_id = clerkId;
+    identityPatch.email = email;
+    identityPatch.role = clerkRole;
+    identityPatch.updated_at = new Date().toISOString();
     result = await supabase
       .from("profiles")
       .insert(identityPatch)

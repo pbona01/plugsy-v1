@@ -37,12 +37,12 @@ export default function SendMoneyModal({
   const [sentSuccess, setSentSuccess] = useState(false);
   const { getToken } = useAuth();
 
-  // Clean username helper
+  // Clean Wallet TAG helper; API field names remain backward compatible.
   const getCleanUsername = (val: string) => {
     return val.trim().toLowerCase().replace(/^@/, "").replace(/[^a-z0-9_]/g, "");
   };
 
-  // Debounce resolve username
+  // Debounce Wallet TAG resolution.
   useEffect(() => {
     const username = getCleanUsername(recipientInput);
     if (username.length < 3) {
@@ -73,7 +73,7 @@ export default function SendMoneyModal({
           setResolveError(data.error || "User not found");
         }
       } catch (err) {
-        setResolveError("Unable to resolve username");
+        setResolveError("Unable to resolve Wallet TAG");
       } finally {
         setIsValidating(false);
       }
@@ -212,7 +212,7 @@ export default function SendMoneyModal({
                     type="text"
                     value={recipientInput}
                     onChange={(e) => setRecipientInput(e.target.value)}
-                    placeholder="username"
+                    placeholder="wallet_tag"
                     className="w-full bg-brand-background border border-brand-border rounded-xl py-3 pl-8 pr-4 text-brand-text-primary placeholder-brand-text-secondary/50 focus:outline-none focus:border-brand-accent transition-all text-sm font-semibold"
                     disabled={isSending}
                     required
@@ -228,7 +228,7 @@ export default function SendMoneyModal({
                     {isValidating && (
                       <span className="text-brand-text-secondary flex items-center gap-1.5">
                         <span className="w-3 h-3 border-2 border-brand-accent border-t-transparent rounded-full animate-spin"></span>
-                        Verifying username...
+                        Verifying Wallet TAG...
                       </span>
                     )}
                     {!isValidating && resolvedName && (

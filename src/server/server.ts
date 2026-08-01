@@ -1964,6 +1964,7 @@ async function startServer() {
   createApiProxy("/api/misc", "../../api/misc.js");
   createApiProxy("/api/purchase-code", "../../api-handlers/purchase-code.js");
   createApiProxy("/api/onelink", "../../api/onelink.js");
+  createApiProxy("/api/profile", "../../api/profile.js");
 
   app.all("/api/portfolio", async (req: any, res) => {
     try {

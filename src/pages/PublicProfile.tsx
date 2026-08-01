@@ -84,6 +84,18 @@ export default function PublicProfile() {
           typeof loaded.imageUrl === "string"
             ? loaded.imageUrl
             : null,
+        imagePublicId: null,
+        wallpaperUrl:
+          typeof loaded.wallpaperUrl === "string"
+            ? loaded.wallpaperUrl
+            : null,
+        wallpaperPublicId: null,
+        wallpaperTextMode:
+          loaded.wallpaperTextMode === "dark" ? "dark" : "light",
+        messageUsername:
+          typeof loaded.messageUsername === "string"
+            ? normalizeOneLinkUsername(loaded.messageUsername)
+            : null,
         settings: normalizeOneLinkSettings(
           loaded.settings,
         ) as OneLinkProfile["settings"],
@@ -196,8 +208,9 @@ export default function PublicProfile() {
     fallbackDescription(profile);
 
   const handleMessage = () => {
+    if (!profile.messageUsername) return;
     const destination = `/chats?search=${encodeURIComponent(
-      profile.username,
+      profile.messageUsername,
     )}`;
     if (userId) {
       navigate(destination);
@@ -227,7 +240,7 @@ export default function PublicProfile() {
       </Helmet>
       <OneLinkPublicView
         profile={profile}
-        onMessage={handleMessage}
+        onMessage={profile.messageUsername ? handleMessage : undefined}
       />
     </>
   );

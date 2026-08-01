@@ -9,6 +9,10 @@ import {
 } from "../types";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import {
+  OneLinkImageKind,
+  uploadOneLinkImage,
+} from "../utils/uploadOneLinkImage";
+import {
   normalizeOneLinkSettings,
   normalizeOneLinkUsername,
 } from "../../shared/onelink.js";
@@ -16,6 +20,11 @@ import {
 interface OneLinkDraft {
   displayName: string;
   biography: string;
+  imageUrl: string | null;
+  imagePublicId: string | null;
+  wallpaperUrl: string | null;
+  wallpaperPublicId: string | null;
+  wallpaperTextMode: "light" | "dark";
   settings: OneLinkSettings;
 }
 
@@ -25,6 +34,24 @@ const normalizeOwnerProfile = (value: any): OneLinkProfile => ({
   biography: String(value?.biography || ""),
   imageUrl:
     typeof value?.imageUrl === "string" ? value.imageUrl : null,
+  imagePublicId:
+    typeof value?.imagePublicId === "string"
+      ? value.imagePublicId
+      : null,
+  wallpaperUrl:
+    typeof value?.wallpaperUrl === "string"
+      ? value.wallpaperUrl
+      : null,
+  wallpaperPublicId:
+    typeof value?.wallpaperPublicId === "string"
+      ? value.wallpaperPublicId
+      : null,
+  wallpaperTextMode:
+    value?.wallpaperTextMode === "dark" ? "dark" : "light",
+  messageUsername:
+    typeof value?.messageUsername === "string"
+      ? value.messageUsername
+      : null,
   settings: normalizeOneLinkSettings(
     value?.settings,
   ) as OneLinkSettings,
@@ -119,6 +146,18 @@ export default function OneLinkPage() {
     return payload.analytics as OneLinkAnalytics;
   };
 
+  const uploadImage = (
+    file: File,
+    kind: OneLinkImageKind,
+    onProgress: (status: string) => void,
+  ) =>
+    uploadOneLinkImage({
+      file,
+      kind,
+      getToken: getVerifiedToken,
+      onProgress,
+    });
+
   if (state === "loading") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#08080b] px-4 text-white">
@@ -164,6 +203,7 @@ export default function OneLinkPage() {
       initialProfile={profile}
       onSave={saveProfile}
       loadAnalytics={loadAnalytics}
+      onUploadImage={uploadImage}
     />
   );
 }

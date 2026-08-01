@@ -23,6 +23,7 @@ import {
   Share2,
   Smartphone,
   Trash2,
+  Upload,
   User,
 } from "lucide-react";
 import {
@@ -52,6 +53,11 @@ import {
 } from "../utils/onelink";
 import { cn } from "../lib/utils";
 import {
+  getOneLinkImageDeliveryUrl,
+  OneLinkImageKind,
+  OneLinkUploadResult,
+} from "../utils/uploadOneLinkImage";
+import {
   ONE_LINK_LIMITS,
   normalizeExternalUrl,
   validateOneLinkSavePayload,
@@ -60,6 +66,11 @@ import {
 interface OneLinkDraft {
   displayName: string;
   biography: string;
+  imageUrl: string | null;
+  imagePublicId: string | null;
+  wallpaperUrl: string | null;
+  wallpaperPublicId: string | null;
+  wallpaperTextMode: "light" | "dark";
   settings: OneLinkSettings;
 }
 
@@ -67,6 +78,11 @@ interface OneLinkEditorProps {
   initialProfile: OneLinkProfile;
   onSave: (draft: OneLinkDraft) => Promise<OneLinkProfile>;
   loadAnalytics: () => Promise<OneLinkAnalytics>;
+  onUploadImage: (
+    file: File,
+    kind: OneLinkImageKind,
+    onProgress: (status: string) => void,
+  ) => Promise<OneLinkUploadResult>;
 }
 
 type SectionId =
@@ -105,6 +121,11 @@ const SOCIAL_PLATFORM_SUGGESTIONS = [
 const toDraft = (profile: OneLinkProfile): OneLinkDraft => ({
   displayName: profile.displayName,
   biography: profile.biography,
+  imageUrl: profile.imageUrl,
+  imagePublicId: profile.imagePublicId,
+  wallpaperUrl: profile.wallpaperUrl,
+  wallpaperPublicId: profile.wallpaperPublicId,
+  wallpaperTextMode: profile.wallpaperTextMode,
   settings: {
     ...profile.settings,
     socials: profile.settings.socials.map((social) => ({
@@ -137,6 +158,7 @@ export default function OneLinkEditor({
   initialProfile,
   onSave,
   loadAnalytics,
+  onUploadImage,
 }: OneLinkEditorProps) {
   const navigate = useNavigate();
   const [activeSection, setActiveSection] =
@@ -157,6 +179,9 @@ export default function OneLinkEditor({
   >("idle");
   const [analytics, setAnalytics] =
     useState<OneLinkAnalytics | null>(null);
+  const [uploadingKind, setUploadingKind] =
+    useState<OneLinkImageKind | null>(null);
+  const [uploadStatus, setUploadStatus] = useState("");
 
   useEffect(() => {
     const next = toDraft(initialProfile);
@@ -221,11 +246,65 @@ export default function OneLinkEditor({
       username: initialProfile.username,
       displayName: draft.displayName,
       biography: draft.biography,
-      imageUrl: initialProfile.imageUrl,
+      imageUrl: draft.imageUrl,
+      imagePublicId: draft.imagePublicId,
+      wallpaperUrl: draft.wallpaperUrl,
+      wallpaperPublicId: draft.wallpaperPublicId,
+      wallpaperTextMode: draft.wallpaperTextMode,
+      messageUsername: initialProfile.messageUsername,
       settings: draft.settings,
     }),
-    [draft, initialProfile.imageUrl, initialProfile.username],
+    [draft, initialProfile.messageUsername, initialProfile.username],
   );
+
+  const handleImageUpload = async (
+    kind: OneLinkImageKind,
+    file: File | null,
+  ) => {
+    if (!file || uploadingKind) return;
+    setUploadingKind(kind);
+    setUploadStatus("Preparing image…");
+    try {
+      const uploaded = await onUploadImage(
+        file,
+        kind,
+        setUploadStatus,
+      );
+      setDraft((current) =>
+        kind === "avatar"
+          ? {
+              ...current,
+              imageUrl: uploaded.secureUrl,
+              imagePublicId: uploaded.publicId,
+            }
+          : {
+              ...current,
+              wallpaperUrl: uploaded.secureUrl,
+              wallpaperPublicId: uploaded.publicId,
+              wallpaperTextMode:
+                uploaded.detectedTextMode || "light",
+            },
+      );
+      if (kind === "wallpaper" && uploaded.contrastDetectionFailed) {
+        toast("Wallpaper added with the safe Light Text fallback.");
+      } else {
+        toast.success(
+          kind === "avatar"
+            ? "One Link profile image is ready to save."
+            : "Wallpaper is ready to save.",
+        );
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "This image could not be uploaded.",
+      );
+    } finally {
+      setUploadingKind(null);
+      setUploadStatus("");
+    }
+  };
 
   const updateSettings = (
     update:
@@ -243,7 +322,7 @@ export default function OneLinkEditor({
 
   const copyPublicUrl = async () => {
     if (!initialProfile.username) {
-      toast.error("Claim a Wallet Tag before sharing One Link.");
+      toast.error("Set up your One Link handle before sharing.");
       return;
     }
     try {
@@ -258,7 +337,7 @@ export default function OneLinkEditor({
 
   const sharePublicUrl = async () => {
     if (!initialProfile.username) {
-      toast.error("Claim a Wallet Tag before sharing One Link.");
+      toast.error("Set up your One Link handle before sharing.");
       return;
     }
     const url = getCanonicalOneLinkUrl(initialProfile.username);
@@ -428,7 +507,7 @@ export default function OneLinkEditor({
             <span className="min-w-0 flex-1 truncate pl-1 text-xs text-white/55">
               {initialProfile.username
                 ? `plugsy.ng/one/${initialProfile.username}`
-                : "Claim a Wallet Tag to publish"}
+                : "Set up your One Link handle to publish"}
             </span>
             <button
               type="button"
@@ -484,10 +563,13 @@ export default function OneLinkEditor({
 
               <div className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                 <div className="h-16 w-16 overflow-hidden rounded-full border border-white/10 bg-white/5">
-                  {initialProfile.imageUrl ? (
+                  {draft.imageUrl ? (
                     <img
-                      src={initialProfile.imageUrl}
-                      alt="Current profile"
+                      src={getOneLinkImageDeliveryUrl(
+                        draft.imageUrl,
+                        "avatar",
+                      )}
+                      alt="One Link profile preview"
                       className="h-full w-full object-cover"
                     />
                   ) : (
@@ -498,13 +580,60 @@ export default function OneLinkEditor({
                     </div>
                   )}
                 </div>
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold">Profile image</p>
                   <p className="mt-1 text-xs leading-5 text-white/45">
-                    Uses your existing Plugsy profile image.
+                    Independent from your Chat profile image.
                   </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <label
+                      className={cn(
+                        "inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2 text-[11px] font-bold transition hover:bg-white/10",
+                        uploadingKind && "pointer-events-none opacity-50",
+                      )}
+                    >
+                      {uploadingKind === "avatar" ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Upload size={13} />
+                      )}
+                      {draft.imageUrl ? "Replace" : "Upload"}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/avif"
+                        className="sr-only"
+                        disabled={Boolean(uploadingKind)}
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0] || null;
+                          event.currentTarget.value = "";
+                          void handleImageUpload("avatar", file);
+                        }}
+                      />
+                    </label>
+                    {draft.imageUrl && (
+                      <button
+                        type="button"
+                        disabled={Boolean(uploadingKind)}
+                        onClick={() =>
+                          setDraft((current) => ({
+                            ...current,
+                            imageUrl: null,
+                            imagePublicId: null,
+                          }))
+                        }
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-[11px] font-bold text-red-200 transition hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        <Trash2 size={13} /> Remove
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
+              {uploadingKind === "avatar" && uploadStatus && (
+                <p role="status" className="text-[11px] text-white/55">
+                  {uploadStatus}
+                </p>
+              )}
 
               <Field
                 label="Display name"
@@ -531,13 +660,13 @@ export default function OneLinkEditor({
               />
               <div>
                 <label className="mb-2 block text-xs font-bold text-white/65">
-                  Username / Wallet Tag
+                  One Link handle
                 </label>
                 <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-3 text-sm text-white/45">
                   @{initialProfile.username || "unclaimed"}
                 </div>
                 <p className="mt-2 text-[11px] leading-5 text-white/35">
-                  Read-only here because this identity is account-wide.
+                  Read-only in this release and independent from Chat and Wallet.
                 </p>
               </div>
             </div>
@@ -583,6 +712,102 @@ export default function OneLinkEditor({
                       </span>
                     </button>
                   ),
+                )}
+              </div>
+
+              <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div>
+                  <p className="text-sm font-bold">Wallpaper</p>
+                  <p className="mt-1 text-xs leading-5 text-white/45">
+                    Adds a full-page image while keeping your selected theme accents.
+                  </p>
+                </div>
+                {draft.wallpaperUrl && (
+                  <img
+                    src={getOneLinkImageDeliveryUrl(
+                      draft.wallpaperUrl,
+                      "wallpaper",
+                    )}
+                    alt="Current One Link wallpaper"
+                    className="h-32 w-full rounded-xl border border-white/10 object-cover object-center"
+                  />
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <label
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2 text-[11px] font-bold transition hover:bg-white/10",
+                      uploadingKind && "pointer-events-none opacity-50",
+                    )}
+                  >
+                    {uploadingKind === "wallpaper" ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Upload size={13} />
+                    )}
+                    {draft.wallpaperUrl ? "Replace wallpaper" : "Upload wallpaper"}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/avif"
+                      className="sr-only"
+                      disabled={Boolean(uploadingKind)}
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0] || null;
+                        event.currentTarget.value = "";
+                        void handleImageUpload("wallpaper", file);
+                      }}
+                    />
+                  </label>
+                  {draft.wallpaperUrl && (
+                    <button
+                      type="button"
+                      disabled={Boolean(uploadingKind)}
+                      onClick={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          wallpaperUrl: null,
+                          wallpaperPublicId: null,
+                          wallpaperTextMode: "light",
+                        }))
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-[11px] font-bold text-red-200 transition hover:bg-red-500/20 disabled:opacity-50"
+                    >
+                      <Trash2 size={13} /> Remove
+                    </button>
+                  )}
+                </div>
+                {uploadingKind === "wallpaper" && uploadStatus && (
+                  <p role="status" className="text-[11px] text-white/55">
+                    {uploadStatus}
+                  </p>
+                )}
+                {draft.wallpaperUrl && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-white/55">
+                      Contrast result: {draft.wallpaperTextMode === "light" ? "Light Text" : "Dark Text"}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2" aria-label="Wallpaper text contrast override">
+                      {(["light", "dark"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() =>
+                            setDraft((current) => ({
+                              ...current,
+                              wallpaperTextMode: mode,
+                            }))
+                          }
+                          className={cn(
+                            "rounded-xl border px-3 py-2 text-[11px] font-bold transition",
+                            draft.wallpaperTextMode === mode
+                              ? "border-red-400 bg-red-500/15 text-red-200"
+                              : "border-white/10 bg-white/[0.04] text-white/55 hover:bg-white/[0.08]",
+                          )}
+                        >
+                          {mode === "light" ? "Light Text" : "Dark Text"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -983,7 +1208,7 @@ export default function OneLinkEditor({
               />
               <ToggleRow
                 label="Message on Plugsy"
-                description="Let visitors open Plugsy chat search for your handle."
+                description="Let visitors find your separate Chat profile."
                 checked={draft.settings.messageEnabled}
                 onChange={(messageEnabled) =>
                   updateSettings({ messageEnabled })
@@ -1020,7 +1245,7 @@ export default function OneLinkEditor({
                 <button
                   type="button"
                   onClick={viewLive}
-                  disabled={saving}
+                  disabled={saving || Boolean(uploadingKind)}
                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] disabled:opacity-50"
                 >
                   <ExternalLink aria-hidden="true" size={15} />
@@ -1047,7 +1272,7 @@ export default function OneLinkEditor({
           <button
             type="button"
             onClick={viewLive}
-            disabled={saving}
+            disabled={saving || Boolean(uploadingKind)}
             className="hidden items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] disabled:opacity-50 lg:inline-flex"
           >
             <Eye aria-hidden="true" size={15} />
@@ -1056,7 +1281,7 @@ export default function OneLinkEditor({
           <button
             type="button"
             onClick={saveChanges}
-            disabled={saving || !isDirty}
+            disabled={saving || Boolean(uploadingKind) || !isDirty}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-500 px-3 py-3 text-xs font-bold transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? (

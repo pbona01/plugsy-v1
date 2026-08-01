@@ -1,8 +1,12 @@
 import React from "react";
 import { ChevronRight, ExternalLink, MessageSquare } from "lucide-react";
 import { OneLinkProfile } from "../types";
-import { getOneLinkTheme } from "../constants/onelink-themes";
+import {
+  getOneLinkTheme,
+  OneLinkVisualTokens,
+} from "../constants/onelink-themes";
 import { getPlatformIcon } from "../utils/onelink";
+import { getOneLinkImageDeliveryUrl } from "../utils/uploadOneLinkImage";
 import { cn } from "../lib/utils";
 import { normalizeExternalUrl } from "../../shared/onelink.js";
 
@@ -32,6 +36,38 @@ export default function OneLinkPublicView({
   preview = false,
 }: OneLinkPublicViewProps) {
   const theme = getOneLinkTheme(profile.settings.theme);
+  const hasWallpaper = Boolean(profile.wallpaperUrl);
+  const wallpaperUsesDarkText =
+    hasWallpaper && profile.wallpaperTextMode === "dark";
+  const visual: OneLinkVisualTokens = hasWallpaper
+    ? wallpaperUsesDarkText
+      ? {
+          pageForeground: "text-slate-950",
+          secondaryForeground: "text-slate-700",
+          cardForeground: "text-slate-950",
+          buttonForeground: "text-slate-950",
+          iconForeground: "text-slate-800",
+          cardSurface: "bg-white/80",
+          buttonSurface: "bg-white/75 hover:bg-white/90",
+          border: "border-black/15",
+          accentForeground: theme.accentForeground,
+          accentSurface: theme.accentSurface,
+          footerForeground: "text-slate-950",
+        }
+      : {
+          pageForeground: "text-white",
+          secondaryForeground: "text-slate-200",
+          cardForeground: "text-white",
+          buttonForeground: "text-white",
+          iconForeground: "text-white",
+          cardSurface: "bg-slate-950/70",
+          buttonSurface: "bg-black/50 hover:bg-black/65",
+          border: "border-white/25",
+          accentForeground: theme.accentForeground,
+          accentSurface: theme.accentSurface,
+          footerForeground: "text-white",
+        }
+    : theme;
   const socials = profile.settings.socials
     .filter((social) => social.enabled && !social.invalid)
     .map((social) => ({
@@ -62,14 +98,30 @@ export default function OneLinkPublicView({
         "relative isolate w-full overflow-x-hidden",
         preview ? "min-h-full" : "min-h-screen",
         theme.background,
-        theme.textPrimary,
+        visual.pageForeground,
       )}
     >
+      {profile.wallpaperUrl && (
+        <img
+          src={getOneLinkImageDeliveryUrl(
+            profile.wallpaperUrl,
+            "wallpaper",
+          )}
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 -z-20 h-full w-full object-cover object-center"
+          referrerPolicy="no-referrer"
+        />
+      )}
       <div
         aria-hidden="true"
         className={cn(
           "pointer-events-none absolute inset-0 -z-10",
-          theme.glow,
+          hasWallpaper
+            ? wallpaperUsesDarkText
+              ? "bg-white/55"
+              : "bg-black/55"
+            : theme.glow,
         )}
       />
 
@@ -83,18 +135,25 @@ export default function OneLinkPublicView({
           aria-label={`${displayName}'s One Link`}
           className={cn(
             "w-full rounded-[2rem] border px-4 py-8 shadow-2xl backdrop-blur-xl sm:px-8",
-            theme.cardBg,
+            visual.cardSurface,
+            visual.cardForeground,
+            visual.border,
           )}
         >
           <div
             className={cn(
               "mx-auto mb-5 h-24 w-24 overflow-hidden rounded-full border-2 shadow-xl ring-4 ring-current/10",
-              theme.accent,
+              visual.accentSurface,
+              visual.accentForeground,
+              visual.border,
             )}
           >
             {profile.imageUrl ? (
               <img
-                src={profile.imageUrl}
+                src={getOneLinkImageDeliveryUrl(
+                  profile.imageUrl,
+                  "avatar",
+                )}
                 alt={`${displayName}'s profile`}
                 className="h-full w-full object-cover"
                 referrerPolicy="no-referrer"
@@ -109,13 +168,18 @@ export default function OneLinkPublicView({
             )}
           </div>
 
-          <h1 className="break-words text-2xl font-black tracking-tight sm:text-3xl">
+          <h1
+            className={cn(
+              "break-words text-2xl font-black tracking-tight sm:text-3xl",
+              visual.cardForeground,
+            )}
+          >
             {displayName}
           </h1>
           <p
             className={cn(
               "mt-1 break-all text-sm font-semibold",
-              theme.textSecondary,
+              visual.secondaryForeground,
             )}
           >
             @{profile.username}
@@ -125,7 +189,7 @@ export default function OneLinkPublicView({
             <p
               className={cn(
                 "mx-auto mt-5 max-w-md whitespace-pre-wrap break-words text-sm leading-6",
-                theme.textSecondary,
+                visual.secondaryForeground,
               )}
             >
               {profile.biography}
@@ -139,7 +203,9 @@ export default function OneLinkPublicView({
               disabled={!onMessage}
               className={cn(
                 "mt-6 flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3.5 text-sm font-bold shadow-lg transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2 focus-visible:ring-offset-transparent disabled:cursor-default disabled:opacity-60",
-                theme.accent,
+                visual.accentSurface,
+                visual.accentForeground,
+                visual.border,
               )}
             >
               <MessageSquare aria-hidden="true" size={17} />
@@ -157,7 +223,9 @@ export default function OneLinkPublicView({
                   rel="noopener noreferrer"
                   className={cn(
                     "group flex min-h-14 w-full items-center gap-3 rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2 focus-visible:ring-offset-transparent",
-                    theme.buttonBg,
+                    visual.buttonSurface,
+                    visual.buttonForeground,
+                    visual.border,
                   )}
                   aria-label={`Open ${project.title}`}
                 >
@@ -165,20 +233,27 @@ export default function OneLinkPublicView({
                     aria-hidden="true"
                     className={cn(
                       "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border",
-                      theme.accent,
+                      visual.accentSurface,
+                      visual.accentForeground,
+                      visual.border,
                     )}
                   >
                     <ExternalLink size={17} />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block break-words text-sm font-bold">
+                    <span
+                      className={cn(
+                        "block break-words text-sm font-bold",
+                        visual.buttonForeground,
+                      )}
+                    >
                       {project.title}
                     </span>
                     {project.description && (
                       <span
                         className={cn(
                           "mt-1 block break-words text-xs leading-5",
-                          theme.textSecondary,
+                          visual.secondaryForeground,
                         )}
                       >
                         {project.description}
@@ -188,7 +263,10 @@ export default function OneLinkPublicView({
                   <ChevronRight
                     aria-hidden="true"
                     size={18}
-                    className="shrink-0 opacity-70 transition group-hover:opacity-100"
+                    className={cn(
+                      "shrink-0 opacity-70 transition group-hover:opacity-100",
+                      visual.iconForeground,
+                    )}
                   />
                 </a>
               ))}
@@ -209,26 +287,35 @@ export default function OneLinkPublicView({
                   aria-label={`Open ${getPlatformLabel(social.platform)}`}
                   className={cn(
                     "group flex min-h-14 w-full items-center gap-3 rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2 focus-visible:ring-offset-transparent",
-                    theme.buttonBg,
+                    visual.buttonSurface,
+                    visual.buttonForeground,
+                    visual.border,
                   )}
                 >
                   <span
                     aria-hidden="true"
                     className={cn(
                       "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border",
-                      theme.accent,
+                      visual.accentSurface,
+                      visual.accentForeground,
+                      visual.border,
                     )}
                   >
                     {getPlatformIcon(social.platform, { size: 19 })}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-bold">
+                    <span
+                      className={cn(
+                        "block truncate text-sm font-bold",
+                        visual.buttonForeground,
+                      )}
+                    >
                       {getPlatformLabel(social.platform)}
                     </span>
                     <span
                       className={cn(
                         "block truncate text-xs",
-                        theme.textSecondary,
+                        visual.secondaryForeground,
                       )}
                     >
                       {getSafeUrlSubtitle(social.url)}
@@ -237,7 +324,10 @@ export default function OneLinkPublicView({
                   <ChevronRight
                     aria-hidden="true"
                     size={18}
-                    className="shrink-0 opacity-70 transition group-hover:opacity-100"
+                    className={cn(
+                      "shrink-0 opacity-70 transition group-hover:opacity-100",
+                      visual.iconForeground,
+                    )}
                   />
                 </a>
               ))}
@@ -245,7 +335,13 @@ export default function OneLinkPublicView({
           )}
         </section>
 
-        <footer className={cn("mt-8 text-xs", theme.textSecondary)}>
+        <footer
+          className={cn(
+            "mt-8 text-xs",
+            visual.footerForeground,
+            hasWallpaper && !wallpaperUsesDarkText && "drop-shadow-md",
+          )}
+        >
           <a
             href="https://www.plugsy.ng"
             target="_blank"

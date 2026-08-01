@@ -20,7 +20,6 @@ import { getCanonicalOneLinkUrl } from "../utils/onelink";
 import { syncClerkUserToSupabase } from "../lib/authUtils";
 import {
   parseOneLinkProfileBio,
-  serializeOneLinkProfileBio,
 } from "../../shared/onelink.js";
 
 interface Profile {
@@ -30,7 +29,12 @@ interface Profile {
   profile_pic_url: string | null;
   image_url: string | null;
   bio: string | null;
+  one_link_username?: string | null;
+  last_login_at?: string | null;
 }
+
+const CHAT_PROFILE_COLUMNS =
+  "clerk_id,username,full_name,profile_pic_url,image_url,bio,one_link_username,last_login_at";
 
 interface Chat {
   id: string;
@@ -114,7 +118,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select("*")
+        .select(CHAT_PROFILE_COLUMNS)
         .eq("clerk_id", userIdToFind)
         .maybeSingle();
       if (data) setUserProfileModal(data);
@@ -185,7 +189,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select("*")
+        .select(CHAT_PROFILE_COLUMNS)
         .neq("clerk_id", userId)
         .limit(5);
       if (!error && data) {
@@ -206,44 +210,30 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     
     const formattedUsername = profileUsername.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
     if (!formattedUsername) {
-      toast.error("Username / OneLink Tag is required");
+      toast.error("Chat username is required");
       return;
     }
 
     const saveToast = toast.loading("Saving profile changes...");
     try {
-      // Check if username is taken by another user
-      const { data: existingUser } = await supabase
-        .from("profiles")
-        .select("clerk_id")
-        .eq("username", formattedUsername)
-        .neq("clerk_id", userId)
-        .maybeSingle();
-
-      if (existingUser) {
-        toast.error("Username is already taken", { id: saveToast });
-        return;
-      }
-
-      const existingOneLink = parseOneLinkProfileBio(
-        myProfile?.bio,
-      ).settings;
-      const finalBioString = serializeOneLinkProfileBio(
-        myProfile?.bio,
-        profileBio,
-        existingOneLink,
-      );
-
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          full_name: profileFullName,
+      const token = await getToken();
+      if (!token) throw new Error("Your session has expired. Sign in again.");
+      const response = await fetch("/api/profile?action=save-chat-profile", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          displayName: profileFullName,
           username: formattedUsername,
-          bio: finalBioString
-        })
-        .eq("clerk_id", userId);
-
-      if (error) throw error;
+          biography: profileBio,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success || !payload?.profile) {
+        throw new Error(payload?.error || "Failed to update Chat profile");
+      }
       setProfileDraftEdited(false);
       await mutateProfile();
       toast.success("Profile updated successfully!", { id: saveToast });
@@ -366,7 +356,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
         if (otherUserIds.length > 0) {
           const { data: profilesData, error: profErr } = await supabase
             .from("profiles")
-            .select("*")
+            .select(CHAT_PROFILE_COLUMNS)
             .in("clerk_id", otherUserIds);
 
           if (profErr) throw profErr;
@@ -455,7 +445,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select("*")
+        .select(CHAT_PROFILE_COLUMNS)
         .or(`username.ilike.%${searchQuery}%,full_name.ilike.%${searchQuery}%`)
         .neq("clerk_id", userId)
         .limit(8);
@@ -680,15 +670,15 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
 
             {/* Top-Right action button, just like in WhatsApp screenshot */}
             <div className="flex items-center gap-3">
-              {activeTab === "you" && myProfile?.username && (
+              {activeTab === "you" && myProfile?.one_link_username && (
                 <button
                   onClick={() => {
                     const profileUrl = getCanonicalOneLinkUrl(
-                      myProfile.username,
+                      myProfile.one_link_username,
                     );
                     if (navigator.share) {
                       navigator.share({
-                        title: `${myProfile.full_name || myProfile.username}'s One Link`,
+                        title: `${myProfile.full_name || "Plugsy creator"}'s One Link`,
                         text: "Check out my One Link on Plugsy.",
                         url: profileUrl,
                       }).catch(err => console.log("Error sharing", err));
@@ -731,7 +721,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={activeTab === "dm" ? "Ask Meta AI or Search chats..." : "Search joined or public communities..."}
+                  placeholder={activeTab === "dm" ? "Search chats..." : "Search joined or public communities..."}
                   className="w-full pl-11 pr-4 py-3 bg-white dark:bg-[#16161a] border border-slate-200 dark:border-white/5 rounded-2xl text-slate-800 dark:text-slate-200 text-sm focus:outline-none focus:border-slate-300 dark:focus:border-white/15 transition-colors placeholder:text-slate-500 font-medium shadow-sm"
                 />
               </div>
@@ -1077,7 +1067,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
 
                     <div>
                       <label className="text-[10px] font-black uppercase text-slate-500 dark:text-white/40 tracking-wider block mb-1.5 flex items-center gap-1">
-                        Username / OneLink Tag
+                        Chat username
                       </label>
                       <div className="relative">
                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">@</span>
@@ -1092,6 +1082,9 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
                           placeholder="your_tag"
                         />
                       </div>
+                      <p className="mt-1.5 text-[10px] leading-4 text-slate-500 dark:text-white/35">
+                        Used only for your Chat profile and direct-message discovery.
+                      </p>
                     </div>
 
                     <div>
@@ -1677,9 +1670,9 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
                 >
                   <MessageCircle size={14} /> Direct Message
                 </button>
-                {userProfileModal.username && (
+                {userProfileModal.one_link_username && (
                   <Link
-                    to={`/one/${encodeURIComponent(userProfileModal.username)}`}
+                    to={`/one/${encodeURIComponent(userProfileModal.one_link_username)}`}
                     className="py-3 px-4 bg-white/5 hover:bg-white/10 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center border border-slate-200 dark:border-white/10"
                     onClick={() => setUserProfileModal(null)}
                   >

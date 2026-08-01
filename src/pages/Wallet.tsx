@@ -129,8 +129,8 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   // Copy state
   const [copied, setCopied] = useState(false);
   const handleCopyTag = () => {
-    if (profile?.username) {
-      navigator.clipboard.writeText(`@${profile.username}`);
+    if (profile?.wallet_tag) {
+      navigator.clipboard.writeText(`@${profile.wallet_tag}`);
       setCopied(true);
       toast.success("Wallet TAG copied!");
       setTimeout(() => setCopied(false), 2000);
@@ -143,8 +143,8 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   const [isSavingSettingsUsername, setIsSavingSettingsUsername] = useState(false);
 
   useEffect(() => {
-    if (profile?.username) {
-      setSettingsUsernameInput(profile.username);
+    if (profile?.wallet_tag) {
+      setSettingsUsernameInput(profile.wallet_tag);
     }
   }, [profile]);
 
@@ -153,11 +153,11 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     const clean = settingsUsernameInput.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
     
     if (clean.length < 3) {
-      setSettingsUsernameError("Username must be at least 3 characters");
+      setSettingsUsernameError("Wallet TAG must be at least 3 characters");
       return;
     }
 
-    if (clean === profile?.username) {
+    if (clean === profile?.wallet_tag) {
       toast.success("TAG is already set to this!");
       return;
     }
@@ -180,12 +180,12 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
       const result = await res.json();
 
       if (!result.success) {
-        setSettingsUsernameError(result.error || "Failed to update username");
+        setSettingsUsernameError(result.error || "Failed to update Wallet TAG");
         setIsSavingSettingsUsername(false);
         return;
       }
 
-      setProfile((prev: any) => ({ ...prev, username: clean }));
+      setProfile((prev: any) => ({ ...prev, wallet_tag: clean }));
       toast.success(`Wallet TAG updated to @${clean}!`);
     } catch (err: any) {
       setSettingsUsernameError(err.message || "An error occurred");
@@ -602,7 +602,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     const clean = usernameInput.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
     
     if (clean.length < 3) {
-      setUsernameError("Username must be at least 3 characters");
+      setUsernameError("Wallet TAG must be at least 3 characters");
       return;
     }
 
@@ -620,12 +620,12 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     const result = await res.json();
 
     if (!result.success) {
-      setUsernameError(result.error || "Failed to update username");
+      setUsernameError(result.error || "Failed to update Wallet TAG");
       return;
     }
 
-    setProfile((prev: any) => ({ ...prev, username: clean }));
-    toast.success(`Username saved as @${clean}!`);
+    setProfile((prev: any) => ({ ...prev, wallet_tag: clean }));
+    toast.success(`Wallet TAG saved as @${clean}!`);
   };
 
   const handleDismissUsernamePrompt = () => {
@@ -912,10 +912,10 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           <span className="text-[10px] font-black uppercase tracking-widest text-brand-text-secondary">
             Wallet TAG
           </span>
-          {profile?.username ? (
+          {profile?.wallet_tag ? (
             <div className="flex items-center gap-1.5 mt-0.5">
               <span className="text-sm font-black text-brand-accent">
-                @{profile.username}
+                @{profile.wallet_tag}
               </span>
               <button
                 onClick={handleCopyTag}
@@ -959,7 +959,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
       </div>
 
       {/* PART 5: USERNAME SETUP PROMPT */}
-      {!profile?.username && showUsernameBanner && (
+      {!profile?.wallet_tag && showUsernameBanner && (
         <div className="bg-brand-surface border border-brand-accent/20 rounded-2xl p-4 relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in duration-300">
           <button 
             onClick={handleDismissUsernamePrompt}
@@ -970,10 +970,10 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           <div className="space-y-1 max-w-md">
             <h4 className="text-xs font-bold text-brand-text-primary uppercase tracking-wider flex items-center gap-1.5">
               <CheckCircle2 size={14} className="text-brand-accent" />
-              Claim your unique username
+              Claim your unique Wallet TAG
             </h4>
             <p className="text-xs text-brand-text-secondary">
-              Set your @username to receive seamless, instant wallet transfers from other Plugsy users.
+              Set your Wallet TAG to receive seamless, instant wallet transfers from other Plugsy users.
             </p>
           </div>
           <form onSubmit={handleSetUsername} className="flex gap-2 w-full sm:w-auto">
@@ -983,7 +983,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
                 type="text"
                 value={usernameInput}
                 onChange={(e) => setUsernameInput(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
-                placeholder="username"
+                placeholder="wallet_tag"
                 className="w-full sm:w-36 bg-brand-background border border-brand-border rounded-xl py-2 pl-6 pr-3 text-xs font-semibold text-brand-text-primary focus:outline-none focus:border-brand-accent"
                 required
               />
@@ -1059,8 +1059,8 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
       <div className="bg-brand-surface border border-brand-border rounded-2xl p-4 shadow-xs grid grid-cols-3 gap-2">
         <button
           onClick={() => {
-            if (!profile?.username) {
-              toast.error("Please set a username above first before sending transfers.");
+            if (!profile?.wallet_tag) {
+              toast.error("Please set a Wallet TAG above before sending transfers.");
               return;
             }
             setIsSendModalOpen(true);

@@ -17,11 +17,10 @@ import {
 import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import {
   parseOneLinkProfileBio,
-  serializeOneLinkProfileBio,
 } from "../../shared/onelink.js";
 
 export default function Dashboard() {
-  const { userId } = useAuth();
+  const { userId, getToken } = useAuth();
   const { user } = useUser();
   const navigate = useNavigate();
   const { unreadCount } = useUnreadMessages();
@@ -486,8 +485,8 @@ export default function Dashboard() {
 
                         <div>
                           <div className="flex justify-between items-center mb-1">
-                            <label className="block text-[10px] font-black uppercase text-slate-500 dark:text-white/40 tracking-wider">Username (Handle)</label>
-                            <span className="text-[9px] bg-slate-100 dark:bg-white/5 text-slate-500 dark:text-white/40 px-1.5 py-0.5 rounded font-black uppercase tracking-wider">Synced</span>
+                            <label className="block text-[10px] font-black uppercase text-slate-500 dark:text-white/40 tracking-wider">Chat username</label>
+                            <span className="text-[9px] bg-slate-100 dark:bg-white/5 text-slate-500 dark:text-white/40 px-1.5 py-0.5 rounded font-black uppercase tracking-wider">Chat</span>
                           </div>
                           <div className="relative">
                             <span className="absolute left-3 top-2.5 text-slate-400 dark:text-white/30 text-sm font-semibold">@</span>
@@ -499,7 +498,7 @@ export default function Dashboard() {
                             />
                           </div>
                           <p className="text-[9px] text-slate-400 dark:text-white/30 font-medium mt-1">
-                            Your username is locked to your signup details. Custom tags can be created in the Wallet.
+                            Manage this in Chat Settings. Wallet TAG and One Link handle are separate.
                           </p>
                         </div>
 
@@ -519,48 +518,38 @@ export default function Dashboard() {
 
                         <button
                           onClick={async () => {
-                            if (profileUsername.trim().length < 3) {
-                              setUsernameErr("Username must be at least 3 characters");
+                            if (!/^[a-z0-9_]{1,64}$/.test(profileUsername.trim().toLowerCase())) {
+                              setUsernameErr("Chat username is invalid");
                               return;
                             }
                             setSavingProfile(true);
                             try {
-                              // Uniqueness check
-                              if (profileUsername !== hookProfile?.username) {
-                                const { data: existing } = await supabase
-                                  .from("profiles")
-                                  .select("id")
-                                  .eq("username", profileUsername)
-                                  .maybeSingle();
-
-                                if (existing) {
-                                  setUsernameErr("Username already taken");
-                                  setSavingProfile(false);
-                                  return;
-                                }
+                              const token = await getToken();
+                              if (!token) {
+                                throw new Error("Your session has expired. Sign in again.");
                               }
-
-                              const existingOneLink =
-                                parseOneLinkProfileBio(
-                                  hookProfile?.bio,
-                                ).settings;
-                              const preservedBio =
-                                serializeOneLinkProfileBio(
-                                  hookProfile?.bio,
-                                  profileBio,
-                                  existingOneLink,
+                              const response = await fetch(
+                                "/api/profile?action=save-chat-profile",
+                                {
+                                  method: "POST",
+                                  headers: {
+                                    "Content-Type": "application/json",
+                                    Authorization: `Bearer ${token}`,
+                                  },
+                                  body: JSON.stringify({
+                                    displayName: profileFullName,
+                                    username: profileUsername,
+                                    biography: profileBio,
+                                    profileImageUrl: profilePic || null,
+                                  }),
+                                },
+                              );
+                              const payload = await response.json().catch(() => null);
+                              if (!response.ok || !payload?.success) {
+                                throw new Error(
+                                  payload?.error || "Failed to save Chat profile",
                                 );
-                              const { error } = await supabase
-                                .from("profiles")
-                                .update({
-                                  full_name: profileFullName,
-                                  username: profileUsername,
-                                  bio: preservedBio,
-                                  profile_pic_url: profilePic
-                                })
-                                .eq("clerk_id", userId);
-
-                              if (error) throw error;
+                              }
                               toast.success("Profile updated successfully!");
                               window.location.reload();
                             } catch (err: any) {

@@ -101,7 +101,7 @@ async function fetchAllProfiles(supabase) {
     const from = page * PROFILE_PAGE_SIZE;
     const { data, error } = await supabase
       .from("profiles")
-      .select("id,clerk_id,email,full_name,username,role,image_url,profile_pic_url,balance,bio,phone_number,last_login_at,last_seen_at,created_at,updated_at")
+      .select("id,clerk_id,email,full_name,username,wallet_tag,role,image_url,profile_pic_url,balance,bio,phone_number,last_login_at,last_seen_at,created_at,updated_at")
       .order("created_at", { ascending: false })
       .range(from, from + PROFILE_PAGE_SIZE - 1);
     if (error) throw new Error("PROFILE_PAGE_LOOKUP_FAILED");
@@ -170,7 +170,7 @@ export function normalizeAdminUsers(clerkUsers, profiles) {
       full_name: fullName,
       clerk_username: clerkUsername || null,
       username: clerkUsername || textValue(profile?.username) || null,
-      wallet_tag: textValue(profile?.username) || null,
+      wallet_tag: textValue(profile?.wallet_tag) || null,
       imageUrl: textValue(clerkUser.image_url || clerkUser.imageUrl),
       created_at: toIsoDate(clerkUser.created_at || clerkUser.createdAt),
       last_login_at: toIsoDate(clerkUser.last_sign_in_at || clerkUser.lastSignInAt),
@@ -199,7 +199,7 @@ export function normalizeAdminUsers(clerkUsers, profiles) {
       full_name: textValue(profile.full_name) || textValue(profile.username) || "Legacy Profile",
       clerk_username: null,
       username: textValue(profile.username) || null,
-      wallet_tag: textValue(profile.username) || null,
+      wallet_tag: textValue(profile.wallet_tag) || null,
       imageUrl: textValue(profile.profile_pic_url || profile.image_url),
       created_at: toIsoDate(profile.created_at),
       last_login_at: toIsoDate(profile.last_login_at),

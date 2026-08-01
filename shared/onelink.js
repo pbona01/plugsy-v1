@@ -13,6 +13,7 @@ export const ONE_LINK_LIMITS = Object.freeze({
   seoDescription: 160,
   url: 2048,
   itemId: 80,
+  publicId: 255,
 });
 
 export const ONE_LINK_THEME_IDS = Object.freeze([
@@ -35,6 +36,8 @@ export const DEFAULT_ONE_LINK_SETTINGS = Object.freeze({
 });
 
 const USERNAME_PATTERN = /^[a-z0-9_]{1,64}$/;
+const CLOUDINARY_PUBLIC_ID_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9_./-]{0,254}$/;
 const ITEM_ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
 const PLATFORM_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$/;
 const URL_CONTROL_PATTERN = /[\u0000-\u001F\u007F]/;
@@ -117,6 +120,18 @@ function cloneCompatibleJson(value, depth = 0) {
 export function normalizeOneLinkUsername(value) {
   const username = String(value || "").trim().toLowerCase();
   return USERNAME_PATTERN.test(username) ? username : "";
+}
+
+export function normalizeOneLinkTextMode(value) {
+  return value === "dark" ? "dark" : "light";
+}
+
+export function chooseOneLinkWallpaperTextMode(luminance) {
+  return typeof luminance === "number" &&
+    Number.isFinite(luminance) &&
+    luminance >= 0.42
+    ? "dark"
+    : "light";
 }
 
 export function normalizeExternalUrl(value) {
@@ -375,7 +390,16 @@ export function validateOneLinkSavePayload(payload) {
   }
   assertObjectKeys(
     payload,
-    new Set(["displayName", "biography", "settings"]),
+    new Set([
+      "displayName",
+      "biography",
+      "imageUrl",
+      "imagePublicId",
+      "wallpaperUrl",
+      "wallpaperPublicId",
+      "wallpaperTextMode",
+      "settings",
+    ]),
     "ONELINK_PAYLOAD_FIELDS_INVALID",
   );
 
@@ -390,6 +414,86 @@ export function validateOneLinkSavePayload(payload) {
     "Biography",
     ONE_LINK_LIMITS.biography,
   );
+  const validateOptionalMediaText = (value, fieldName, maximum) => {
+    if (value === null || value === undefined || value === "") return null;
+    return validateText(value, fieldName, maximum, { required: true });
+  };
+  const imageUrl = validateOptionalMediaText(
+    payload.imageUrl,
+    "Profile image URL",
+    ONE_LINK_LIMITS.url,
+  );
+  const imagePublicId = validateOptionalMediaText(
+    payload.imagePublicId,
+    "Profile image public ID",
+    ONE_LINK_LIMITS.publicId,
+  );
+  const wallpaperUrl = validateOptionalMediaText(
+    payload.wallpaperUrl,
+    "Wallpaper URL",
+    ONE_LINK_LIMITS.url,
+  );
+  const wallpaperPublicId = validateOptionalMediaText(
+    payload.wallpaperPublicId,
+    "Wallpaper public ID",
+    ONE_LINK_LIMITS.publicId,
+  );
+
+  for (const [fieldName, url] of [
+    ["Profile image URL", imageUrl],
+    ["Wallpaper URL", wallpaperUrl],
+  ]) {
+    if (!url) continue;
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || parsed.protocol !== "https:") {
+      throw new OneLinkValidationError(
+        "ONELINK_MEDIA_URL_INVALID",
+        `${fieldName} must use a secure URL.`,
+      );
+    }
+  }
+
+  for (const publicId of [imagePublicId, wallpaperPublicId]) {
+    if (
+      publicId &&
+      (!CLOUDINARY_PUBLIC_ID_PATTERN.test(publicId) ||
+        publicId.includes("..") ||
+        publicId.includes("//") ||
+        publicId.endsWith("/"))
+    ) {
+      throw new OneLinkValidationError(
+        "ONELINK_MEDIA_PUBLIC_ID_INVALID",
+        "One Link media has an invalid public ID.",
+      );
+    }
+  }
+
+  if (imagePublicId && !imageUrl) {
+    throw new OneLinkValidationError(
+      "ONELINK_MEDIA_PAIR_INVALID",
+      "One Link profile image data is incomplete.",
+    );
+  }
+  if (Boolean(wallpaperUrl) !== Boolean(wallpaperPublicId)) {
+    throw new OneLinkValidationError(
+      "ONELINK_MEDIA_PAIR_INVALID",
+      "One Link wallpaper data is incomplete.",
+    );
+  }
+  if (
+    payload.wallpaperTextMode !== "light" &&
+    payload.wallpaperTextMode !== "dark"
+  ) {
+    throw new OneLinkValidationError(
+      "ONELINK_WALLPAPER_TEXT_MODE_INVALID",
+      "Select a valid wallpaper text mode.",
+    );
+  }
   const source = payload.settings;
   if (!isPlainObject(source)) {
     throw new OneLinkValidationError(
@@ -563,6 +667,11 @@ export function validateOneLinkSavePayload(payload) {
   return {
     displayName,
     biography,
+    imageUrl,
+    imagePublicId,
+    wallpaperUrl,
+    wallpaperPublicId,
+    wallpaperTextMode: payload.wallpaperTextMode,
     settings: {
       schemaVersion: ONE_LINK_SCHEMA_VERSION,
       theme: source.theme,

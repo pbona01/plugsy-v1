@@ -225,6 +225,11 @@ export interface OneLinkProfile {
   displayName: string;
   biography: string;
   imageUrl: string | null;
+  imagePublicId: string | null;
+  wallpaperUrl: string | null;
+  wallpaperPublicId: string | null;
+  wallpaperTextMode: 'light' | 'dark';
+  messageUsername?: string | null;
   settings: OneLinkSettings;
 }
 
