@@ -16,7 +16,7 @@
   "crons": [
     {
       "path": "/api/wallet?action=reconcile-pending",
-      "schedule": "0 * * * *"
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/status?action=cleanup-expired",
