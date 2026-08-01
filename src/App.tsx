@@ -16,7 +16,7 @@ import { syncClerkUserToSupabase, isAdmin } from "./lib/authUtils";
 import { PortfolioAccessProvider, usePortfolioAccess } from "./lib/PortfolioContext";
 import { setSupabaseAuth, supabase } from "./lib/supabase";
 import { OnlinePresenceProvider } from "./contexts/OnlinePresenceContext";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, MotionConfig, useReducedMotion } from "motion/react";
 import { GlobalErrorBoundary } from "./components/GlobalErrorBoundary";
 
 import Home from "./pages/Home";
@@ -290,16 +290,16 @@ export default function App() {
 
   useEffect(() => {
     async function syncUser() {
-      if (isReady && userId && user && isSupabaseReady && !isUserAdmin) {
+      if (isReady && userId && user && isSupabaseReady) {
         try {
-          syncClerkUserToSupabase(user).catch(console.error);
+          await syncClerkUserToSupabase(user, getToken);
         } catch (error) {
           console.error("Error syncing user:", error);
         }
       }
     }
     syncUser();
-  }, [isReady, userId, user, isSupabaseReady, isUserAdmin]);
+  }, [isReady, userId, user, isSupabaseReady, getToken]);
 
   // Combined loading condition
   const showSpinner =
@@ -340,6 +340,7 @@ export default function App() {
         />
       </Helmet>
       <SplashScreen />
+      <MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}>
       <ThemeProvider>
         <PortfolioAccessProvider>
           <Router>
@@ -350,6 +351,7 @@ export default function App() {
           </Router>
         </PortfolioAccessProvider>
       </ThemeProvider>
+      </MotionConfig>
     </HelmetProvider>
   );
 }
@@ -367,6 +369,7 @@ function AppContent({
   const { isPortfolioUnlocked } = usePortfolioAccess();
   const location = useLocation();
   const navigate = useNavigate();
+  const reduceMotion = useReducedMotion();
   const isAdminPage = location.pathname.startsWith("/admin");
   const isVpPage = location.pathname.startsWith("/vp/");
   const isChatsPage = location.pathname === "/admin/chats";
@@ -424,14 +427,14 @@ function AppContent({
   }, [navigate]);
 
   const mainRoutes = (
-    <AnimatePresence mode="wait">
+    <AnimatePresence initial={false}>
       <motion.div
         key={location.pathname}
-        initial={{ opacity: 0, y: 15 }}
+        initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
         animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -15 }}
-        transition={{ duration: 0.4, ease: "easeOut" }}
-        className="w-full h-full flex-grow flex flex-col"
+        exit={{ opacity: 0, y: reduceMotion ? 0 : -4 }}
+        transition={{ duration: reduceMotion ? 0.01 : 0.18, ease: [0.22, 1, 0.36, 1] }}
+        className="w-full h-full flex-grow flex flex-col overflow-x-hidden"
       >
         <Routes location={location}>
           <Route

@@ -1,33 +1,21 @@
-import { motion } from "framer-motion"
+import { motion, useReducedMotion } from "motion/react"
 import { ReactNode } from "react"
 
-const pageVariants = {
-  initial: { opacity: 0, y: 15 },
-  animate: { 
-    opacity: 1, 
-    y: 0,
-    transition: {
-      duration: 0.6,
-      ease: [0.16, 1, 0.3, 1]
-    }
-  },
-  exit: { 
-    opacity: 0, 
-    y: -8,
-    transition: { duration: 0.2, ease: "easeIn" }
-  }
-}
+const MOTION_EASE = [0.22, 1, 0.36, 1] as const
 
-export const PageTransition = ({ children }: { children: ReactNode }) => (
-  <motion.div
-    variants={pageVariants}
-    initial="initial"
-    animate="animate"
-    exit="exit"
-  >
-    {children}
-  </motion.div>
-)
+export const PageTransition = ({ children }: { children: ReactNode }) => {
+  const reduceMotion = useReducedMotion()
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: reduceMotion ? 0 : -4 }}
+      transition={{ duration: reduceMotion ? 0.01 : 0.18, ease: MOTION_EASE }}
+    >
+      {children}
+    </motion.div>
+  )
+}
 
 export const FadeUp = ({ 
   children, 
@@ -37,20 +25,23 @@ export const FadeUp = ({
   children: ReactNode
   delay?: number
   className?: string
-}) => (
-  <motion.div
-    initial={{ opacity: 0, y: 15 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{
-      duration: 0.6,
-      ease: [0.16, 1, 0.3, 1],
-      delay
-    }}
-    className={className}
-  >
-    {children}
-  </motion.div>
-)
+}) => {
+  const reduceMotion = useReducedMotion()
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: reduceMotion ? 0.01 : 0.2,
+        ease: MOTION_EASE,
+        delay: reduceMotion ? 0 : delay
+      }}
+      className={className}
+    >
+      {children}
+    </motion.div>
+  )
+}
 
 export const StaggerContainer = ({ 
   children,
@@ -82,11 +73,11 @@ export const StaggerItem = ({ children, className }: { children: ReactNode, clas
   <motion.div
     className={className}
     variants={{
-      hidden: { opacity: 0, y: 15 },
+      hidden: { opacity: 0, y: 4 },
       visible: {
         opacity: 1,
         y: 0,
-        transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] }
+        transition: { duration: 0.2, ease: MOTION_EASE }
       }
     }}
   >
@@ -106,7 +97,7 @@ export const ScaleButton = ({
     type={type}
     whileTap={{ scale: disabled ? 1 : 0.97 }}
     whileHover={{ scale: disabled ? 1 : 1.01 }}
-    transition={{ type: "spring", stiffness: 400, damping: 17 }}
+    transition={{ duration: 0.12, ease: MOTION_EASE }}
     onClick={onClick}
     style={style}
     className={className}

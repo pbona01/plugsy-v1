@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
@@ -28,7 +28,8 @@ import {
   Check, 
   ShoppingCart, 
   X,
-  Copy
+  Copy,
+  Loader2
 } from 'lucide-react';
 import BankAccountForm from "@/components/wallet/BankAccountForm";
 import SendMoneyModal from "@/components/wallet/SendMoneyModal";
@@ -36,6 +37,7 @@ import {
   clearStableIdempotencyKey,
   getStableIdempotencyKey,
 } from "../utils/idempotency";
+import { syncClerkUserToSupabase } from "../lib/authUtils";
 
 const WALLET_FUNDING_PAUSED_MESSAGE =
   "Wallet deposits are temporarily paused while we complete an urgent balance-credit fix. No payment has been initiated.";
@@ -61,6 +63,9 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   const [profile, setProfile] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [walletAvailability, setWalletAvailability] = useState<'loading' | 'syncing' | 'ready' | 'unavailable'>('loading');
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const walletLoadInFlightRef = useRef(false);
 
   // Balance visibility toggle
   const [balanceVisible, setBalanceVisible] = useState(() => {
@@ -391,56 +396,129 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     }
   };
 
-  useEffect(() => {
-    if (user) {
-      loadWalletData();
-    }
-  }, [user]);
-
-  const loadWalletData = async () => {
-    setLoading(true);
+  const loadWalletData = async (background = false) => {
+    if (!user?.id || walletLoadInFlightRef.current) return;
+    walletLoadInFlightRef.current = true;
+    if (!background) setLoading(true);
+    setWalletError(null);
+    if (!background) setWalletAvailability('loading');
     try {
-      // Get profile
-      let profileData = null;
-      let retries = 3;
-      
-      while (retries > 0 && !profileData) {
-        const { data } = await supabase
+      const fetchLinkedProfile = async () => {
+        const { data, error } = await supabase
           .from('profiles')
           .select('*')
-          .eq('clerk_id', user?.id)
+          .eq('clerk_id', user.id)
           .maybeSingle();
-          
-        if (data) {
-          profileData = data;
-          break;
+        if (error) throw error;
+        return data;
+      };
+
+      let profileData = await fetchLinkedProfile();
+      if (!profileData) {
+        setWalletAvailability('syncing');
+        await syncClerkUserToSupabase(user, getToken);
+        for (let attempt = 0; attempt < 2 && !profileData; attempt += 1) {
+          if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 700));
+          profileData = await fetchLinkedProfile();
         }
-        
-        retries--;
-        if (retries > 0) await new Promise(r => setTimeout(r, 1000));
-      }
-      
-      if (profileData) {
-        setProfile(profileData);
-        setBalance(profileData.balance || 0);
       }
 
-      // Get transactions
-      const { data: txData } = await supabase
+      if (!profileData || profileData.clerk_id !== user.id) {
+        throw new Error('PROFILE_NOT_CONFIRMED');
+      }
+
+      setProfile(profileData);
+      setBalance(Number(profileData.balance ?? 0));
+
+      const { data: txData, error: txError } = await supabase
         .from('wallet_transactions')
         .select('*')
-        .eq('user_id', user?.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
-      
-      if (txData) {
-        setTransactions(txData);
+      if (txError) throw txError;
+
+      let currentTransactions = txData || [];
+      setTransactions(currentTransactions);
+      setWalletAvailability('ready');
+
+      const recoveryKey = `plugsy_wallet_funding_recovery_${user.id}`;
+      let recoveryAlreadyAttempted = false;
+      try {
+        recoveryAlreadyAttempted = sessionStorage.getItem(recoveryKey) === 'true';
+      } catch {
+        recoveryAlreadyAttempted = true;
       }
-    } catch (err: any) {
-      console.error('Failed to load wallet data:', err);
+
+      const pendingReferences = currentTransactions
+        .filter((transaction: any) => transaction.type === 'fund' && transaction.status === 'pending' && transaction.reference)
+        .slice(0, 3)
+        .map((transaction: any) => transaction.reference);
+
+      if (!recoveryAlreadyAttempted && pendingReferences.length > 0) {
+        try {
+          const token = await getToken();
+          let reconciled = false;
+          if (token) {
+            try {
+              sessionStorage.setItem(recoveryKey, 'true');
+            } catch {}
+            for (const reference of pendingReferences) {
+              const response = await fetch('/api/wallet?action=verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ reference }),
+              });
+              const result = await response.json().catch(() => null);
+              if (response.ok && result?.success && result.pending === false) reconciled = true;
+            }
+          }
+
+          if (reconciled) {
+            const [freshProfile, freshTransactions] = await Promise.all([
+              fetchLinkedProfile(),
+              supabase
+                .from('wallet_transactions')
+                .select('*')
+                .eq('user_id', user.id)
+                .order('created_at', { ascending: false }),
+            ]);
+            if (freshProfile?.clerk_id === user.id) {
+              setProfile(freshProfile);
+              setBalance(Number(freshProfile.balance ?? 0));
+            }
+            if (!freshTransactions.error) {
+              currentTransactions = freshTransactions.data || [];
+              setTransactions(currentTransactions);
+            }
+          }
+        } catch {}
+      }
+    } catch {
+      if (!background) {
+        setProfile(null);
+        setWalletAvailability('unavailable');
+        setWalletError('Your wallet profile could not be confirmed. Your balance has not been loaded.');
+      }
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
+      walletLoadInFlightRef.current = false;
     }
   };
+
+  useEffect(() => {
+    setProfile(null);
+    setTransactions([]);
+    setWalletAvailability('loading');
+    if (user?.id) void loadWalletData();
+  }, [user?.id]);
+
+  useEffect(() => {
+    const refreshOnFocus = () => {
+      if (user?.id) void loadWalletData(true);
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    return () => window.removeEventListener('focus', refreshOnFocus);
+  }, [user?.id]);
 
   const handleFundWallet = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -568,6 +646,17 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   };
 
   if (loading) {
+    if (walletAvailability === 'syncing') {
+      return (
+        <div className="min-h-screen py-24 px-6 flex items-center justify-center bg-brand-background">
+          <div className="max-w-md w-full rounded-2xl border border-brand-border bg-brand-surface p-8 text-center">
+            <Loader2 className="mx-auto mb-4 animate-spin text-brand-accent" size={40} />
+            <h2 className="text-xl font-black text-brand-text-primary">Profile syncing</h2>
+            <p className="mt-2 text-sm text-brand-text-secondary">Confirming your secure wallet profile before loading a balance.</p>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen py-24 px-6 md:px-12 max-w-4xl mx-auto space-y-8 bg-brand-background">
         {/* Header skeleton */}
@@ -617,6 +706,25 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (walletAvailability === 'unavailable' || !profile) {
+    return (
+      <div className="min-h-screen py-24 px-6 flex items-center justify-center bg-brand-background">
+        <div className="max-w-md w-full rounded-2xl border border-red-500/20 bg-brand-surface p-8 text-center">
+          <AlertCircle className="mx-auto mb-4 text-red-500" size={40} />
+          <h2 className="text-xl font-black text-brand-text-primary">Wallet unavailable</h2>
+          <p className="mt-2 text-sm text-brand-text-secondary">{walletError || 'Your wallet profile could not be confirmed.'}</p>
+          <button
+            type="button"
+            onClick={() => void loadWalletData()}
+            className="mt-6 rounded-xl bg-brand-accent px-5 py-3 text-sm font-bold text-white active:scale-[0.98]"
+          >
+            Retry wallet sync
+          </button>
         </div>
       </div>
     );

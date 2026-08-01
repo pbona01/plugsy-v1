@@ -1,5 +1,5 @@
 import { LiquidGlass } from "../components/ui/LiquidGlass";
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Logo } from '../components/ui/Logo';
 import { motion, AnimatePresence } from 'motion/react';
 import { createClient } from "@supabase/supabase-js";
@@ -68,6 +68,10 @@ export default function Admin() {
   const [users, setUsers] = useState<any[]>([]);
   const [admins, setAdmins] = useState<any[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false);
+  const [adminUsersError, setAdminUsersError] = useState<string | null>(null);
+  const adminUsersRequestIdRef = useRef(0);
+  const adminUsersInFlightRef = useRef<Promise<void> | null>(null);
   const [orders, setOrders] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [chats, setChats] = useState<any[]>([]);
@@ -161,10 +165,73 @@ export default function Admin() {
   }, [userId, getToken]);
   
   const [activeTab, setActiveTab] = useState(tabParam || 'overview');
+  const activeTabRef = useRef(activeTab);
   const [withdrawalSubTab, setWithdrawalSubTab] = useState<'pending' | 'history'>('pending');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loginsInput, setLoginsInput] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  const fetchAdminUsers = useCallback(async () => {
+    if (adminUsersInFlightRef.current) return adminUsersInFlightRef.current;
+
+    const requestId = ++adminUsersRequestIdRef.current;
+    const request = (async () => {
+      setAdminUsersLoading(true);
+      try {
+        const token = await getToken();
+        if (!token) throw new Error("Admin authentication is required.");
+        const response = await fetch("/api/admin?action=list-users", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.success || !Array.isArray(data.users) || !Array.isArray(data.admins)) {
+          throw new Error("Users could not be refreshed.");
+        }
+        if (requestId !== adminUsersRequestIdRef.current) return;
+        setAllUsers(data.users);
+        setAdmins(data.admins);
+        setAdminUsersError(null);
+      } catch (error: any) {
+        if (requestId === adminUsersRequestIdRef.current) {
+          setAdminUsersError(error?.message || "Users could not be refreshed.");
+        }
+      } finally {
+        if (requestId === adminUsersRequestIdRef.current) setAdminUsersLoading(false);
+      }
+    })();
+
+    adminUsersInFlightRef.current = request;
+    try {
+      await request;
+    } finally {
+      if (adminUsersInFlightRef.current === request) adminUsersInFlightRef.current = null;
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    if (activeTab !== "users" || !userId) return;
+
+    void fetchAdminUsers();
+    const interval = window.setInterval(() => void fetchAdminUsers(), 30_000);
+    const handleFocus = () => void fetchAdminUsers();
+    window.addEventListener("focus", handleFocus);
+    const channel = supabase
+      .channel(`admin-users-${userId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => {
+        void fetchAdminUsers();
+      })
+      .subscribe();
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+      void supabase.removeChannel(channel);
+    };
+  }, [activeTab, userId, fetchAdminUsers]);
 
   // Financial Dashboard States
   const [financialData, setFinancialData] = useState<{
@@ -176,6 +243,7 @@ export default function Admin() {
   const [financialLoading, setFinancialLoading] = useState(false);
   const [financialError, setFinancialError] = useState<string | null>(null);
   const [financialSearch, setFinancialSearch] = useState('');
+  const [reconcilingFundingReference, setReconcilingFundingReference] = useState<string | null>(null);
 
   const fetchFinancialData = async () => {
     setFinancialLoading(true);
@@ -207,87 +275,38 @@ export default function Admin() {
     }
   };
 
-  const handleUpdateTxStatus = async (txId: string, newStatus: 'success' | 'failed') => {
+  const handleReconcileFunding = async (reference: string) => {
+    if (!reference || reconcilingFundingReference) return;
+    if (!window.confirm("Verify this pending wallet funding directly with Flutterwave? No credit will occur unless the stored transaction matches the provider.")) return;
+
+    setReconcilingFundingReference(reference);
     try {
-      await setSupabaseAuth(getToken, true);
-      const adminClient = supabase;
-
-      // Fetch transaction
-      const { data: tx, error: fetchErr } = await adminClient
-        .from("wallet_transactions")
-        .select("*")
-        .eq("id", txId)
-        .single();
-
-      if (fetchErr || !tx) {
-        toast.error("Failed to find transaction detail.");
-        return;
+      const token = await getToken();
+      if (!token) throw new Error("Admin authentication is required.");
+      const response = await fetch("/api/admin?action=reconcile-wallet-funding", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reference }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success || !data.result?.outcome) {
+        throw new Error("Funding verification is temporarily unavailable.");
       }
 
-      const txType = (tx.type || "").toUpperCase();
-      const isWalletCommerceWithdrawal =
-        txType === "WITHDRAW" ||
-        txType === "WITHDRAWAL" ||
-        String(tx.reference || "").startsWith("wallet_withdrawal_");
-      if (isWalletCommerceWithdrawal) {
-        toast.error("Withdrawal status is read-only and must be confirmed by the provider.");
-        return;
-      }
-
-      if (newStatus === 'failed') {
-        const { data: userProfile, error: profileErr } = await adminClient
-          .from("profiles")
-          .select("balance")
-          .eq("clerk_id", tx.user_id)
-          .single();
-
-        if (profileErr || !userProfile) {
-          toast.error("Failed to fetch user profile for refund.");
-          return;
-        }
-
-        let newBalance = userProfile.balance || 0;
-        
-        if (txType === "FUND" || txType === "WALLET_FUNDING" || txType === "P2P_RECEIVE") {
-          // If a deposit or received funds fail, do NOT refund and do NOT deduct. 
-          // The money was never added to the balance because it was pending.
-          newBalance = newBalance; // Unchanged
-        } else if (txType === "P2P_SEND") {
-          // If sent funds fail, refund them (add to balance)
-          const refundAmount = Number(tx.amount || 0) + Number(tx.fee || 0);
-          newBalance = newBalance + refundAmount;
-        } else {
-          // Default fallback (e.g. legacy logic)
-          const refundAmount = Number(tx.amount || 0) + Number(tx.fee || 0);
-          newBalance = newBalance + refundAmount;
-        }
-
-        const { error: balanceErr } = await adminClient
-          .from("profiles")
-          .update({ balance: newBalance })
-          .eq("clerk_id", tx.user_id);
-
-        if (balanceErr) {
-          toast.error("Failed to refund user balance: " + balanceErr.message);
-          return;
-        }
-      }
-
-      // Update wallet transaction status
-      const { error: updateErr } = await adminClient
-        .from("wallet_transactions")
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
-        .eq("id", txId);
-
-      if (updateErr) {
-        toast.error("Failed to update transaction status: " + updateErr.message);
-      } else {
-        toast.success(`Transaction successfully marked as ${newStatus}`);
-        fetchFinancialData();
-      }
-    } catch (err: any) {
-      console.error("Error updating transaction status:", err);
-      toast.error(err.message || "Failed to update status.");
+      const outcome = data.result.outcome;
+      if (outcome === "credited") toast.success("Credited");
+      else if (outcome === "already_processed") toast.success("Already processed");
+      else if (outcome === "pending") toast("Still pending");
+      else if (outcome === "failed") toast.error("Verified failure");
+      else toast.error("Provider temporarily unavailable");
+      await fetchFinancialData();
+    } catch {
+      toast.error("Provider temporarily unavailable");
+    } finally {
+      setReconcilingFundingReference(null);
     }
   };
 
@@ -541,55 +560,6 @@ export default function Admin() {
       ]);
 
       if (usersData) setUsers(usersData);
-      
-      // Fetch all admins from Clerk backend and set state (Bug 2)
-      try {
-        const res = await fetch("/api/admin?action=list-admins", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.success) {
-            console.log("[admin-users] admins found from Clerk:", data.admins?.length);
-            setAdmins(data.admins || []);
-          } else {
-            // Quiet warning for Clerk config or other handled errors
-            console.warn("[admin-users] Clerk admin fetch info/warning:", data.error || "unsuccessful");
-            // Trigger fallback
-            throw new Error(data.error || "Clerk admin fetch unsuccessful");
-          }
-        } else {
-          throw new Error(`Response status: ${res.status}`);
-        }
-      } catch (err: any) {
-        console.warn("Admins fetch from Clerk not available, falling back to profiles database list.");
-        try {
-          const { data: adminsData } = await supabase
-            .from("profiles")
-            .select("*")
-            .eq("role", "admin")
-            .order("created_at", { ascending: true });
-          setAdmins(adminsData || []);
-        } catch (fbErr) {
-          console.warn("Fallback profiles fetch failed:", fbErr);
-        }
-      }
-
-      // Fetch latest 100 users for separate list below admins (Bug 2)
-      try {
-        const { data: allUsersData, error: allUsersError } = await supabase
-          .from("profiles")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(100);
-        
-        console.log("[admin-users] allUsers found:", allUsersData?.length, allUsersError);
-        setAllUsers(allUsersData || []);
-      } catch (err: any) {
-        console.error("AllUsers fetch crash:", err);
-      }
       if (ordersData) setOrders(ordersData);
       if (subsData) setSubscriptions(subsData);
       if (chatsData) setChats(chatsData);
@@ -699,8 +669,7 @@ export default function Admin() {
 
       // Polling Fallback (Every 30 seconds)
       const pollingInterval = setInterval(() => {
-        console.log('🔄 Polling for updates...');
-        fetchAll();
+        if (activeTabRef.current !== 'users') fetchAll();
       }, 30000);
       
       return () => {
@@ -869,15 +838,17 @@ export default function Admin() {
 
   // Filtered Users
   const filteredUsers = useMemo(() => {
-    const sourceArr = allUsers.length > 0 ? allUsers : users;
-    return sourceArr.filter(u => {
+    return allUsers.filter(u => {
+      const search = userSearch.toLowerCase();
       const matchesSearch = userSearch === '' || 
-        (u.full_name || '').toLowerCase().includes(userSearch.toLowerCase()) || 
-        (u.email || '').toLowerCase().includes(userSearch.toLowerCase());
-      const matchesRole = roleFilter === 'all' || u.role === roleFilter;
+        (u.full_name || '').toLowerCase().includes(search) ||
+        (u.email || '').toLowerCase().includes(search) ||
+        (u.clerk_username || '').toLowerCase().includes(search) ||
+        (u.wallet_tag || '').toLowerCase().includes(search);
+      const matchesRole = roleFilter === 'all' || String(u.role || '').toLowerCase() === roleFilter;
       return matchesSearch && matchesRole;
     }).sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
-  }, [allUsers, users, userSearch, roleFilter]);
+  }, [allUsers, userSearch, roleFilter]);
 
   // Helper for admin operations calling the API
   const adminOp = async (op: string, payload: any = {}) => {
@@ -1186,6 +1157,7 @@ export default function Admin() {
     try {
       await adminOp('delete', { collection: 'profiles', id });
       setUsers(prev => prev.filter(u => u.id !== id));
+      await fetchAdminUsers();
       toast.success("User profile removed from database.");
     } catch (err) {
       console.error(err);
@@ -1580,11 +1552,16 @@ export default function Admin() {
 
             {activeTab === 'users' && (
               <div className="space-y-8">
-                {fetchErrors['profiles'] ? (
+                {adminUsersLoading && allUsers.length === 0 ? (
+                  <div className="card-premium p-20 text-center flex flex-col items-center justify-center gap-6">
+                    <Loader2 size={48} className="animate-spin text-brand-accent" />
+                    <p className="font-black uppercase tracking-widest text-sm text-brand-text">Loading Clerk Users</p>
+                  </div>
+                ) : adminUsersError && allUsers.length === 0 ? (
                   <div className="card-premium p-20 text-center flex flex-col items-center justify-center gap-6">
                     <AlertCircle size={48} className="text-red-500" />
                     <p className="font-black uppercase tracking-widest text-sm text-brand-text">Users Node Sync Failed</p>
-                    <LiquidGlass button chromaticAberration={2} onClick={fetchAll} className="btn-primary h-12 px-8 flex items-center gap-2">
+                    <LiquidGlass button chromaticAberration={2} onClick={() => void fetchAdminUsers()} className="btn-primary h-12 px-8 flex items-center gap-2">
                        <RefreshCw size={16} /> Retry Load
                     </LiquidGlass>
                   </div>
@@ -1618,6 +1595,13 @@ export default function Admin() {
                   </div>
                 </header>
 
+                {adminUsersError && (
+                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs font-bold text-amber-500">
+                    <span>Live user refresh failed. Showing the last confirmed Clerk result.</span>
+                    <button type="button" onClick={() => void fetchAdminUsers()} className="underline underline-offset-2">Retry</button>
+                  </div>
+                )}
+
                 {/* ADMINS LIST (BUG 2) */}
                 <div className="space-y-4">
                   <div className="flex justify-between items-center bg-brand-accent/5 p-4 rounded-2xl border border-brand-accent/10">
@@ -1643,7 +1627,7 @@ export default function Admin() {
                             </td>
                           </tr>
                         ) : admins.map(u => (
-                          <tr key={u.id} className="hover:bg-brand-text/5 transition-colors group">
+                          <tr key={u.clerk_id || u.id} className="hover:bg-brand-text/5 transition-colors group">
                             <td className="p-6">
                               <div className="flex items-center gap-4">
                                 <div className="w-10 h-10 rounded-xl bg-brand-accent/10 flex items-center justify-center font-black text-brand-accent uppercase overflow-hidden relative">
@@ -1720,7 +1704,7 @@ export default function Admin() {
                             </td>
                           </tr>
                         ) : filteredUsers.map(u => (
-                          <tr key={u.id} className="hover:bg-brand-text/5 transition-colors group">
+                          <tr key={u.clerk_id || u.id} className="hover:bg-brand-text/5 transition-colors group">
                             <td className="p-6">
                               <div className="flex items-center gap-4">
                                 <div className="w-10 h-10 rounded-xl bg-brand-accent/10 flex items-center justify-center font-black text-brand-accent uppercase overflow-hidden relative">
@@ -1779,13 +1763,15 @@ export default function Admin() {
                                <div className="flex items-center justify-end gap-2 text-xs">
                                  <button className="p-2 hover:bg-brand-accent hover:text-white rounded-lg transition-all text-brand-text-secondary" title="View Details"><TrendingUp size={16} /></button>
                                  <Link to={supportChatHref(u.clerk_id)} className="p-2 hover:bg-brand-accent hover:text-white rounded-lg transition-all text-brand-text-secondary" title="Direct Chat"><MessageSquare size={16} /></Link>
-                                 <button 
-                                   onClick={() => handleDeleteUser(u.id, u.email)}
-                                   className="p-2 hover:bg-red-500 hover:text-white rounded-lg transition-all text-brand-text-secondary" 
-                                   title="Delete Profile"
-                                 >
-                                   <Trash2 size={16} />
-                                 </button>
+                                 {u.profile_id && (
+                                   <button
+                                     onClick={() => handleDeleteUser(u.profile_id, u.email)}
+                                     className="p-2 hover:bg-red-500 hover:text-white rounded-lg transition-all text-brand-text-secondary"
+                                     title="Delete Profile"
+                                   >
+                                     <Trash2 size={16} />
+                                   </button>
+                                 )}
                                </div>
                             </td>
                           </tr>
@@ -2462,34 +2448,25 @@ export default function Admin() {
                                         {tx.status}
                                       </span>
                                       {tx.status === 'pending' && (
-                                        ['withdraw', 'withdrawal'].includes(String(tx.type || '').toLowerCase()) ||
+                                        String(tx.type || '').toLowerCase() === 'fund' ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => void handleReconcileFunding(tx.reference)}
+                                            disabled={!tx.reference || reconcilingFundingReference === tx.reference}
+                                            className="inline-flex items-center gap-1.5 px-2 py-1 bg-brand-accent hover:bg-brand-accent/80 disabled:opacity-50 text-white rounded text-[8px] font-bold uppercase tracking-wider transition-colors"
+                                          >
+                                            <RefreshCw size={10} className={reconcilingFundingReference === tx.reference ? "animate-spin" : ""} />
+                                            Reconcile with Flutterwave
+                                          </button>
+                                        ) : ['withdraw', 'withdrawal'].includes(String(tx.type || '').toLowerCase()) ||
                                         String(tx.reference || '').startsWith('wallet_withdrawal_') ? (
                                           <div className="flex flex-col text-[8px] font-bold uppercase tracking-wider text-brand-text-secondary">
                                             <span>{tx.metadata?.manual_review === true ? 'Manual review required' : 'Awaiting provider confirmation'}</span>
                                             <span className="font-mono normal-case tracking-normal">{tx.reference || 'Reference unavailable'}</span>
                                           </div>
                                         ) : (
-                                          <div className="flex gap-1.5">
-                                            <button
-                                              onClick={async () => {
-                                                if (window.confirm("Mark this pending payout as SUCCESS? This will clear it from the funding estimate.")) {
-                                                  await handleUpdateTxStatus(tx.id, 'success');
-                                                }
-                                              }}
-                                              className="px-2 py-0.5 bg-green-500 hover:bg-green-600 text-white rounded text-[8px] font-bold uppercase tracking-wider transition-colors cursor-pointer"
-                                            >
-                                              Confirm Success
-                                            </button>
-                                            <button
-                                              onClick={async () => {
-                                                if (window.confirm("FAIL this pending payout? This will refund the amount + fee back to the user's wallet.")) {
-                                                  await handleUpdateTxStatus(tx.id, 'failed');
-                                                }
-                                              }}
-                                              className="px-2 py-0.5 bg-red-500 hover:bg-red-600 text-white rounded text-[8px] font-bold uppercase tracking-wider transition-colors cursor-pointer"
-                                            >
-                                              Fail & Refund
-                                            </button>
+                                          <div className="text-[8px] font-bold uppercase tracking-wider text-brand-text-secondary">
+                                            Server-side settlement required
                                           </div>
                                         )
                                       )}

@@ -6,6 +6,7 @@ import {
   resolveOrCreateSupportChat,
 } from "./_supportChats.js";
 import { requireVerifiedClerkUser } from "../api/_clerkAuth.js";
+import { reconcileWalletFunding } from "../api/_walletFundingWebhook.js";
 
 const getClient = () => createClient(
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co',
@@ -19,6 +20,201 @@ const getClient = () => createClient(
     }
   }
 );
+
+const textValue = (value) => String(value || "").trim();
+const normalizeEmail = (value) => textValue(value).toLowerCase();
+const normalizeRole = (value) => textValue(value).toLowerCase() || "user";
+const toIsoDate = (value) => {
+  if (!value) return null;
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) && numeric > 0
+    ? new Date(numeric < 1_000_000_000_000 ? numeric * 1000 : numeric)
+    : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const CLERK_PAGE_SIZE = 100;
+const MAX_CLERK_PAGES = 100;
+const MAX_CLERK_RECORDS = 10_000;
+const PROFILE_PAGE_SIZE = 1000;
+const MAX_PROFILE_PAGES = 50;
+
+const clerkPageData = (payload) => {
+  if (Array.isArray(payload)) return { users: payload, total: null };
+  if (!payload || typeof payload !== "object") return null;
+  const users = Array.isArray(payload.data)
+    ? payload.data
+    : Array.isArray(payload.users)
+      ? payload.users
+      : null;
+  if (!users) return null;
+  const totalValue = payload.total_count ?? payload.totalCount ?? payload.total;
+  const total = Number.isFinite(Number(totalValue)) ? Number(totalValue) : null;
+  return { users, total };
+};
+
+export async function fetchAllClerkUsers(fetchImpl = fetch) {
+  const secretKey = textValue(process.env.CLERK_SECRET_KEY);
+  if (!secretKey || secretKey === "your_clerk_secret_key" || secretKey.startsWith("your_")) {
+    throw new Error("CLERK_NOT_CONFIGURED");
+  }
+
+  const users = [];
+  for (let page = 0; page < MAX_CLERK_PAGES; page += 1) {
+    const offset = page * CLERK_PAGE_SIZE;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    let payload;
+    try {
+      const response = await fetchImpl(
+        `https://api.clerk.com/v1/users?limit=${CLERK_PAGE_SIZE}&offset=${offset}`,
+        {
+          headers: { Authorization: `Bearer ${secretKey}` },
+          signal: controller.signal,
+        },
+      );
+      if (!response?.ok) throw new Error("CLERK_USERS_LOOKUP_FAILED");
+      payload = await response.json().catch(() => null);
+    } finally {
+      clearTimeout(timeout);
+    }
+    const parsed = clerkPageData(payload);
+    if (!parsed) throw new Error("CLERK_USERS_RESPONSE_INVALID");
+    users.push(...parsed.users);
+    if (users.length > MAX_CLERK_RECORDS) throw new Error("CLERK_USERS_LIMIT_EXCEEDED");
+    if (parsed.total !== null && users.length >= parsed.total) {
+      return users;
+    }
+    if (parsed.users.length < CLERK_PAGE_SIZE) {
+      if (parsed.total !== null && users.length < parsed.total) {
+        throw new Error("CLERK_USERS_RESPONSE_INVALID");
+      }
+      return users;
+    }
+  }
+  throw new Error("CLERK_USERS_PAGE_LIMIT_EXCEEDED");
+}
+
+async function fetchAllProfiles(supabase) {
+  const profiles = [];
+  for (let page = 0; page < MAX_PROFILE_PAGES; page += 1) {
+    const from = page * PROFILE_PAGE_SIZE;
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id,clerk_id,email,full_name,username,role,image_url,profile_pic_url,balance,bio,phone_number,last_login_at,last_seen_at,created_at,updated_at")
+      .order("created_at", { ascending: false })
+      .range(from, from + PROFILE_PAGE_SIZE - 1);
+    if (error) throw new Error("PROFILE_PAGE_LOOKUP_FAILED");
+    if (!Array.isArray(data)) throw new Error("PROFILE_PAGE_RESPONSE_INVALID");
+    profiles.push(...data);
+    if (data.length < PROFILE_PAGE_SIZE) return profiles;
+  }
+  throw new Error("PROFILE_PAGE_LIMIT_EXCEEDED");
+}
+
+const primaryClerkEmail = (user) => {
+  const addresses = user.email_addresses || user.emailAddresses || [];
+  const primaryId = user.primary_email_address_id || user.primaryEmailAddressId;
+  return normalizeEmail(
+    addresses.find((entry) => (entry.id || entry.emailAddressId) === primaryId)?.email_address ||
+      addresses.find((entry) => (entry.id || entry.emailAddressId) === primaryId)?.emailAddress ||
+      addresses[0]?.email_address ||
+      addresses[0]?.emailAddress,
+  );
+};
+
+export function normalizeAdminUsers(clerkUsers, profiles) {
+  const profilesByClerkId = new Map();
+  const profilesByEmail = new Map();
+  for (const profile of profiles) {
+    const clerkId = textValue(profile.clerk_id);
+    const email = normalizeEmail(profile.email);
+    if (clerkId && !profilesByClerkId.has(clerkId)) profilesByClerkId.set(clerkId, profile);
+    if (email && !profilesByEmail.has(email)) profilesByEmail.set(email, profile);
+  }
+
+  const claimedProfiles = new Set();
+  const normalized = [];
+  const seenClerkIds = new Set();
+  const seenEmails = new Set();
+
+  for (const clerkUser of clerkUsers) {
+    const clerkId = textValue(clerkUser.id);
+    const email = primaryClerkEmail(clerkUser);
+    if (!clerkId || seenClerkIds.has(clerkId) || (email && seenEmails.has(email))) continue;
+
+    let profile = profilesByClerkId.get(clerkId) || null;
+    if (!profile && email) {
+      const emailCandidate = profilesByEmail.get(email) || null;
+      if (!textValue(emailCandidate?.clerk_id) || textValue(emailCandidate?.clerk_id) === clerkId) {
+        profile = emailCandidate;
+      }
+    }
+    if (profile) claimedProfiles.add(profile.id);
+
+    const firstName = textValue(clerkUser.first_name || clerkUser.firstName);
+    const lastName = textValue(clerkUser.last_name || clerkUser.lastName);
+    const clerkUsername = textValue(clerkUser.username);
+    const fullName = textValue(`${firstName} ${lastName}`) || clerkUsername || email.split("@")[0] || "Plugsy Member";
+    const clerkRole = clerkUser.public_metadata?.role ?? clerkUser.publicMetadata?.role;
+    const role = normalizeRole(clerkRole || profile?.role || "user");
+
+    normalized.push({
+      id: profile?.id || clerkId,
+      profile_id: profile?.id || null,
+      clerk_id: clerkId,
+      clerk_linked: true,
+      email,
+      first_name: firstName,
+      last_name: lastName,
+      full_name: fullName,
+      clerk_username: clerkUsername || null,
+      username: clerkUsername || textValue(profile?.username) || null,
+      wallet_tag: textValue(profile?.username) || null,
+      imageUrl: textValue(clerkUser.image_url || clerkUser.imageUrl),
+      created_at: toIsoDate(clerkUser.created_at || clerkUser.createdAt),
+      last_login_at: toIsoDate(clerkUser.last_sign_in_at || clerkUser.lastSignInAt),
+      role,
+      balance: profile?.balance ?? null,
+      bio: profile?.bio ?? null,
+      phone_number: profile?.phone_number ?? null,
+      last_seen_at: profile?.last_seen_at ?? profile?.last_login_at ?? null,
+    });
+    seenClerkIds.add(clerkId);
+    if (email) seenEmails.add(email);
+  }
+
+  for (const profile of profiles) {
+    const email = normalizeEmail(profile.email);
+    const clerkId = textValue(profile.clerk_id);
+    if (claimedProfiles.has(profile.id) || (clerkId && seenClerkIds.has(clerkId)) || (email && seenEmails.has(email))) continue;
+    normalized.push({
+      id: profile.id,
+      profile_id: profile.id,
+      clerk_id: clerkId || null,
+      clerk_linked: false,
+      email,
+      first_name: null,
+      last_name: null,
+      full_name: textValue(profile.full_name) || textValue(profile.username) || "Legacy Profile",
+      clerk_username: null,
+      username: textValue(profile.username) || null,
+      wallet_tag: textValue(profile.username) || null,
+      imageUrl: textValue(profile.profile_pic_url || profile.image_url),
+      created_at: toIsoDate(profile.created_at),
+      last_login_at: toIsoDate(profile.last_login_at),
+      role: normalizeRole(profile.role),
+      balance: profile.balance ?? null,
+      bio: profile.bio ?? null,
+      phone_number: profile.phone_number ?? null,
+      last_seen_at: profile.last_seen_at ?? profile.last_login_at ?? null,
+    });
+    if (clerkId) seenClerkIds.add(clerkId);
+    if (email) seenEmails.add(email);
+  }
+
+  return normalized;
+}
 
 const ADMIN_MESSAGE_INSERT_FIELDS = new Set([
   "chat_id",
@@ -702,6 +898,58 @@ async function handleListProfiles(req, res) {
   }
 }
 
+async function handleListUsers(req, res) {
+  if (req.method !== "GET") {
+    return res.status(405).json({ success: false, error: "METHOD_NOT_ALLOWED" });
+  }
+  try {
+    const supabase = getClient();
+    const writer = await requireVerifiedAdmin(req, res, supabase);
+    if (!writer) return;
+
+    const [clerkUsers, profiles] = await Promise.all([
+      fetchAllClerkUsers(),
+      fetchAllProfiles(supabase),
+    ]);
+    const normalizedUsers = normalizeAdminUsers(clerkUsers, profiles);
+
+    return res.status(200).json({
+      success: true,
+      users: normalizedUsers,
+      admins: normalizedUsers.filter((user) => user.role === "admin"),
+      totalClerkUsers: clerkUsers.length,
+      syncedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("[list-users] unified user lookup failed:", error?.message || error);
+    return res.status(503).json({ success: false, error: "LIST_USERS_FAILED" });
+  }
+}
+
+async function handleReconcileWalletFunding(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ success: false, error: "METHOD_NOT_ALLOWED" });
+  }
+  try {
+    const supabase = getClient();
+    const writer = await requireVerifiedAdmin(req, res, supabase);
+    if (!writer) return;
+
+    let body = req.body;
+    if (typeof body === "string") body = JSON.parse(body);
+    const reference = textValue(body?.reference);
+    if (!/^wallet_fund_[A-Za-z0-9_-]{6,180}$/.test(reference)) {
+      return res.status(400).json({ success: false, error: "INVALID_FUNDING_REFERENCE" });
+    }
+
+    const result = await reconcileWalletFunding({ supabase, reference });
+    return res.status(200).json({ success: true, result });
+  } catch (error) {
+    console.error("[admin-funding-reconcile] reconciliation failed:", error?.message || error);
+    return res.status(503).json({ success: false, error: "FUNDING_RECONCILIATION_FAILED" });
+  }
+}
+
 async function handleListPortfolioPurchases(req, res) {
   try {
     const supabase = getClient();
@@ -745,60 +993,12 @@ async function handleListAdmins(req, res) {
     const supabase = getClient();
     const writer = await requireVerifiedAdmin(req, res, supabase);
     if (!writer) return;
-
-    const secretKey = process.env.CLERK_SECRET_KEY;
-    if (!secretKey || secretKey === "your_clerk_secret_key" || secretKey.startsWith("your_")) {
-      console.warn("[list-admins] CLERK_SECRET_KEY is not configured or is placeholder");
-      return res.status(200).json({ success: false, error: "CLERK_NOT_CONFIGURED" });
-    }
-
-    const clerkRes = await fetch(
-      "https://api.clerk.com/v1/users?limit=100",
-      {
-        headers: {
-          Authorization: "Bearer " + secretKey
-        }
-      }
-    );
-
-    if (!clerkRes.ok) {
-      console.error("[list-admins] Clerk lookup failed", {
-        status: clerkRes.status,
-      });
-      throw new Error("CLERK_ADMIN_LOOKUP_FAILED");
-    }
-    
-    const allUsers = await clerkRes.json();
-    console.log("[list-admins] total clerk users:", allUsers?.length);
-
-    if (!Array.isArray(allUsers)) {
-      console.warn("[list-admins] Clerk lookup returned an invalid shape");
-      return res.status(200).json({ success: true, admins: [] });
-    }
-
-    const admins = allUsers.filter(
-      (u) => u.public_metadata?.role === "admin"
-    ).map((u) => {
-      const email = u.email_addresses?.[0]?.email_address || "";
-      const firstName = u.first_name || "";
-      const lastName = u.last_name || "";
-      const full_name = (firstName + " " + lastName).trim() || "Admin Node";
-      return {
-        id: u.id,
-        clerk_id: u.id,
-        email,
-        firstName,
-        lastName,
-        full_name,
-        imageUrl: u.image_url || "",
-        created_at: u.created_at ? new Date(u.created_at).toISOString() : new Date().toISOString(),
-        createdAt: u.created_at,
-        role: "admin",
-        last_login_at: u.last_sign_in_at ? new Date(u.last_sign_in_at).toISOString() : null
-      };
-    });
-
-    console.log("[list-admins] admins found:", admins.length);
+    const [clerkUsers, profiles] = await Promise.all([
+      fetchAllClerkUsers(),
+      fetchAllProfiles(supabase),
+    ]);
+    const admins = normalizeAdminUsers(clerkUsers, profiles)
+      .filter((user) => user.role === "admin");
 
     return res.status(200).json({ 
       success: true, 
@@ -868,10 +1068,12 @@ export default async function handler(req, res) {
   if (action === "list-orders") return await handleListOrders(req, res)
   if (action === "list-subscriptions") return await handleListSubscriptions(req, res)
   if (action === "list-profiles") return await handleListProfiles(req, res)
+  if (action === "list-users") return await handleListUsers(req, res)
   if (action === "list-portfolio_purchases") return await handleListPortfolioPurchases(req, res)
   if (action === "send-login-email" || action === "send-logins-email") return await handleSendLoginEmail(req, res)
   if (action === "broadcast-email") return await handleBroadcastEmail(req, res)
   if (action === "list-admins") return await handleListAdmins(req, res)
+  if (action === "reconcile-wallet-funding") return await handleReconcileWalletFunding(req, res)
   if (action === "add") return await handleAdd(req, res)
   if (action === "update") return await handleUpdate(req, res)
   if (action === "delete") return await handleDelete(req, res)

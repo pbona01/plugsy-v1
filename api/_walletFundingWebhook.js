@@ -252,7 +252,7 @@ const getFundingTransaction = async (
   return data;
 };
 
-const verifyFlutterwaveReference = async (reference) => {
+export const verifyFlutterwaveReference = async (reference) => {
   const secretKey =
     String(process.env.FLUTTERWAVE_SECRET_KEY || "").trim();
 
@@ -260,25 +260,29 @@ const verifyFlutterwaveReference = async (reference) => {
     throw new Error("Flutterwave configuration is unavailable");
   }
 
-  const response = await fetch(
-    "https://api.flutterwave.com/v3/transactions/" +
-      "verify_by_reference?tx_ref=" +
-      encodeURIComponent(reference),
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${secretKey}`,
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch(
+      "https://api.flutterwave.com/v3/transactions/" +
+        "verify_by_reference?tx_ref=" +
+        encodeURIComponent(reference),
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${secretKey}`,
+        },
+        signal: controller.signal,
       },
-    },
-  );
-
-  const result = await response.json().catch(() => null);
-
-  if (!response.ok || !result) {
-    throw new Error("Flutterwave verification failed");
+    );
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result) {
+      throw new Error("Flutterwave verification failed");
+    }
+    return result;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return result;
 };
 
 const normalizeRpcResult = (data) =>
@@ -491,19 +495,134 @@ export async function initializeWalletFunding({
   }
 }
 
-export async function verifyWalletFundingStatus({
-  req,
-  res,
+export async function reconcileWalletFunding({
   supabase,
+  reference,
+  expectedUserId,
+  verifyReference = verifyFlutterwaveReference,
 }) {
-  if (req.method !== "POST") {
-    return res.status(405).json({
-      success: false,
-      code: "METHOD_NOT_ALLOWED",
-      error: "Method not allowed",
-    });
+  const normalizedReference = textValue(reference);
+  if (!/^wallet_fund_[A-Za-z0-9_-]{6,180}$/.test(normalizedReference)) {
+    return { outcome: "not_found", code: "INVALID_FUNDING_REFERENCE" };
   }
 
+  let transaction;
+  try {
+    transaction = await getFundingTransaction(supabase, normalizedReference);
+  } catch {
+    return { outcome: "retryable", code: "FUNDING_STATUS_UNAVAILABLE" };
+  }
+
+  if (!transaction || transaction.type !== "fund") {
+    return { outcome: "not_found", code: "FUNDING_TRANSACTION_NOT_FOUND" };
+  }
+  if (expectedUserId && transaction.user_id !== expectedUserId) {
+    return { outcome: "not_found", code: "FUNDING_TRANSACTION_NOT_FOUND" };
+  }
+  if (transaction.status === "success") {
+    if (!textValue(transaction.provider_transaction_id) || transaction.balance_after === null || transaction.balance_after === undefined) {
+      return { outcome: "retryable", code: "SETTLEMENT_STATE_AMBIGUOUS" };
+    }
+    return {
+      outcome: "already_processed",
+      reference: transaction.reference,
+      amount: transaction.amount,
+      balanceAfter: transaction.balance_after,
+    };
+  }
+  if (transaction.status === "failed") {
+    return { outcome: "failed", reference: transaction.reference };
+  }
+  if (transaction.status !== "pending") {
+    return { outcome: "retryable", code: "FUNDING_STATUS_AMBIGUOUS" };
+  }
+
+  let verified;
+  try {
+    verified = await verifyReference(transaction.reference);
+  } catch {
+    return { outcome: "retryable", code: "PROVIDER_TEMPORARILY_UNAVAILABLE" };
+  }
+
+  const verifiedData = verified?.data;
+  if (lower(verified?.status) !== "success" || !verifiedData || typeof verifiedData !== "object") {
+    return { outcome: "retryable", code: "PROVIDER_RESPONSE_INVALID" };
+  }
+
+  const verifiedReference = textValue(verifiedData.tx_ref || verifiedData.reference);
+  if (verifiedReference !== transaction.reference) {
+    return { outcome: "retryable", code: "PROVIDER_REFERENCE_MISMATCH" };
+  }
+
+  const verifiedStatus = normalizeFlutterwaveChargeStatus(verifiedData.status);
+  if (["pending", "processing", "incomplete"].includes(verifiedStatus)) {
+    return { outcome: "pending", reference: transaction.reference };
+  }
+
+  const verifiedCurrency = textValue(verifiedData.currency).toUpperCase();
+  const storedCurrency = textValue(transaction.currency || "NGN").toUpperCase();
+  const verifiedAmount = Number(verifiedData.amount);
+  const providerTransactionId = textValue(
+    verifiedData.id || verifiedData.flw_ref || verifiedData.transaction_id,
+  );
+  const providerEmail = lower(
+    verifiedData.customer?.email || verifiedData.customer?.email_address,
+  );
+  const storedEmail = lower(transaction.user_email);
+  const verifiedDetailsMismatch =
+    verifiedCurrency !== "NGN" ||
+    storedCurrency !== "NGN" ||
+    !Number.isFinite(verifiedAmount) ||
+    verifiedAmount !== Number(transaction.amount) ||
+    !providerTransactionId ||
+    (providerEmail && storedEmail && providerEmail !== storedEmail);
+
+  if (verifiedDetailsMismatch) {
+    return { outcome: "retryable", code: "PROVIDER_DETAILS_MISMATCH" };
+  }
+  if (["failed", "cancelled", "canceled"].includes(verifiedStatus)) {
+    return { outcome: "failed", reference: transaction.reference };
+  }
+  if (verifiedStatus !== "successful") {
+    return { outcome: "retryable", code: "PROVIDER_STATUS_AMBIGUOUS" };
+  }
+
+  let settlement;
+  try {
+    settlement = await supabase.rpc("fulfill_wallet_funding_v2", {
+      p_reference: transaction.reference,
+      p_provider_transaction_id: providerTransactionId,
+      p_provider_status: verifiedStatus,
+      p_currency: verifiedCurrency,
+      p_amount: verifiedAmount,
+    });
+  } catch {
+    return { outcome: "retryable", code: "SETTLEMENT_TEMPORARILY_UNAVAILABLE" };
+  }
+  const { data, error } = settlement;
+
+  if (error) {
+    console.error("[wallet-fund-reconcile] atomic fulfilment failed:", transaction.reference);
+    return { outcome: "retryable", code: "SETTLEMENT_TEMPORARILY_UNAVAILABLE" };
+  }
+
+  const result = normalizeRpcResult(data);
+  if (!result || result.success !== true || result.reference !== transaction.reference) {
+    return { outcome: "retryable", code: "SETTLEMENT_RESPONSE_INVALID" };
+  }
+
+  return {
+    outcome: result.already_processed === true ? "already_processed" : "credited",
+    reference: result.reference,
+    amount: transaction.amount,
+    balanceAfter: result.balance_after ?? transaction.balance_after,
+  };
+}
+
+export async function verifyWalletFundingStatus({ req, res, supabase }) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ success: false, code: "METHOD_NOT_ALLOWED", error: "Method not allowed" });
+  }
   const actor = await requireVerifiedClerkUser(req, res);
   if (!actor) return;
 
@@ -511,302 +630,64 @@ export async function verifyWalletFundingStatus({
   try {
     body = asObject(await prepareJsonRequestBody(req));
   } catch {
-    return res.status(400).json({
-      success: false,
-      code: "INVALID_REQUEST",
-      error: "The verification request is invalid.",
-    });
+    return res.status(400).json({ success: false, code: "INVALID_REQUEST", error: "The verification request is invalid." });
   }
 
-  const reference = textValue(body.reference);
+  const result = await reconcileWalletFunding({
+    supabase,
+    reference: body.reference,
+    expectedUserId: actor.userId,
+  });
 
-  if (
-    !/^wallet_fund_[A-Za-z0-9_-]{6,180}$/.test(reference)
-  ) {
-    return res.status(400).json({
-      success: false,
-      code: "INVALID_FUNDING_REFERENCE",
-      error: "The funding reference is invalid.",
-    });
-  }
-
-  const { data: transaction, error: lookupError } =
-    await supabase
-      .from("wallet_transactions")
-      .select(
-        "reference,status,amount,balance_after,currency",
-      )
-      .eq("reference", reference)
-      .eq("user_id", actor.userId)
-      .eq("type", "fund")
-      .maybeSingle();
-
-  if (lookupError) {
-    console.error(
-      "[wallet-fund-verify] transaction lookup failed:",
-      lookupError.message,
-    );
-
-    return res.status(503).json({
-      success: false,
-      code: "FUNDING_STATUS_UNAVAILABLE",
-      error: "Funding status is temporarily unavailable.",
-    });
-  }
-
-  if (!transaction) {
-    return res.status(404).json({
-      success: false,
-      code: "FUNDING_TRANSACTION_NOT_FOUND",
-      error: "Funding transaction not found.",
-    });
-  }
-
-  if (transaction.status === "success") {
+  if (result.outcome === "credited" || result.outcome === "already_processed") {
     return res.status(200).json({
       success: true,
       pending: false,
+      credited: result.outcome === "credited",
+      alreadyProcessed: result.outcome === "already_processed",
       transaction: {
-        reference: transaction.reference,
-        status: transaction.status,
-        amount: transaction.amount,
-        balanceAfter: transaction.balance_after,
+        reference: result.reference,
+        status: "success",
+        amount: result.amount,
+        balanceAfter: result.balanceAfter,
       },
     });
   }
-
-  if (transaction.status === "failed") {
-    return res.status(409).json({
-      success: false,
-      pending: false,
-      code: "FUNDING_FAILED",
-      error: "This wallet funding attempt was not completed.",
-    });
+  if (result.outcome === "not_found") {
+    return res.status(404).json({ success: false, pending: false, code: result.code, error: "Funding transaction not found." });
   }
-
-  let verified;
-  try {
-    verified = await verifyFlutterwaveReference(reference);
-  } catch (error) {
-    console.error(
-      "[wallet-fund-verify] provider verification unavailable:",
-      error?.message || error,
-    );
-
-    return res.status(200).json({
-      success: false,
-      pending: true,
-      code: "FUNDING_VERIFICATION_PENDING",
-      error: "Payment confirmation is still pending.",
-    });
+  if (result.outcome === "failed") {
+    return res.status(409).json({ success: false, pending: false, code: "FUNDING_PROVIDER_FAILED", error: "The payment provider did not complete this funding attempt." });
   }
-
-  const verifiedData = verified?.data || {};
-  const verifiedReference =
-    verifiedData.tx_ref ||
-    verifiedData.reference ||
-    "";
-
-  const verifiedStatus = normalizeFlutterwaveChargeStatus(
-    verifiedData.status,
-  );
-  const verifiedCurrency =
-    textValue(verifiedData.currency).toUpperCase();
-  const verifiedAmount = Number(verifiedData.amount);
-
-  const verifiedMatches =
-    verified?.status === "success" &&
-    verifiedReference === reference &&
-    verifiedCurrency === "NGN" &&
-    Number.isFinite(verifiedAmount) &&
-    verifiedAmount === Number(transaction.amount);
-
-  if (!verifiedMatches) {
-    return res.status(200).json({
-      success: false,
-      pending: true,
-      code: "FUNDING_MANUAL_REVIEW",
-      error: "Payment confirmation requires review.",
-    });
-  }
-
-  if (verifiedStatus === "successful") {
-    return res.status(200).json({
-      success: false,
-      pending: true,
-      code: "FUNDING_AWAITING_WEBHOOK",
-      error: "Payment was received and wallet crediting is still processing.",
-    });
-  }
-
-  if (
-    verifiedStatus === "failed" ||
-    verifiedStatus === "cancelled"
-  ) {
-    return res.status(200).json({
-      success: false,
-      pending: false,
-      code: "FUNDING_PROVIDER_FAILED",
-      error: "The payment provider did not complete this funding attempt.",
-    });
-  }
-
   return res.status(200).json({
     success: false,
     pending: true,
-    code: "FUNDING_VERIFICATION_PENDING",
-    error: "Payment confirmation is still pending.",
+    retryable: result.outcome === "retryable",
+    code: result.code || "FUNDING_VERIFICATION_PENDING",
+    error: "Payment confirmation is still processing.",
   });
 }
+
 export async function processWalletFundingWebhook({
   supabase,
   event,
   verifyReference = verifyFlutterwaveReference,
 }) {
   const eventName = getFlutterwaveEventName(event);
-
   const eventData = event?.data || {};
-  const reference =
-    eventData.tx_ref ||
-    eventData.reference ||
-    null;
+  const reference = textValue(eventData.tx_ref || eventData.reference);
+  const metadata = eventData.meta || eventData.metadata || event?.meta || {};
 
-  const metadata =
-    eventData.meta ||
-    eventData.metadata ||
-    event?.meta ||
-    {};
-
-  const storedTransaction =
-    await getFundingTransaction(supabase, reference);
-
-  const markedAsFunding =
-    fundingMarked(metadata, reference);
-
-  if (!storedTransaction) {
-    if (markedAsFunding) {
-      console.error(
-        "[wallet-fund-webhook] funding reference has no stored transaction:",
-        reference,
-      );
-
-      return {
-        handled: true,
-        status: 200,
-        body: {
-          received: true,
-          manualReview: true,
-          credited: false,
-        },
-      };
-    }
-
-    return {
-      handled: false,
-      status: 200,
-      body: {
-        received: true,
-        ignored: true,
-      },
-    };
+  if (eventName !== "charge.completed") {
+    return { handled: false, status: 200, body: { received: true, ignored: true } };
+  }
+  if (!fundingMarked(metadata, reference)) {
+    return { handled: false, status: 200, body: { received: true, ignored: true } };
   }
 
-  if (
-    eventName !== "charge.completed" ||
-    normalizeFlutterwaveChargeStatus(eventData.status) !==
-      "successful"
-  ) {
-    return {
-      handled: true,
-      status: 200,
-      body: {
-        received: true,
-        credited: false,
-      },
-    };
-  }
-
-  const verified = await verifyReference(
-    storedTransaction.reference,
-  );
-
-  const verifiedData = verified?.data || {};
-  const verifiedReference =
-    verifiedData.tx_ref ||
-    verifiedData.reference;
-
-  const verifiedStatus = normalizeFlutterwaveChargeStatus(
-    verifiedData.status,
-  );
-  const verifiedCurrency =
-    textValue(verifiedData.currency).toUpperCase();
-  const verifiedAmount = Number(verifiedData.amount);
-  const providerTransactionId = textValue(
-    verifiedData.id ||
-    verifiedData.flw_ref ||
-    verifiedData.transaction_id,
-  );
-
-  const eventAmount = Number(eventData.amount);
-
-  if (
-    verified?.status !== "success" ||
-    verifiedStatus !== "successful" ||
-    verifiedReference !== storedTransaction.reference ||
-    verifiedCurrency !== "NGN" ||
-    !Number.isFinite(verifiedAmount) ||
-    verifiedAmount !== Number(storedTransaction.amount) ||
-    (
-      Number.isFinite(eventAmount) &&
-      eventAmount !== verifiedAmount
-    ) ||
-    !providerTransactionId
-  ) {
-    console.error(
-      "[wallet-fund-webhook] provider verification mismatch:",
-      storedTransaction.reference,
-    );
-
-    return {
-      handled: true,
-      status: 200,
-      body: {
-        received: true,
-        manualReview: true,
-        credited: false,
-      },
-    };
-  }
-
-  const { data, error } = await supabase.rpc(
-    "fulfill_wallet_funding_v2",
-    {
-      p_reference: storedTransaction.reference,
-      p_provider_transaction_id: providerTransactionId,
-      p_provider_status: verifiedStatus,
-      p_currency: verifiedCurrency,
-      p_amount: verifiedAmount,
-    },
-  );
-
-  if (error) {
-    console.error(
-      "[wallet-fund-webhook] atomic fulfilment failed:",
-      error.message,
-    );
-    throw new Error("Atomic wallet funding fulfilment failed");
-  }
-
-  const result = normalizeRpcResult(data);
-
-  if (
-    !result ||
-    result.success !== true ||
-    !result.reference
-  ) {
-    throw new Error(
-      "Atomic wallet funding returned an invalid result",
-    );
+  const result = await reconcileWalletFunding({ supabase, reference, verifyReference });
+  if (result.outcome === "not_found") {
+    console.error("[wallet-fund-webhook] stored funding reference not found:", reference);
   }
 
   return {
@@ -814,10 +695,12 @@ export async function processWalletFundingWebhook({
     status: 200,
     body: {
       received: true,
-      credited: result.already_processed !== true,
-      alreadyProcessed:
-        result.already_processed === true,
-      reference: result.reference,
+      credited: result.outcome === "credited",
+      alreadyProcessed: result.outcome === "already_processed",
+      pending: result.outcome === "pending" || result.outcome === "retryable",
+      failed: result.outcome === "failed",
+      manualReview: result.outcome === "retryable" || result.outcome === "not_found",
+      reference: result.reference || reference || undefined,
     },
   };
 }

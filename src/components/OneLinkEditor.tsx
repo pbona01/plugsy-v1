@@ -21,6 +21,7 @@ import {
   Save,
   Settings,
   Share2,
+  Smartphone,
   Trash2,
   User,
 } from "lucide-react";
@@ -34,6 +35,7 @@ import {
   YAxis,
 } from "recharts";
 import toast from "react-hot-toast";
+import { AnimatePresence, motion } from "motion/react";
 import OneLinkPublicView from "./OneLinkPublicView";
 import {
   OneLinkAnalytics,
@@ -147,6 +149,9 @@ export default function OneLinkEditor({
   );
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const [showMobilePreview, setShowMobilePreview] = useState(false);
+  const mobilePreviewCloseRef = useRef<HTMLButtonElement>(null);
+  const mobilePreviewDialogRef = useRef<HTMLDivElement>(null);
   const [analyticsState, setAnalyticsState] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
@@ -178,6 +183,38 @@ export default function OneLinkEditor({
         warnBeforeUnload,
       );
   }, [isDirty]);
+
+  useEffect(() => {
+    if (!showMobilePreview) return;
+
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowMobilePreview(false);
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        mobilePreviewDialogRef.current?.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        ) || [],
+      ) as HTMLElement[];
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", closeOnEscape);
+    mobilePreviewCloseRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      previouslyFocused?.focus();
+    };
+  }, [showMobilePreview]);
 
   const previewProfile: OneLinkProfile = useMemo(
     () => ({
@@ -437,7 +474,7 @@ export default function OneLinkEditor({
           })}
         </nav>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 pb-28 lg:pb-5">
           {activeSection === "page" && (
             <div className="space-y-5">
               <SectionHeading
@@ -1001,9 +1038,17 @@ export default function OneLinkEditor({
         <div className="sticky bottom-0 grid grid-cols-2 gap-3 border-t border-white/10 bg-[#0d0d11]/95 p-4 backdrop-blur">
           <button
             type="button"
+            onClick={() => setShowMobilePreview(true)}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] focus:outline-none focus-visible:ring-2 focus-visible:ring-white lg:hidden"
+          >
+            <Smartphone aria-hidden="true" size={15} />
+            Preview
+          </button>
+          <button
+            type="button"
             onClick={viewLive}
             disabled={saving}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] disabled:opacity-50"
+            className="hidden items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] disabled:opacity-50 lg:inline-flex"
           >
             <Eye aria-hidden="true" size={15} />
             View Live
@@ -1034,17 +1079,9 @@ export default function OneLinkEditor({
 
       <section
         aria-label="One Link live preview"
-        className="order-1 flex h-[clamp(120px,40dvh,380px)] min-h-0 shrink-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.1),transparent_55%)] p-3 [@media(max-height:620px)]:h-[clamp(104px,28dvh,220px)] lg:order-2 lg:h-auto lg:flex-1 lg:items-center lg:justify-center lg:overflow-auto lg:p-8"
+        className="hidden flex-1 items-center justify-center overflow-auto bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.1),transparent_55%)] p-8 lg:flex"
       >
-        <div className="mb-2 flex shrink-0 items-center justify-between px-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
-          <span>Live preview</span>
-          {isDirty && (
-            <span className="rounded-full bg-amber-400/10 px-2 py-1 text-[9px] tracking-normal text-amber-300">
-              Unsaved
-            </span>
-          )}
-        </div>
-        <div className="min-h-0 w-full max-w-[390px] flex-1 self-center overflow-hidden rounded-[2rem] border-[6px] border-black bg-black shadow-2xl lg:h-[720px] lg:w-[390px] lg:flex-none lg:rounded-[3rem] lg:border-[9px]">
+        <div className="h-[720px] w-[390px] overflow-hidden rounded-[3rem] border-[9px] border-black bg-black shadow-2xl">
           <div className="h-full overflow-y-auto">
             <OneLinkPublicView
               profile={previewProfile}
@@ -1053,6 +1090,49 @@ export default function OneLinkEditor({
           </div>
         </div>
       </section>
+
+      <AnimatePresence>
+      {showMobilePreview && (
+        <motion.div
+          className="fixed inset-0 z-[100] flex items-end justify-center bg-black/85 p-3 lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="One Link preview"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowMobilePreview(false);
+            }
+          }}
+        >
+          <motion.div
+            ref={mobilePreviewDialogRef}
+            className="flex h-[min(88dvh,800px)] max-h-[calc(100dvh-1.5rem)] w-full max-w-sm flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-black shadow-2xl"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#111116] px-4 py-3">
+              <span className="text-sm font-bold">Live Preview</span>
+              <button
+                ref={mobilePreviewCloseRef}
+                type="button"
+                onClick={() => setShowMobilePreview(false)}
+                className="rounded-lg px-3 py-1.5 text-xs font-bold text-white/60 hover:bg-white/5 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                Close
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+              <OneLinkPublicView profile={previewProfile} preview />
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+      </AnimatePresence>
     </div>
   );
 }

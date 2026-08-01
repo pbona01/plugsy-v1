@@ -48,6 +48,8 @@ import { sendTelegramAlert } from "../lib/telegram";
 import { google } from "googleapis";
 import multer from "multer";
 import { PassThrough } from "stream";
+import { requireVerifiedClerkUser } from "../../api/_clerkAuth.js";
+import { syncVerifiedClerkProfile } from "../../api/_profileSync.js";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -768,107 +770,20 @@ async function startServer() {
     }
   });
 
-  // Sync User to Supabase (bypasses client JWT issues)
-  app.post("/api/sync-user", ClerkExpressWithAuth(), async (req: any, res) => {
+  // Sync the verified Clerk identity to its Supabase profile.
+  app.post("/api/sync-user", async (req: any, res) => {
     try {
-      if (!req.auth || !req.auth.userId)
-        return res.status(401).json({ error: "Unauthorized" });
-
-      const { user, role, referredBy } = req.body;
-      if (!user?.id)
-        return res.status(400).json({ error: "Missing user data" });
-
-      const clerkId = user.id;
-      const email = user.emailAddresses?.[0]?.emailAddress || "";
-
-      const payload: any = {
-        clerk_id: clerkId,
-        email: email,
-        full_name: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
-        role: role,
-        username: (user.username || email.split("@")[0] || `user_${clerkId.slice(-6)}`).toLowerCase().replace(/[^a-z0-9_]/g, ""),
-        updated_at: new Date().toISOString(),
-      };
-
-      let query = `clerk_id.eq."${clerkId}"`;
-      if (email) {
-        query += `,email.eq."${email}"`;
-      }
-
-      const { data: existingProfiles, error: fetchErr } = await supabase
-        .from("profiles")
-        .select("id, referred_by, referral_code, purchase_code")
-        .or(query)
-        .limit(1);
-
-      if (fetchErr) {
-        console.warn("Profile fetch error:", fetchErr.message);
-      }
-
-      if (existingProfiles && existingProfiles.length > 0) {
-        if (
-          referredBy &&
-          !existingProfiles[0].referred_by &&
-          referredBy !== clerkId &&
-          referredBy !== payload.referral_code
-        ) {
-          payload.referred_by = referredBy;
-        }
-        // If the existing profile does not have a purchase_code, generate a 6-character random code for them
-        if (!existingProfiles[0].purchase_code) {
-          const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-          let code = "";
-          for (let i = 0; i < 6; i++) {
-            code += chars.charAt(Math.floor(Math.random() * chars.length));
-          }
-          payload.purchase_code = code;
-        }
-        const { error: updateError } = await supabase
-          .from("profiles")
-          .update(payload)
-          .eq("id", existingProfiles[0].id);
-        if (updateError) throw updateError;
-
-        if (payload.full_name) {
-          await supabase
-            .from("chat_members")
-            .update({ user_name: payload.full_name })
-            .eq("user_id", clerkId);
-        }
-      } else {
-        if (
-          referredBy &&
-          referredBy !== clerkId &&
-          referredBy !== payload.referral_code
-        ) {
-          payload.referred_by = referredBy;
-        }
-        const { error: insertError } = await supabase
-          .from("profiles")
-          .insert(payload);
-        if (insertError) throw insertError;
-
-        if (payload.full_name) {
-          await supabase
-            .from("chat_members")
-            .update({ user_name: payload.full_name })
-            .eq("user_id", clerkId);
-        }
-
-        // Trigger Push Notification to Admins for new signup
-        try {
-          await sendLocalPushToAdmins(
-            "👋 New User Signup",
-            (email || clerkId) + " just joined Plugsy!",
-            "/admin/users"
-          );
-        } catch (e) {}
-      }
-
-      res.json({ success: true, role });
+      const actor = await requireVerifiedClerkUser(req, res);
+      if (!actor) return;
+      const result = await syncVerifiedClerkProfile({ supabase, actor });
+      return res.status(result.status).json(result);
     } catch (error: any) {
-      console.error(`User Sync Error:`, error);
-      res.status(500).json({ error: error.message });
+      console.error("[profile-sync] synchronization failed:", error?.message || error);
+      res.status(503).json({
+        success: false,
+        code: "PROFILE_SYNC_UNAVAILABLE",
+        error: "Account synchronization is temporarily unavailable.",
+      });
     }
   });
 

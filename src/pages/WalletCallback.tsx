@@ -21,6 +21,7 @@ export const WalletCallback = () => {
   const reference =
     searchParams.get('tx_ref') ||
     searchParams.get('reference');
+  const providerTransactionId = searchParams.get('transaction_id');
 
   useEffect(() => {
     if (!reference) {
@@ -43,7 +44,11 @@ export const WalletCallback = () => {
         return;
       }
 
-      for (let attempt = 0; attempt < 5; attempt += 1) {
+      const backoff = [0, 1500, 3000, 5000, 8000];
+      for (let attempt = 0; attempt < backoff.length; attempt += 1) {
+        if (backoff[attempt] > 0) {
+          await new Promise((resolve) => setTimeout(resolve, backoff[attempt]));
+        }
         const response = await fetch(
           '/api/wallet?action=verify',
           {
@@ -52,34 +57,27 @@ export const WalletCallback = () => {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify({ reference }),
+            body: JSON.stringify({ reference, transactionId: providerTransactionId }),
           },
         );
 
-        const data = await response.json();
+        const data = await response.json().catch(() => null);
 
-        if (data.success && data.pending === false) {
+        if (response.ok && data?.success && data.pending === false) {
           setStatus('success');
           return;
         }
 
-        if (data.pending === false) {
+        if (data?.pending === false) {
           setStatus('failed');
           return;
         }
-
-        await new Promise((resolve) =>
-          setTimeout(resolve, 2000),
-        );
       }
 
       setStatus('pending');
-      toast.success(
-        'Payment received. Wallet crediting may still be processing.',
-      );
     } catch (error) {
       console.error('Verify error:', error);
-      setStatus('failed');
+      setStatus('pending');
     }
   };
 
@@ -120,16 +118,23 @@ export const WalletCallback = () => {
               Credit Processing
             </h2>
             <p className="text-brand-text-secondary mb-8">
-              Your payment may still be processing. Your wallet will only
-              show the funds after secure confirmation.
+              Confirmation is still processing. Your balance has not been changed yet.
             </p>
 
-            <button
-              onClick={() => navigate('/wallet')}
-              className="w-full bg-brand-accent hover:bg-opacity-90 text-white font-bold py-3 px-6 rounded-xl transition-all"
-            >
-              Check Wallet
-            </button>
+            <div className="space-y-3 w-full">
+              <button
+                onClick={() => void verifyTransaction()}
+                className="w-full bg-brand-accent hover:bg-opacity-90 active:scale-[0.98] text-white font-bold py-3 px-6 rounded-xl transition-all"
+              >
+                Retry verification
+              </button>
+              <button
+                onClick={() => navigate('/wallet')}
+                className="w-full bg-brand-surface border border-brand-border hover:bg-white/5 active:scale-[0.98] text-white font-bold py-3 px-6 rounded-xl transition-all"
+              >
+                Back to Wallet
+              </button>
+            </div>
           </div>
         ) : (
           <div className="flex flex-col items-center">

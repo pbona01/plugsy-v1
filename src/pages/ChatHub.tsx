@@ -17,6 +17,7 @@ import toast from "react-hot-toast";
 import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import plugsyLogo from "../assets/images/plugsy_icon.svg";
 import { getCanonicalOneLinkUrl } from "../utils/onelink";
+import { syncClerkUserToSupabase } from "../lib/authUtils";
 import {
   parseOneLinkProfileBio,
   serializeOneLinkProfileBio,
@@ -53,7 +54,7 @@ interface ChatHubProps {
 }
 
 export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
-  const { userId, signOut } = useAuth();
+  const { userId, signOut, getToken } = useAuth();
   const { user } = useUser();
   const navigate = useNavigate();
   const { isUserOnline } = useOnlinePresence();
@@ -98,6 +99,9 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
 
   // Edit Profile State
   const { profile: myProfile, loading: profileLoading, mutate: mutateProfile } = useProfile(userId || undefined);
+  const [accountSyncState, setAccountSyncState] = useState<"syncing" | "synced" | "needed">("syncing");
+  const accountSyncAttemptedRef = useRef("");
+  const [profileDraftEdited, setProfileDraftEdited] = useState(false);
   const [profileUsername, setProfileUsername] = useState("");
   const [profileBio, setProfileBio] = useState("");
   const [profileFullName, setProfileFullName] = useState("");
@@ -126,7 +130,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
   const [loadingSuggested, setLoadingSuggested] = useState(false);
 
   useEffect(() => {
-    if (myProfile) {
+    if (myProfile && !profileDraftEdited) {
       setProfileUsername(myProfile.username || user?.username || "");
       setProfileBio(
         parseOneLinkProfileBio(myProfile.bio).biography,
@@ -134,7 +138,41 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
       setProfileFullName(myProfile.full_name || "");
       setProfilePic(myProfile.profile_pic_url || myProfile.image_url || "");
     }
-  }, [myProfile, user]);
+  }, [myProfile, user, profileDraftEdited]);
+
+  const confirmAccountSync = async () => {
+    if (!user?.id) return;
+    setAccountSyncState("syncing");
+    try {
+      await syncClerkUserToSupabase(user, getToken);
+      const confirmedProfile = await mutateProfile();
+      setAccountSyncState(
+        confirmedProfile?.clerk_id === user.id ? "synced" : "needed",
+      );
+    } catch {
+      setAccountSyncState("needed");
+    }
+  };
+
+  useEffect(() => {
+    if (!user?.id || profileLoading) {
+      setAccountSyncState("syncing");
+      return;
+    }
+
+    if (myProfile?.clerk_id === user.id) {
+      setAccountSyncState("synced");
+      return;
+    }
+
+    if (accountSyncAttemptedRef.current !== user.id) {
+      accountSyncAttemptedRef.current = user.id;
+      void confirmAccountSync();
+      return;
+    }
+
+    setAccountSyncState("needed");
+  }, [user?.id, profileLoading, myProfile?.clerk_id]);
 
   useEffect(() => {
     if (searchOpen && userId) {
@@ -206,6 +244,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
         .eq("clerk_id", userId);
 
       if (error) throw error;
+      setProfileDraftEdited(false);
       await mutateProfile();
       toast.success("Profile updated successfully!", { id: saveToast });
     } catch (err: any) {
@@ -989,9 +1028,30 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">@{myProfile?.username || "unclaimed"}</p>
                     </div>
                   </div>
-                  <span className="text-[10px] text-blue-500 bg-blue-500/10 px-2 py-1 rounded-xl font-extrabold uppercase tracking-wider border border-blue-500/10 shrink-0">
-                    Account Synced
-                  </span>
+                  <div className="flex shrink-0 flex-col items-end gap-1" aria-live="polite">
+                    <span className={`text-[10px] px-2 py-1 rounded-xl font-extrabold uppercase tracking-wider border ${
+                      accountSyncState === "synced"
+                        ? "text-blue-500 bg-blue-500/10 border-blue-500/10"
+                        : accountSyncState === "syncing"
+                          ? "text-amber-500 bg-amber-500/10 border-amber-500/10"
+                          : "text-red-500 bg-red-500/10 border-red-500/10"
+                    }`}>
+                      {accountSyncState === "synced"
+                        ? "Account Synced"
+                        : accountSyncState === "syncing"
+                          ? "Syncing Account"
+                          : "Sync Needed"}
+                    </span>
+                    {accountSyncState === "needed" && (
+                      <button
+                        type="button"
+                        onClick={() => void confirmAccountSync()}
+                        className="text-[10px] font-bold text-red-500 underline underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Profile Customization Card */}
@@ -1006,7 +1066,10 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
                       <input
                         type="text"
                         value={profileFullName}
-                        onChange={(e) => setProfileFullName(e.target.value)}
+                        onChange={(e) => {
+                          setProfileDraftEdited(true);
+                          setProfileFullName(e.target.value);
+                        }}
                         className="w-full px-4 py-2.5 text-xs rounded-2xl border border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-[#141416]/50 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-slate-300 dark:focus:border-white/10"
                         placeholder="John Doe"
                       />
@@ -1021,7 +1084,10 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
                         <input
                           type="text"
                           value={profileUsername}
-                          onChange={(e) => setProfileUsername(e.target.value)}
+                          onChange={(e) => {
+                            setProfileDraftEdited(true);
+                            setProfileUsername(e.target.value);
+                          }}
                           className="w-full pl-8 pr-4 py-2.5 text-xs rounded-2xl border border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-[#141416]/50 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-slate-300 dark:focus:border-white/10"
                           placeholder="your_tag"
                         />
@@ -1035,7 +1101,10 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
                       <textarea
                         rows={2}
                         value={profileBio}
-                        onChange={(e) => setProfileBio(e.target.value)}
+                        onChange={(e) => {
+                          setProfileDraftEdited(true);
+                          setProfileBio(e.target.value);
+                        }}
                         className="w-full px-4 py-2.5 text-xs rounded-2xl border border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-[#141416]/50 text-slate-800 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:border-slate-300 dark:focus:border-white/10"
                         placeholder="Share your story or active status..."
                       />

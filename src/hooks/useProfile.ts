@@ -1,16 +1,21 @@
 import { useEffect, useState, useCallback } from 'react';
-import { User } from '../types';
 import { supabase } from '../lib/supabase';
 
+type ProfileRecord = Record<string, any>;
+
 export function useProfile(userId: string | undefined) {
-  const [profile, setProfile] = useState<User | null>(null);
+  const [profile, setProfile] = useState<ProfileRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const fetchProfile = useCallback(async () => {
     if (!userId) {
+      setProfile(null);
       setLoading(false);
-      return;
+      setError(false);
+      return null;
     }
+    setError(false);
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -21,7 +26,8 @@ export function useProfile(userId: string | undefined) {
       // HTML Protection
       if (typeof data === 'string' && (data as string).includes('<!doctype')) {
          setLoading(false);
-         return;
+         setError(true);
+         return null;
       }
 
       if (error) {
@@ -29,10 +35,15 @@ export function useProfile(userId: string | undefined) {
          throw error;
       }
       if (data) {
-        setProfile(data as unknown as User);
+        setProfile(data as ProfileRecord);
+        return data as ProfileRecord;
       }
+      setProfile(null);
+      return null;
     } catch (err) {
       console.error("Profile fetch error:", err);
+      setError(true);
+      return null;
     } finally {
       setLoading(false);
     }
@@ -43,6 +54,6 @@ export function useProfile(userId: string | undefined) {
     fetchProfile();
   }, [userId, fetchProfile]);
 
-  return { profile, loading, mutate: fetchProfile };
+  return { profile, loading, error, mutate: fetchProfile };
 }
 
