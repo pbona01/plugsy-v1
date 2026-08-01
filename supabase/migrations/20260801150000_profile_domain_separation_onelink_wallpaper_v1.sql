@@ -228,8 +228,9 @@ begin
         '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]',
         '',
         'g'
-      )
-      from 1 for 500
+      ),
+      1,
+      500
     );
 
     update public.profiles
@@ -253,8 +254,9 @@ begin
             '[\x00-\x1F\x7F]',
             '',
             'g'
-          )
-          from 1 for 80
+          ),
+          1,
+          80
         )
         else one_link_display_name
       end,
