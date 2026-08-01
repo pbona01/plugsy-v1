@@ -287,7 +287,6 @@ async function destroyCloudinaryAsset(cloudinary, publicId) {
   const body = new URLSearchParams({
     ...parameters,
     api_key: cloudinary.apiKey,
-    signature_algorithm: "sha256",
     signature: signCloudinaryParameters(parameters, cloudinary.apiSecret),
   });
   const response = await fetch(
@@ -624,7 +623,6 @@ async function handleUploadSignature(req, res) {
     uploadPreset: cloudinary.uploadPreset,
     timestamp,
     publicId,
-    signatureAlgorithm: "sha256",
     signature: signCloudinaryParameters(parameters, cloudinary.apiSecret),
   });
 }

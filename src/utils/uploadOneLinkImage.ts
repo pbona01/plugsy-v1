@@ -19,6 +19,64 @@ const ALLOWED_IMAGE_TYPES = new Set([
 ]);
 const MAX_ORIGINAL_BYTES = 10 * 1024 * 1024;
 
+const parseCloudinaryResponse = (value: unknown): unknown => {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const getCloudinaryUploadErrorMessage = (value: unknown) => {
+  const data = parseCloudinaryResponse(value);
+  let providerMessage = "";
+  if (data && typeof data === "object" && "error" in data) {
+    const error = (data as { error?: unknown }).error;
+    if (typeof error === "string") {
+      providerMessage = error;
+    } else if (error && typeof error === "object" && "message" in error) {
+      const message = (error as { message?: unknown }).message;
+      if (typeof message === "string") providerMessage = message;
+    }
+  }
+
+  const normalized = providerMessage.toLowerCase();
+  if (normalized.includes("signature")) {
+    return "Secure image upload authentication failed.";
+  }
+  if (normalized.includes("upload preset") || normalized.includes("preset")) {
+    return "The One Link upload preset is unavailable.";
+  }
+  if (
+    normalized.includes("api key") ||
+    normalized.includes("api_key") ||
+    normalized.includes("cloud name") ||
+    normalized.includes("cloud_name") ||
+    normalized.includes("unknown cloud") ||
+    normalized.includes("invalid cloud")
+  ) {
+    return "The One Link media configuration is invalid.";
+  }
+  if (
+    normalized.includes("file size") ||
+    normalized.includes("too large") ||
+    normalized.includes("maximum file") ||
+    normalized.includes("max file")
+  ) {
+    return "Choose an image no larger than 10 MB.";
+  }
+  if (
+    normalized.includes("format") ||
+    normalized.includes("unsupported") ||
+    normalized.includes("invalid image") ||
+    normalized.includes("image file")
+  ) {
+    return "Choose a valid JPEG, PNG, WebP, or AVIF image.";
+  }
+  return "Image upload failed.";
+};
+
 const hasExpectedSignature = async (file: File) => {
   const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
   if (file.type === "image/jpeg") {
@@ -140,9 +198,11 @@ const uploadWithProgress = (
     };
     request.onerror = () => reject(new Error("Image upload failed."));
     request.onload = () => {
-      const data = request.response;
+      const data = parseCloudinaryResponse(request.response) as {
+        error?: unknown;
+      } | null;
       if (request.status < 200 || request.status >= 300 || data?.error) {
-        reject(new Error("Image upload failed."));
+        reject(new Error(getCloudinaryUploadErrorMessage(data)));
         return;
       }
       resolve(data);
@@ -206,7 +266,6 @@ export async function uploadOneLinkImage({
   form.append("public_id", signatureData.publicId);
   form.append("upload_preset", signatureData.uploadPreset);
   form.append("overwrite", "false");
-  form.append("signature_algorithm", signatureData.signatureAlgorithm);
   form.append("signature", signatureData.signature);
 
   const result = await uploadWithProgress(
