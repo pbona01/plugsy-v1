@@ -40,6 +40,8 @@ import { AnimatePresence, motion } from "motion/react";
 import OneLinkPublicView from "./OneLinkPublicView";
 import {
   OneLinkAnalytics,
+  OneLinkMutationAction,
+  OneLinkOwnerState,
   OneLinkProfile,
   OneLinkProject,
   OneLinkSettings,
@@ -51,6 +53,12 @@ import {
   getCanonicalOneLinkUrl,
   getOneLinkPath,
 } from "../utils/onelink";
+import {
+  getOneLinkPlatform,
+  getOneLinkPlatformLabel,
+  ONE_LINK_PLATFORMS,
+  OneLinkPlatformId,
+} from "../utils/onelinkPlatforms";
 import { cn } from "../lib/utils";
 import {
   getOneLinkImageDeliveryUrl,
@@ -76,7 +84,15 @@ interface OneLinkDraft {
 
 interface OneLinkEditorProps {
   initialProfile: OneLinkProfile;
-  onSave: (draft: OneLinkDraft) => Promise<OneLinkProfile>;
+  revision: string | null;
+  published: boolean;
+  liveConfirmed: boolean;
+  onMutate: (
+    action: OneLinkMutationAction,
+    draft?: OneLinkDraft,
+  ) => Promise<OneLinkOwnerState>;
+  onReload: () => Promise<void>;
+  verifyPublicPage: (username: string) => Promise<boolean>;
   loadAnalytics: () => Promise<OneLinkAnalytics>;
   onUploadImage: (
     file: File,
@@ -102,20 +118,6 @@ const SECTIONS: Array<{
   { id: "links", label: "Links & Socials", icon: Link2 },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "settings", label: "Settings", icon: Settings },
-];
-
-const SOCIAL_PLATFORM_SUGGESTIONS = [
-  "website",
-  "instagram",
-  "x",
-  "linkedin",
-  "youtube",
-  "github",
-  "tiktok",
-  "facebook",
-  "discord",
-  "spotify",
-  "telegram",
 ];
 
 const toDraft = (profile: OneLinkProfile): OneLinkDraft => ({
@@ -156,7 +158,12 @@ const safeErrorMessage = (error: unknown) =>
 
 export default function OneLinkEditor({
   initialProfile,
-  onSave,
+  revision,
+  published,
+  liveConfirmed,
+  onMutate,
+  onReload,
+  verifyPublicPage,
   loadAnalytics,
   onUploadImage,
 }: OneLinkEditorProps) {
@@ -171,6 +178,16 @@ export default function OneLinkEditor({
   );
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const [mutationAction, setMutationAction] =
+    useState<OneLinkMutationAction | null>(null);
+  const [revisionConflict, setRevisionConflict] = useState(false);
+  const [checkingPublication, setCheckingPublication] = useState(false);
+  const [publicationFailed, setPublicationFailed] = useState(false);
+  const [socialPickerOpen, setSocialPickerOpen] = useState(false);
+  const addSocialButtonRef = useRef<HTMLButtonElement>(null);
+  const socialPickerRef = useRef<HTMLDivElement>(null);
+  const socialOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const socialUrlRefs = useRef(new Map<string, HTMLInputElement>());
   const [showMobilePreview, setShowMobilePreview] = useState(false);
   const mobilePreviewCloseRef = useRef<HTMLButtonElement>(null);
   const mobilePreviewDialogRef = useRef<HTMLDivElement>(null);
@@ -187,7 +204,11 @@ export default function OneLinkEditor({
     const next = toDraft(initialProfile);
     setDraft(next);
     setSavedSnapshot(JSON.stringify(next));
-  }, [initialProfile]);
+    setRevisionConflict(false);
+    setPublicationFailed(
+      initialProfile.settings.published && !liveConfirmed,
+    );
+  }, [initialProfile, liveConfirmed]);
 
   const currentSnapshot = useMemo(
     () => JSON.stringify(draft),
@@ -208,6 +229,38 @@ export default function OneLinkEditor({
         warnBeforeUnload,
       );
   }, [isDirty]);
+
+  useEffect(() => {
+    if (!socialPickerOpen) return;
+    const closePicker = (returnFocus = true) => {
+      setSocialPickerOpen(false);
+      if (returnFocus) {
+        window.requestAnimationFrame(() => addSocialButtonRef.current?.focus());
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        !socialPickerRef.current?.contains(target) &&
+        !addSocialButtonRef.current?.contains(target)
+      ) {
+        closePicker();
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePicker();
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.requestAnimationFrame(() => socialOptionRefs.current[0]?.focus());
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [socialPickerOpen]);
 
   useEffect(() => {
     if (!showMobilePreview) return;
@@ -361,32 +414,95 @@ export default function OneLinkEditor({
     await copyPublicUrl();
   };
 
-  const saveChanges = async () => {
+  const applyConfirmedOwner = (owner: OneLinkOwnerState) => {
+    const savedDraft = toDraft(owner.profile);
+    setDraft(savedDraft);
+    setSavedSnapshot(JSON.stringify(savedDraft));
+    setRevisionConflict(false);
+  };
+
+  const handleMutationError = (error: unknown) => {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ONELINK_REVISION_CONFLICT"
+    ) {
+      setRevisionConflict(true);
+    }
+    toast.error(safeErrorMessage(error));
+  };
+
+  const runDraftMutation = async (
+    action: "save" | "publish",
+  ) => {
     if (savingRef.current) return null;
     savingRef.current = true;
     setSaving(true);
+    setMutationAction(action);
     try {
-      const validated = validateOneLinkSavePayload(draft);
-      const saved = await onSave(validated as OneLinkDraft);
-      const savedDraft = toDraft(saved);
-      setDraft(savedDraft);
-      setSavedSnapshot(JSON.stringify(savedDraft));
-      toast.success(
-        saved.settings.published
-          ? "One Link saved and published."
-          : "One Link changes saved.",
-      );
+      const validated = validateOneLinkSavePayload({
+        ...draft,
+        expectedRevision: revision,
+      });
+      const saved = await onMutate(action, validated as OneLinkDraft);
+      if (action === "publish") {
+        if (!saved.published || !saved.liveConfirmed) {
+          throw new Error("Publication could not be confirmed.");
+        }
+        setPublicationFailed(false);
+        toast.success("Your One Link is live.");
+      } else {
+        toast.success("One Link changes saved.");
+      }
+      applyConfirmedOwner(saved);
       return saved;
     } catch (error) {
-      toast.error(safeErrorMessage(error));
+      if (action === "publish") setPublicationFailed(true);
+      handleMutationError(error);
       return null;
     } finally {
       savingRef.current = false;
       setSaving(false);
+      setMutationAction(null);
+    }
+  };
+
+  const saveChanges = () => runDraftMutation("save");
+  const publishOneLink = () => runDraftMutation("publish");
+
+  const unpublishOneLink = async () => {
+    if (
+      isDirty ||
+      savingRef.current ||
+      !window.confirm(
+        "Unpublish your One Link? Visitors will no longer be able to open the public page.",
+      )
+    ) {
+      return;
+    }
+    savingRef.current = true;
+    setSaving(true);
+    setMutationAction("unpublish");
+    try {
+      const result = await onMutate("unpublish");
+      if (result.published || result.liveConfirmed) {
+        throw new Error("Unpublishing could not be confirmed.");
+      }
+      applyConfirmedOwner(result);
+      setPublicationFailed(false);
+      toast.success("Your One Link is now private.");
+    } catch (error) {
+      handleMutationError(error);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+      setMutationAction(null);
     }
   };
 
   const viewLive = async () => {
+    if (!published || !liveConfirmed || !initialProfile.username) return;
     let liveWindow: Window | null = null;
     try {
       liveWindow = window.open("about:blank", "_blank");
@@ -395,20 +511,21 @@ export default function OneLinkEditor({
       liveWindow = null;
     }
 
-    const saved = await saveChanges();
-    if (!saved?.username) {
-      if (liveWindow && !liveWindow.closed) liveWindow.close();
-      return;
-    }
-
     if (!liveWindow || liveWindow.closed) {
-      toast.success(
-        "Saved. Your browser blocked the preview tab. Use Copy Link to open it.",
-      );
+      toast.error("Your browser blocked the new tab. Allow pop-ups and try again.");
       return;
     }
-
-    liveWindow.location.replace(getOneLinkPath(saved.username));
+    setCheckingPublication(true);
+    try {
+      const confirmed = await verifyPublicPage(initialProfile.username);
+      if (!confirmed) throw new Error("Publication could not be confirmed.");
+      liveWindow.location.replace(getOneLinkPath(initialProfile.username));
+    } catch (error) {
+      if (!liveWindow.closed) liveWindow.close();
+      toast.error(safeErrorMessage(error));
+    } finally {
+      setCheckingPublication(false);
+    }
   };
 
   const goBack = () => {
@@ -462,6 +579,42 @@ export default function OneLinkEditor({
         return next;
       }),
     }));
+  };
+
+  const selectSocialPlatform = (platform: OneLinkPlatformId) => {
+    if (draft.settings.socials.length >= ONE_LINK_LIMITS.socialLinks) return;
+    const id = createOneLinkItemId("social");
+    updateSettings((settings) => ({
+      ...settings,
+      socials: [
+        ...settings.socials,
+        { id, platform, url: "", enabled: false, invalid: true },
+      ],
+    }));
+    setSocialPickerOpen(false);
+    window.requestAnimationFrame(() => socialUrlRefs.current.get(id)?.focus());
+  };
+
+  const handleSocialPickerKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    let nextIndex = index;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+      nextIndex = (index + 1) % ONE_LINK_PLATFORMS.length;
+    } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+      nextIndex =
+        (index - 1 + ONE_LINK_PLATFORMS.length) %
+        ONE_LINK_PLATFORMS.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = ONE_LINK_PLATFORMS.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    socialOptionRefs.current[nextIndex]?.focus();
   };
 
   const updateProject = (
@@ -554,6 +707,21 @@ export default function OneLinkEditor({
         </nav>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5 pb-28 lg:pb-5">
+          {revisionConflict && (
+            <div className="mb-5 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4 text-xs leading-5 text-amber-100">
+              <p className="font-bold">
+                Your One Link changed in another tab. Your unsaved draft is still here.
+              </p>
+              <button
+                type="button"
+                onClick={() => void onReload()}
+                className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-amber-200/20 px-3 py-2 font-bold hover:bg-amber-200/10"
+              >
+                <RefreshCw aria-hidden="true" size={15} />
+                Reload latest version
+              </button>
+            </div>
+          )}
           {activeSection === "page" && (
             <div className="space-y-5">
               <SectionHeading
@@ -821,31 +989,54 @@ export default function OneLinkEditor({
                     title="Social links"
                     description={`${draft.settings.socials.length}/${ONE_LINK_LIMITS.socialLinks} used`}
                   />
-                  <button
-                    type="button"
-                    disabled={
-                      draft.settings.socials.length >=
-                      ONE_LINK_LIMITS.socialLinks
-                    }
-                    onClick={() =>
-                      updateSettings((settings) => ({
-                        ...settings,
-                        socials: [
-                          ...settings.socials,
-                          {
-                            id: createOneLinkItemId("social"),
-                            platform: "website",
-                            url: "",
-                            enabled: true,
-                          },
-                        ],
-                      }))
-                    }
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-black transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Plus aria-hidden="true" size={14} />
-                    Add
-                  </button>
+                  <div className="relative shrink-0">
+                    <button
+                      ref={addSocialButtonRef}
+                      type="button"
+                      aria-haspopup="listbox"
+                      aria-expanded={socialPickerOpen}
+                      disabled={
+                        draft.settings.socials.length >=
+                        ONE_LINK_LIMITS.socialLinks
+                      }
+                      onClick={() => setSocialPickerOpen((open) => !open)}
+                      className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-black transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Plus aria-hidden="true" size={14} />
+                      Add Social
+                    </button>
+                    {socialPickerOpen && (
+                      <div
+                        ref={socialPickerRef}
+                        role="listbox"
+                        aria-label="Choose a social platform"
+                        className="absolute right-0 z-30 mt-2 grid max-h-80 w-64 grid-cols-1 overflow-y-auto rounded-2xl border border-white/15 bg-[#17171d] p-2 shadow-2xl sm:grid-cols-2 sm:w-80"
+                      >
+                        {ONE_LINK_PLATFORMS.map((platform, index) => {
+                          const Icon = platform.icon;
+                          return (
+                            <button
+                              key={platform.id}
+                              ref={(element) => {
+                                socialOptionRefs.current[index] = element;
+                              }}
+                              type="button"
+                              role="option"
+                              aria-selected="false"
+                              onKeyDown={(event) =>
+                                handleSocialPickerKeyDown(event, index)
+                              }
+                              onClick={() => selectSocialPlatform(platform.id)}
+                              className="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-bold text-white/80 outline-none transition hover:bg-white/10 focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-red-400"
+                            >
+                              <Icon size={18} className="shrink-0" />
+                              {platform.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {draft.settings.socials.length === 0 ? (
@@ -895,25 +1086,46 @@ export default function OneLinkEditor({
                             }
                           />
                         </div>
-                        <input
-                          list="onelink-platforms"
-                          value={social.platform}
-                          onChange={(event) =>
-                            updateSocial(social.id, {
-                              platform: event.target.value,
-                            })
-                          }
-                          maxLength={ONE_LINK_LIMITS.socialPlatform}
-                          aria-label="Social platform"
-                          placeholder="Platform"
-                          className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none focus:border-white/30"
-                        />
+                        <div className="flex min-h-11 items-center gap-3 rounded-xl border border-white/10 bg-black/25 px-3">
+                          {React.createElement(
+                            getOneLinkPlatform(social.platform)?.icon ||
+                              ONE_LINK_PLATFORMS[14].icon,
+                            { size: 18, className: "shrink-0 text-white/60" },
+                          )}
+                          <select
+                            value={social.platform}
+                            onChange={(event) =>
+                              updateSocial(social.id, {
+                                platform: event.target.value,
+                              })
+                            }
+                            aria-label="Social platform"
+                            className="min-h-11 w-full bg-transparent text-sm outline-none"
+                          >
+                            {!ONE_LINK_PLATFORMS.some(
+                              (platform) => platform.id === social.platform,
+                            ) && (
+                              <option value={social.platform}>
+                                {getOneLinkPlatformLabel(social.platform)} (legacy)
+                              </option>
+                            )}
+                            {ONE_LINK_PLATFORMS.map((platform) => (
+                              <option key={platform.id} value={platform.id}>
+                                {platform.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                         {social.invalid && (
                           <p className="text-xs text-amber-300">
                             This legacy URL is invalid and stays hidden until corrected.
                           </p>
                         )}
                         <input
+                          ref={(element) => {
+                            if (element) socialUrlRefs.current.set(social.id, element);
+                            else socialUrlRefs.current.delete(social.id);
+                          }}
                           type="url"
                           value={social.url}
                           onChange={(event) =>
@@ -930,11 +1142,6 @@ export default function OneLinkEditor({
                     ))}
                   </div>
                 )}
-                <datalist id="onelink-platforms">
-                  {SOCIAL_PLATFORM_SUGGESTIONS.map((platform) => (
-                    <option key={platform} value={platform} />
-                  ))}
-                </datalist>
               </div>
 
               <div className="space-y-4 border-t border-white/10 pt-7">
@@ -1196,16 +1403,40 @@ export default function OneLinkEditor({
             <div className="space-y-6">
               <SectionHeading
                 title="Settings"
-                description="Control publishing and search previews."
+                description="Control search previews and public availability."
               />
-              <ToggleRow
-                label="Published"
-                description="Make /one/{username} publicly available."
-                checked={draft.settings.published}
-                onChange={(published) =>
-                  updateSettings({ published })
-                }
-              />
+              <div
+                aria-live="polite"
+                className={cn(
+                  "rounded-2xl border p-4",
+                  checkingPublication || mutationAction === "publish"
+                    ? "border-blue-400/20 bg-blue-500/10"
+                    : publicationFailed || (published && !liveConfirmed)
+                      ? "border-amber-400/25 bg-amber-400/10"
+                      : published && liveConfirmed
+                        ? "border-emerald-400/25 bg-emerald-400/10"
+                        : "border-white/10 bg-white/[0.03]",
+                )}
+              >
+                <p className="text-sm font-black">
+                  {checkingPublication || mutationAction === "publish"
+                    ? "Checking publication"
+                    : publicationFailed || (published && !liveConfirmed)
+                      ? "Publication could not be confirmed"
+                      : published && liveConfirmed
+                        ? "Live"
+                        : "Draft"}
+                </p>
+                <p className="mt-1 text-xs text-white/55">
+                  {checkingPublication || mutationAction === "publish"
+                    ? "Verifying the public page and its owner."
+                    : publicationFailed || (published && !liveConfirmed)
+                      ? "The public page is not available as confirmed live."
+                      : published && liveConfirmed
+                        ? "Public"
+                        : "Not public"}
+                </p>
+              </div>
               <ToggleRow
                 label="Message on Plugsy"
                 description="Let visitors find your separate Chat profile."
@@ -1245,11 +1476,16 @@ export default function OneLinkEditor({
                 <button
                   type="button"
                   onClick={viewLive}
-                  disabled={saving || Boolean(uploadingKind)}
+                  disabled={
+                    saving ||
+                    checkingPublication ||
+                    !published ||
+                    !liveConfirmed
+                  }
                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] disabled:opacity-50"
                 >
                   <ExternalLink aria-hidden="true" size={15} />
-                  View page
+                  View Live
                 </button>
               </div>
               <div className="rounded-2xl border border-blue-400/15 bg-blue-500/5 p-4 text-xs leading-5 text-blue-100/70">
@@ -1269,22 +1505,34 @@ export default function OneLinkEditor({
             <Smartphone aria-hidden="true" size={15} />
             Preview
           </button>
+          {published && (
           <button
             type="button"
             onClick={viewLive}
-            disabled={saving || Boolean(uploadingKind)}
+            disabled={
+              saving ||
+              checkingPublication ||
+              !published ||
+              !liveConfirmed
+            }
             className="hidden items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold transition hover:bg-white/[0.08] disabled:opacity-50 lg:inline-flex"
           >
             <Eye aria-hidden="true" size={15} />
             View Live
           </button>
+          )}
           <button
             type="button"
             onClick={saveChanges}
-            disabled={saving || Boolean(uploadingKind) || !isDirty}
+            disabled={
+              saving ||
+              Boolean(uploadingKind) ||
+              !isDirty ||
+              revisionConflict
+            }
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-500 px-3 py-3 text-xs font-bold transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? (
+            {mutationAction === "save" ? (
               <Loader2
                 aria-hidden="true"
                 className="animate-spin"
@@ -1293,12 +1541,39 @@ export default function OneLinkEditor({
             ) : (
               <Save aria-hidden="true" size={15} />
             )}
-            {saving
-              ? "Saving…"
-              : draft.settings.published
-                ? "Save & Publish"
-                : "Save Changes"}
+            {mutationAction === "save"
+              ? "Saving..."
+              : "Save Changes"}
           </button>
+          {!published ? (
+            <button
+              type="button"
+              onClick={publishOneLink}
+              disabled={saving || Boolean(uploadingKind) || revisionConflict}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-3 py-3 text-xs font-bold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {mutationAction === "publish" ? (
+                <Loader2 aria-hidden="true" className="animate-spin" size={15} />
+              ) : (
+                <ExternalLink aria-hidden="true" size={15} />
+              )}
+              {mutationAction === "publish" ? "Publishing…" : "Publish One Link"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={unpublishOneLink}
+              disabled={saving || isDirty || revisionConflict}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3 py-3 text-xs font-bold text-red-200 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {mutationAction === "unpublish" ? (
+                <Loader2 aria-hidden="true" className="animate-spin" size={15} />
+              ) : (
+                <Trash2 aria-hidden="true" size={15} />
+              )}
+              {mutationAction === "unpublish" ? "Unpublishing…" : "Unpublish One Link"}
+            </button>
+          )}
         </div>
       </aside>
 

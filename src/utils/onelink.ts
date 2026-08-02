@@ -1,50 +1,11 @@
 import { createElement } from "react";
-import {
-  Github,
-  Globe,
-  Instagram,
-  Linkedin,
-  MessageSquare,
-  Music,
-  Send,
-  Twitter,
-  Youtube,
-} from "lucide-react";
+import { getOneLinkPlatformIcon } from "./onelinkPlatforms";
 
 export const getPlatformIcon = (
   platform: string,
   options: { size?: number; className?: string } = {},
 ) => {
-  let Icon = Globe;
-  switch (platform.toLowerCase()) {
-    case "github":
-      Icon = Github;
-      break;
-    case "linkedin":
-      Icon = Linkedin;
-      break;
-    case "instagram":
-      Icon = Instagram;
-      break;
-    case "youtube":
-      Icon = Youtube;
-      break;
-    case "twitter":
-    case "x":
-      Icon = Twitter;
-      break;
-    case "discord":
-      Icon = MessageSquare;
-      break;
-    case "spotify":
-      Icon = Music;
-      break;
-    case "telegram":
-      Icon = Send;
-      break;
-    default:
-      Icon = Globe;
-  }
+  const Icon = getOneLinkPlatformIcon(platform);
   return createElement(Icon, {
     size: options.size || 18,
     className: options.className,

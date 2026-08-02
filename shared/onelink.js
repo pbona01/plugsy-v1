@@ -307,7 +307,7 @@ export function normalizeOneLinkSettings(value) {
     socials,
     projects,
     published:
-      typeof source.published === "boolean" ? source.published : true,
+      typeof source.published === "boolean" ? source.published : false,
     seoTitle: boundedString(
       source.seoTitle,
       ONE_LINK_LIMITS.seoTitle,
@@ -399,6 +399,7 @@ export function validateOneLinkSavePayload(payload) {
       "wallpaperPublicId",
       "wallpaperTextMode",
       "settings",
+      "expectedRevision",
     ]),
     "ONELINK_PAYLOAD_FIELDS_INVALID",
   );
@@ -539,6 +540,7 @@ export function validateOneLinkSavePayload(payload) {
   }
 
   const seenIds = new Set();
+  const seenSocialUrls = new Set();
   const socials = source.socials.map((entry) => {
     if (!isPlainObject(entry)) {
       throw new OneLinkValidationError(
@@ -584,6 +586,13 @@ export function validateOneLinkSavePayload(payload) {
         "Social link visibility is invalid.",
       );
     }
+    if (url && seenSocialUrls.has(url)) {
+      throw new OneLinkValidationError(
+        "ONELINK_URL_DUPLICATE",
+        "Each social link must use a different URL.",
+      );
+    }
+    if (url) seenSocialUrls.add(url);
     return {
       id,
       platform: platform.toLowerCase(),
@@ -665,6 +674,9 @@ export function validateOneLinkSavePayload(payload) {
   }
 
   return {
+    expectedRevision: validateOneLinkExpectedRevision(
+      payload.expectedRevision,
+    ),
     displayName,
     biography,
     imageUrl,
@@ -690,6 +702,47 @@ export function validateOneLinkSavePayload(payload) {
       ),
       messageEnabled: source.messageEnabled,
     },
+  };
+}
+
+export function validateOneLinkExpectedRevision(value) {
+  if (value === null) return null;
+  if (
+    typeof value !== "string" ||
+    value.length > 64 ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(value) ||
+    Number.isNaN(Date.parse(value))
+  ) {
+    throw new OneLinkValidationError(
+      "ONELINK_REVISION_INVALID",
+      "The One Link revision is invalid.",
+    );
+  }
+  return value;
+}
+
+export function validateOneLinkUnpublishPayload(payload) {
+  if (!isPlainObject(payload)) {
+    throw new OneLinkValidationError(
+      "ONELINK_PAYLOAD_INVALID",
+      "One Link settings are invalid.",
+    );
+  }
+  assertObjectKeys(
+    payload,
+    new Set(["expectedRevision"]),
+    "ONELINK_PAYLOAD_FIELDS_INVALID",
+  );
+  if (!("expectedRevision" in payload)) {
+    throw new OneLinkValidationError(
+      "ONELINK_REVISION_INVALID",
+      "The One Link revision is required.",
+    );
+  }
+  return {
+    expectedRevision: validateOneLinkExpectedRevision(
+      payload.expectedRevision,
+    ),
   };
 }
 

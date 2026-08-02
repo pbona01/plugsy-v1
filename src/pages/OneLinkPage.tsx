@@ -4,6 +4,8 @@ import { Loader2, RefreshCw } from "lucide-react";
 import OneLinkEditor from "../components/OneLinkEditor";
 import {
   OneLinkAnalytics,
+  OneLinkMutationAction,
+  OneLinkOwnerState,
   OneLinkProfile,
   OneLinkSettings,
 } from "../types";
@@ -57,10 +59,39 @@ const normalizeOwnerProfile = (value: any): OneLinkProfile => ({
   ) as OneLinkSettings,
 });
 
+const normalizeOwnerState = (value: any): OneLinkOwnerState => {
+  if (
+    !value?.profile ||
+    (value.revision !== null && typeof value.revision !== "string") ||
+    typeof value.published !== "boolean" ||
+    typeof value.liveConfirmed !== "boolean"
+  ) {
+    throw new Error("Your One Link could not be loaded.");
+  }
+  const profile = normalizeOwnerProfile(value.profile);
+  profile.settings.published = value.published;
+  return {
+    profile,
+    revision: value.revision,
+    published: value.published,
+    liveConfirmed: value.liveConfirmed,
+  };
+};
+
+class OneLinkRequestError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "OneLinkRequestError";
+    this.code = code;
+  }
+}
+
 export default function OneLinkPage() {
   useDocumentTitle("One Link Editor | Plugsy");
   const { getToken } = useAuth();
-  const [profile, setProfile] = useState<OneLinkProfile | null>(
+  const [ownerState, setOwnerState] = useState<OneLinkOwnerState | null>(
     null,
   );
   const [state, setState] = useState<
@@ -87,13 +118,13 @@ export default function OneLinkPage() {
         },
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.profile) {
+      if (!response.ok) {
         throw new Error("Your One Link could not be loaded.");
       }
-      setProfile(normalizeOwnerProfile(payload.profile));
+      setOwnerState(normalizeOwnerState(payload));
       setState("ready");
     } catch {
-      setProfile(null);
+      setOwnerState(null);
       setState("error");
     }
   }, [getVerifiedToken]);
@@ -102,29 +133,50 @@ export default function OneLinkPage() {
     loadOwnerProfile();
   }, [loadOwnerProfile]);
 
-  const saveProfile = async (
-    draft: OneLinkDraft,
-  ): Promise<OneLinkProfile> => {
+  const mutateProfile = async (
+    action: OneLinkMutationAction,
+    draft?: OneLinkDraft,
+  ): Promise<OneLinkOwnerState> => {
+    if (!ownerState) {
+      throw new Error("Your One Link could not be loaded.");
+    }
     const token = await getVerifiedToken();
-    const response = await fetch("/api/onelink?action=save", {
+    const response = await fetch(`/api/onelink?action=${action}`, {
       method: "POST",
       headers: {
+        Accept: "application/json",
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(draft),
+      body: JSON.stringify(
+        action === "unpublish"
+          ? { expectedRevision: ownerState.revision }
+          : { ...draft, expectedRevision: ownerState.revision },
+      ),
     });
     const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload?.profile) {
-      throw new Error(
+    if (!response.ok) {
+      throw new OneLinkRequestError(
+        typeof payload?.code === "string" ? payload.code : "ONELINK_REQUEST_FAILED",
         typeof payload?.error === "string"
           ? payload.error
           : "One Link changes could not be saved.",
       );
     }
-    const saved = normalizeOwnerProfile(payload.profile);
-    setProfile(saved);
+    const saved = normalizeOwnerState(payload);
+    setOwnerState(saved);
     return saved;
+  };
+
+  const verifyPublicPage = async (username: string) => {
+    const response = await fetch(
+      `/api/onelink?action=public&username=${encodeURIComponent(username)}`,
+      { headers: { Accept: "application/json" }, cache: "no-store" },
+    );
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.toLowerCase().includes("application/json")) return false;
+    const payload = await response.json().catch(() => null);
+    return Boolean(response.ok && payload?.success && payload?.profile);
   };
 
   const loadAnalytics = async (): Promise<OneLinkAnalytics> => {
@@ -174,7 +226,7 @@ export default function OneLinkPage() {
     );
   }
 
-  if (state === "error" || !profile) {
+  if (state === "error" || !ownerState) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#08080b] px-4 text-white">
         <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
@@ -200,8 +252,13 @@ export default function OneLinkPage() {
 
   return (
     <OneLinkEditor
-      initialProfile={profile}
-      onSave={saveProfile}
+      initialProfile={ownerState.profile}
+      revision={ownerState.revision}
+      published={ownerState.published}
+      liveConfirmed={ownerState.liveConfirmed}
+      onMutate={mutateProfile}
+      onReload={loadOwnerProfile}
+      verifyPublicPage={verifyPublicPage}
       loadAnalytics={loadAnalytics}
       onUploadImage={uploadImage}
     />

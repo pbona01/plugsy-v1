@@ -233,6 +233,20 @@ export interface OneLinkProfile {
   settings: OneLinkSettings;
 }
 
+export type OneLinkRevision = string | null;
+
+export interface OneLinkOwnerState {
+  profile: OneLinkProfile;
+  revision: OneLinkRevision;
+  published: boolean;
+  liveConfirmed: boolean;
+}
+
+export type OneLinkMutationAction =
+  | "save"
+  | "publish"
+  | "unpublish";
+
 export interface OneLinkAnalyticsDay {
   date: string;
   views: number;

@@ -6,6 +6,7 @@ import {
   OneLinkVisualTokens,
 } from "../constants/onelink-themes";
 import { getPlatformIcon } from "../utils/onelink";
+import { getOneLinkPlatformLabel } from "../utils/onelinkPlatforms";
 import { getOneLinkImageDeliveryUrl } from "../utils/uploadOneLinkImage";
 import { cn } from "../lib/utils";
 import { normalizeExternalUrl } from "../../shared/onelink.js";
@@ -15,12 +16,6 @@ interface OneLinkPublicViewProps {
   onMessage?: () => void;
   preview?: boolean;
 }
-
-const getPlatformLabel = (platform: string) =>
-  platform
-    .trim()
-    .replace(/[_-]+/g, " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
 
 const getSafeUrlSubtitle = (url: string) => {
   try {
@@ -284,7 +279,7 @@ export default function OneLinkPublicView({
                   href={social.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label={`Open ${getPlatformLabel(social.platform)}`}
+                    aria-label={`Open ${getOneLinkPlatformLabel(social.platform)}`}
                   className={cn(
                     "group flex min-h-14 w-full items-center gap-3 rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2 focus-visible:ring-offset-transparent",
                     visual.buttonSurface,
@@ -310,7 +305,7 @@ export default function OneLinkPublicView({
                         visual.buttonForeground,
                       )}
                     >
-                      {getPlatformLabel(social.platform)}
+                      {getOneLinkPlatformLabel(social.platform)}
                     </span>
                     <span
                       className={cn(

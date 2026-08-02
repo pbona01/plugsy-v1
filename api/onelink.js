@@ -10,6 +10,7 @@ import {
   OneLinkValidationError,
   parseOneLinkProfileBio,
   validateOneLinkSavePayload,
+  validateOneLinkUnpublishPayload,
 } from "../shared/onelink.js";
 
 const PROFILE_COLUMNS =
@@ -173,6 +174,50 @@ function toOwnerResponse(profile) {
       hasIndependentSettings ? profile.one_link_settings : parsed.settings,
     ),
   };
+}
+
+const revisionConflict = (res) =>
+  sendError(
+    res,
+    409,
+    "ONELINK_REVISION_CONFLICT",
+    "Your One Link changed in another tab. Refresh before saving again.",
+  );
+
+const revisionMatches = (expected, persisted) =>
+  expected === (persisted ?? null);
+
+const nextRevision = (currentRevision) => {
+  const now = Date.now();
+  const currentTime = currentRevision
+    ? Date.parse(currentRevision)
+    : Number.NaN;
+  return new Date(
+    Number.isFinite(currentTime) && now <= currentTime
+      ? currentTime + 1
+      : now,
+  ).toISOString();
+};
+
+const withRevisionMatch = (query, revision) =>
+  revision === null
+    ? query.is("one_link_updated_at", null)
+    : query.eq("one_link_updated_at", revision);
+
+async function publicationConfirmation(supabase, profile) {
+  const owner = toOwnerResponse(profile);
+  if (!owner.settings.published || !owner.username) return false;
+  const resolved = await findProfileByUsername(supabase, owner.username);
+  if (
+    resolved.failed ||
+    !resolved.profile ||
+    resolved.profile.clerk_id !== profile.clerk_id
+  ) {
+    return false;
+  }
+  const publicOwner = toOwnerResponse(resolved.profile);
+  if (!publicOwner.settings.published || !publicOwner.username) return false;
+  return Boolean(toPublicResponse(resolved.profile));
 }
 
 function toPublicResponse(profile) {
@@ -400,13 +445,20 @@ async function handleOwner(req, res) {
     );
   }
 
+  const published = toOwnerResponse(result.profile).settings.published;
+  const liveConfirmed = published
+    ? await publicationConfirmation(supabase, result.profile)
+    : false;
   return res.status(200).json({
     success: true,
     profile: toOwnerResponse(result.profile),
+    revision: result.profile.one_link_updated_at ?? null,
+    published,
+    liveConfirmed,
   });
 }
 
-async function handleSave(req, res) {
+async function handleDraftMutation(req, res, action) {
   if (req.method !== "POST") {
     return sendError(
       res,
@@ -457,15 +509,45 @@ async function handleSave(req, res) {
     );
   }
 
+  const currentRevision =
+    ownerResult.profile.one_link_updated_at ?? null;
+  if (!revisionMatches(payload.expectedRevision, currentRevision)) {
+    return revisionConflict(res);
+  }
+
   const currentOwner = toOwnerResponse(ownerResult.profile);
   const username = currentOwner.username;
-  if (!username) {
+  if (action === "publish" && !username) {
     return sendError(
       res,
       409,
       "ONELINK_USERNAME_REQUIRED",
       "Set up your One Link handle before publishing.",
     );
+  }
+
+
+  if (action === "publish") {
+    const publicOwner = await findProfileByUsername(supabase, username);
+    if (publicOwner.failed) {
+      return sendError(
+        res,
+        503,
+        "ONELINK_PUBLISH_VERIFICATION_FAILED",
+        "Your One Link could not be safely published.",
+      );
+    }
+    if (
+      !publicOwner.profile ||
+      publicOwner.profile.clerk_id !== actor.userId
+    ) {
+      return sendError(
+        res,
+        409,
+        "ONELINK_PUBLIC_OWNER_MISMATCH",
+        "That One Link handle belongs to another profile.",
+      );
+    }
   }
 
   const cloudinary = getCloudinaryConfig();
@@ -509,12 +591,20 @@ async function handleSave(req, res) {
       replacement: payload.wallpaperPublicId,
     },
   ];
-  const { data: updated, error: updateError } = await supabase
+  const revision = nextRevision(currentRevision);
+  const persistedSettings = {
+    ...payload.settings,
+    published:
+      action === "publish"
+        ? true
+        : currentOwner.settings.published,
+  };
+  let updateQuery = supabase
     .from("profiles")
     .update({
       one_link_username:
         ownerResult.profile.one_link_username === null
-          ? username
+          ? username || null
           : ownerResult.profile.one_link_username,
       one_link_display_name: payload.displayName,
       one_link_biography: payload.biography,
@@ -523,20 +613,70 @@ async function handleSave(req, res) {
       one_link_wallpaper_url: payload.wallpaperUrl,
       one_link_wallpaper_public_id: payload.wallpaperPublicId,
       one_link_wallpaper_text_mode: payload.wallpaperTextMode,
-      one_link_settings: payload.settings,
-      one_link_updated_at: new Date().toISOString(),
+      one_link_settings: persistedSettings,
+      one_link_updated_at: revision,
     })
-    .eq("clerk_id", actor.userId)
+    .eq("clerk_id", actor.userId);
+  updateQuery = withRevisionMatch(updateQuery, currentRevision);
+  const { data: updated, error: updateError } = await updateQuery
     .select(PROFILE_COLUMNS)
     .maybeSingle();
 
-  if (updateError || !updated) {
+  if (!updated) {
+    return revisionConflict(res);
+  }
+  if (updateError) {
     return sendError(
       res,
       503,
       "ONELINK_SAVE_FAILED",
       "Your One Link could not be saved.",
     );
+  }
+
+
+  let liveConfirmed = false;
+  if (action === "publish") {
+    const verifiedOwner = await findOwnerProfile(supabase, actor.userId);
+    const verifiedPublic = await findProfileByUsername(
+      supabase,
+      username,
+    );
+    liveConfirmed = Boolean(
+      !verifiedOwner.failed &&
+        verifiedOwner.profile &&
+        toOwnerResponse(verifiedOwner.profile).settings.published &&
+        verifiedOwner.profile.one_link_updated_at === revision &&
+        !verifiedPublic.failed &&
+        verifiedPublic.profile &&
+        verifiedPublic.profile.clerk_id === actor.userId &&
+        toOwnerResponse(verifiedPublic.profile).settings.published &&
+        toPublicResponse(verifiedPublic.profile),
+    );
+
+    if (!liveConfirmed) {
+      const failClosedRevision = nextRevision(revision);
+      let failClosedQuery = supabase
+        .from("profiles")
+        .update({
+          one_link_settings: {
+            ...persistedSettings,
+            published: false,
+          },
+          one_link_updated_at: failClosedRevision,
+        })
+        .eq("clerk_id", actor.userId);
+      failClosedQuery = withRevisionMatch(failClosedQuery, revision);
+      await failClosedQuery.select("clerk_id").maybeSingle();
+      return sendError(
+        res,
+        503,
+        "ONELINK_PUBLISH_VERIFICATION_FAILED",
+        "Your One Link could not be safely published.",
+      );
+    }
+  } else if (persistedSettings.published) {
+    liveConfirmed = await publicationConfirmation(supabase, updated);
   }
 
   if (cloudinary) {
@@ -564,6 +704,117 @@ async function handleSave(req, res) {
   return res.status(200).json({
     success: true,
     profile: toOwnerResponse(updated),
+    revision,
+    published: persistedSettings.published,
+    liveConfirmed,
+  });
+}
+
+async function handleSave(req, res) {
+  return handleDraftMutation(req, res, "save");
+}
+
+async function handlePublish(req, res) {
+  return handleDraftMutation(req, res, "publish");
+}
+
+async function handleUnpublish(req, res) {
+  if (req.method !== "POST") {
+    return sendError(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
+  }
+  const actor = await requireVerifiedClerkUser(req, res);
+  if (!actor) return;
+  const supabase = getServiceClient(res);
+  if (!supabase) return;
+
+  let payload;
+  try {
+    payload = validateOneLinkUnpublishPayload(getJsonBody(req));
+  } catch (error) {
+    if (error instanceof OneLinkValidationError) {
+      return sendError(res, 400, error.code, error.message);
+    }
+    return sendError(
+      res,
+      400,
+      "ONELINK_PAYLOAD_INVALID",
+      "One Link settings are invalid.",
+    );
+  }
+
+  const ownerResult = await findOwnerProfile(supabase, actor.userId);
+  if (ownerResult.failed) {
+    return sendError(
+      res,
+      503,
+      "ONELINK_OWNER_LOOKUP_FAILED",
+      "Your One Link could not be unpublished.",
+    );
+  }
+  if (!ownerResult.profile) {
+    return sendError(
+      res,
+      404,
+      "ONELINK_OWNER_NOT_FOUND",
+      "Your Plugsy profile could not be found.",
+    );
+  }
+
+  const currentRevision = ownerResult.profile.one_link_updated_at ?? null;
+  if (!revisionMatches(payload.expectedRevision, currentRevision)) {
+    return revisionConflict(res);
+  }
+  const revision = nextRevision(currentRevision);
+  const storedSettings =
+    ownerResult.profile.one_link_settings &&
+    typeof ownerResult.profile.one_link_settings === "object" &&
+    !Array.isArray(ownerResult.profile.one_link_settings)
+      ? ownerResult.profile.one_link_settings
+      : toOwnerResponse(ownerResult.profile).settings;
+  const settings = {
+    ...storedSettings,
+    published: false,
+  };
+  let updateQuery = supabase
+    .from("profiles")
+    .update({
+      one_link_settings: settings,
+      one_link_updated_at: revision,
+    })
+    .eq("clerk_id", actor.userId);
+  updateQuery = withRevisionMatch(updateQuery, currentRevision);
+  const { data: updated, error: updateError } = await updateQuery
+    .select(PROFILE_COLUMNS)
+    .maybeSingle();
+  if (!updated) return revisionConflict(res);
+  if (updateError) {
+    return sendError(
+      res,
+      503,
+      "ONELINK_UNPUBLISH_FAILED",
+      "Your One Link could not be unpublished.",
+    );
+  }
+  const verifiedOwner = await findOwnerProfile(supabase, actor.userId);
+  if (
+    verifiedOwner.failed ||
+    !verifiedOwner.profile ||
+    verifiedOwner.profile.one_link_updated_at !== revision ||
+    toOwnerResponse(verifiedOwner.profile).settings.published
+  ) {
+    return sendError(
+      res,
+      503,
+      "ONELINK_PUBLISH_VERIFICATION_FAILED",
+      "Your One Link could not be safely unpublished.",
+    );
+  }
+  return res.status(200).json({
+    success: true,
+    profile: toOwnerResponse(verifiedOwner.profile),
+    revision,
+    published: false,
+    liveConfirmed: false,
   });
 }
 
@@ -897,6 +1148,8 @@ export default async function handler(req, res) {
   if (
     req.method === "POST" &&
     (action === "save" ||
+      action === "publish" ||
+      action === "unpublish" ||
       action === "view" ||
       action === "upload-signature" ||
       action === "destroy-asset") &&
@@ -912,6 +1165,8 @@ export default async function handler(req, res) {
   if (action === "public") return handlePublic(req, res);
   if (action === "owner") return handleOwner(req, res);
   if (action === "save") return handleSave(req, res);
+  if (action === "publish") return handlePublish(req, res);
+  if (action === "unpublish") return handleUnpublish(req, res);
   if (action === "upload-signature") {
     return handleUploadSignature(req, res);
   }
