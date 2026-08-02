@@ -1,5 +1,6 @@
 import {
   createHash,
+  createHmac,
   randomBytes,
   scryptSync,
   timingSafeEqual,
@@ -600,6 +601,93 @@ const flutterwaveSecret = (res) => {
   return key;
 };
 
+const PAYOUT_WORKER_ENDPOINTS = Object.freeze({
+  initiate: "/v1/transfers/initiate",
+  verify: "/v1/transfers/verify",
+});
+const PAYOUT_WORKER_REQUEST_TIMEOUT_MS = 18_000;
+const PAYOUT_WORKER_MIN_SECRET_BYTES = 32;
+
+const pauseWithdrawals = (res) =>
+  send(
+    res,
+    503,
+    "WITHDRAWALS_TEMPORARILY_PAUSED",
+    "Withdrawals are temporarily paused.",
+  );
+
+const payoutWorkerConfig = (res) => {
+  if (lower(process.env.PAYOUT_WORKER_ENABLED) !== "true") {
+    pauseWithdrawals(res);
+    return null;
+  }
+
+  const rawUrl = text(process.env.PAYOUT_WORKER_URL);
+  const hmacSecret = String(
+    process.env.PAYOUT_WORKER_HMAC_SECRET || "",
+  );
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch {
+    parsedUrl = null;
+  }
+
+  if (
+    !parsedUrl ||
+    parsedUrl.protocol !== "https:" ||
+    !parsedUrl.hostname ||
+    parsedUrl.username ||
+    parsedUrl.password ||
+    parsedUrl.search ||
+    parsedUrl.hash ||
+    (parsedUrl.pathname !== "/" && parsedUrl.pathname !== "") ||
+    hmacSecret !== hmacSecret.trim() ||
+    Buffer.byteLength(hmacSecret, "utf8") <
+      PAYOUT_WORKER_MIN_SECRET_BYTES
+  ) {
+    pauseWithdrawals(res);
+    return null;
+  }
+
+  return {
+    baseUrl: parsedUrl.origin,
+    hmacSecret,
+  };
+};
+
+const requestPayoutWorker = async ({
+  config,
+  operation,
+  payload,
+}) => {
+  const endpoint = PAYOUT_WORKER_ENDPOINTS[operation];
+  if (!endpoint) throw new Error("PAYOUT_WORKER_OPERATION_INVALID");
+
+  const rawBody = JSON.stringify(payload);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = randomBytes(16).toString("hex");
+  const bodyHash = createHash("sha256")
+    .update(rawBody, "utf8")
+    .digest("hex");
+  const canonical = `${timestamp}.${nonce}.${bodyHash}`;
+  const signature = createHmac("sha256", config.hmacSecret)
+    .update(canonical, "utf8")
+    .digest("hex");
+
+  return fetch(`${config.baseUrl}${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-plugsy-timestamp": timestamp,
+      "x-plugsy-nonce": nonce,
+      "x-plugsy-signature": signature,
+    },
+    body: rawBody,
+    signal: AbortSignal.timeout(PAYOUT_WORKER_REQUEST_TIMEOUT_MS),
+  });
+};
+
 const FINAL_WITHDRAWAL_FAILURE_STATUSES = new Set([
   "failed",
   "cancelled",
@@ -655,6 +743,7 @@ const sanitizeProviderDiagnostic = (value, maxLength = 160) =>
 
 const flutterwaveTraceHeader = (response) => {
   const headerNames = [
+    "x-plugsy-provider-trace",
     "x-request-id",
     "request-id",
     "x-trace-id",
@@ -1209,10 +1298,11 @@ export async function handleWithdrawal(req, res) {
     );
   }
 
+  const payoutWorker = payoutWorkerConfig(res);
+  if (!payoutWorker) return;
+
   const supabase = getWalletServiceClient(res);
   if (!supabase) return;
-  const secretKey = flutterwaveSecret(res);
-  if (!secretKey) return;
   const profile = await loadActorProfile(supabase, context.actor.userId);
   const state = getPinState(profile);
 
@@ -1343,28 +1433,22 @@ export async function handleWithdrawal(req, res) {
       text(process.env.NEXT_PUBLIC_SITE_URL) ||
       text(process.env.SITE_URL) ||
       "https://www.plugsy.ng";
-    response = await fetch(
-      "https://api.flutterwave.com/v3/transfers",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${secretKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          account_bank: reservation.bank_code,
-          account_number: reservation.account_number,
-          amount: reservation.amount,
-          narration: "Plugsy Wallet Withdrawal",
-          currency: "NGN",
-          debit_currency: "NGN",
-          reference: reservation.reference,
-          callback_url:
-            siteUrl.replace(/\/$/, "") +
-            "/api/wallet?action=transfer-webhook",
-        }),
+    response = await requestPayoutWorker({
+      config: payoutWorker,
+      operation: "initiate",
+      payload: {
+        account_bank: reservation.bank_code,
+        account_number: reservation.account_number,
+        amount: reservation.amount,
+        narration: "Plugsy Wallet Withdrawal",
+        currency: "NGN",
+        debit_currency: "NGN",
+        reference: reservation.reference,
+        callback_url:
+          siteUrl.replace(/\/$/, "") +
+          "/api/wallet?action=transfer-webhook",
       },
-    );
+    });
     const parsedProvider = await response.json().catch(() => null);
     const hasValidProviderJson =
       parsedProvider !== null &&
@@ -1576,8 +1660,8 @@ export async function processWithdrawalWebhook({
 
   const supabase = getWalletServiceClient(res);
   if (!supabase) return;
-  const secretKey = flutterwaveSecret(res);
-  if (!secretKey) return;
+  const payoutWorker = payoutWorkerConfig(res);
+  if (!payoutWorker) return;
 
   if (!reference || !providerTransactionId || !eventKey) {
     const review = await recordWithdrawalCallbackManualReviewOrFail(supabase, res, {
@@ -1606,16 +1690,11 @@ export async function processWithdrawalWebhook({
 
   let verified;
   try {
-    const response = await fetch(
-      `https://api.flutterwave.com/v3/transfers/${encodeURIComponent(
-        providerTransactionId,
-      )}`,
-      {
-        headers: {
-          Authorization: `Bearer ${secretKey}`,
-        },
-      },
-    );
+    const response = await requestPayoutWorker({
+      config: payoutWorker,
+      operation: "verify",
+      payload: { providerTransactionId },
+    });
     verified = await response.json().catch(() => null);
     if (!response.ok || verified?.status !== "success") {
       throw new Error("provider transfer verification failed");
