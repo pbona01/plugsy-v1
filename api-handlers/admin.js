@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { randomUUID } from "node:crypto";
 import { Resend } from 'resend';
 import {
   isSupportChat,
@@ -24,6 +25,8 @@ const getClient = () => createClient(
 const textValue = (value) => String(value || "").trim();
 const normalizeEmail = (value) => textValue(value).toLowerCase();
 const normalizeRole = (value) => textValue(value).toLowerCase() || "user";
+const normalizeAdminDisplayRole = (value) =>
+  normalizeRole(value) === "admin" ? "admin" : "user";
 const toIsoDate = (value) => {
   if (!value) return null;
   const numeric = Number(value);
@@ -39,6 +42,24 @@ const MAX_CLERK_RECORDS = 10_000;
 const PROFILE_PAGE_SIZE = 1000;
 const MAX_PROFILE_PAGES = 50;
 
+export class AdminUsersFailure extends Error {
+  constructor(code, status = 503, details = {}) {
+    super(code);
+    this.name = "AdminUsersFailure";
+    this.code = code;
+    this.status = status;
+    this.providerStatus = details.providerStatus || null;
+    this.retryAfter = details.retryAfter || null;
+  }
+}
+
+const canonicalClerkId = (value) => {
+  const candidate = textValue(value);
+  return /^user_[A-Za-z0-9_-]{3,}$/.test(candidate)
+    ? candidate
+    : "";
+};
+
 const clerkPageData = (payload) => {
   if (Array.isArray(payload)) return { users: payload, total: null };
   if (!payload || typeof payload !== "object") return null;
@@ -53,67 +74,144 @@ const clerkPageData = (payload) => {
   return { users, total };
 };
 
-export async function fetchAllClerkUsers(fetchImpl = fetch) {
-  const secretKey = textValue(process.env.CLERK_SECRET_KEY);
+const retryAfterSeconds = (value) => {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0) {
+    return Math.min(3600, Math.ceil(numeric));
+  }
+  const date = Date.parse(String(value || ""));
+  if (!Number.isFinite(date)) return null;
+  return Math.min(3600, Math.max(0, Math.ceil((date - Date.now()) / 1000)));
+};
+
+export async function fetchAllClerkUsers(
+  fetchImpl = fetch,
+  options = {},
+) {
+  const secretKey = textValue(
+    options.secretKey ?? process.env.CLERK_SECRET_KEY,
+  );
   if (!secretKey || secretKey === "your_clerk_secret_key" || secretKey.startsWith("your_")) {
-    throw new Error("CLERK_NOT_CONFIGURED");
+    throw new AdminUsersFailure("ADMIN_USERS_CONFIGURATION_ERROR", 503);
   }
 
+  const pageSize = Math.min(100, Math.max(1, Number(options.pageSize) || CLERK_PAGE_SIZE));
+  const maxPages = Math.min(MAX_CLERK_PAGES, Math.max(1, Number(options.maxPages) || MAX_CLERK_PAGES));
+  const maxRecords = Math.min(MAX_CLERK_RECORDS, Math.max(1, Number(options.maxRecords) || MAX_CLERK_RECORDS));
   const users = [];
-  for (let page = 0; page < MAX_CLERK_PAGES; page += 1) {
-    const offset = page * CLERK_PAGE_SIZE;
+  const seenIds = new Set();
+  const seenPages = new Set();
+  for (let page = 0; page < maxPages; page += 1) {
+    const offset = page * pageSize;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     let payload;
     try {
       const response = await fetchImpl(
-        `https://api.clerk.com/v1/users?limit=${CLERK_PAGE_SIZE}&offset=${offset}`,
+        `https://api.clerk.com/v1/users?limit=${pageSize}&offset=${offset}`,
         {
           headers: { Authorization: `Bearer ${secretKey}` },
           signal: controller.signal,
         },
       );
-      if (!response?.ok) throw new Error("CLERK_USERS_LOOKUP_FAILED");
+      if (!response || typeof response.ok !== "boolean") {
+        throw new AdminUsersFailure("ADMIN_USERS_LOOKUP_FAILED", 503);
+      }
+      if (!response.ok) {
+        const providerStatus = Number(response.status) || null;
+        if (providerStatus === 401 || providerStatus === 403) {
+          throw new AdminUsersFailure(
+            "ADMIN_USERS_PROVIDER_UNAUTHORIZED",
+            502,
+            { providerStatus },
+          );
+        }
+        if (providerStatus === 429) {
+          throw new AdminUsersFailure("ADMIN_USERS_RATE_LIMITED", 429, {
+            providerStatus,
+            retryAfter: retryAfterSeconds(response.headers?.get?.("retry-after")),
+          });
+        }
+        throw new AdminUsersFailure("ADMIN_USERS_LOOKUP_FAILED", 503, {
+          providerStatus,
+        });
+      }
       payload = await response.json().catch(() => null);
+    } catch (error) {
+      if (error instanceof AdminUsersFailure) throw error;
+      throw new AdminUsersFailure("ADMIN_USERS_LOOKUP_FAILED", 503);
     } finally {
       clearTimeout(timeout);
     }
     const parsed = clerkPageData(payload);
-    if (!parsed) throw new Error("CLERK_USERS_RESPONSE_INVALID");
-    users.push(...parsed.users);
-    if (users.length > MAX_CLERK_RECORDS) throw new Error("CLERK_USERS_LIMIT_EXCEEDED");
+    if (!parsed) {
+      throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
+    }
+    const pageUsers = [];
+    for (const user of parsed.users) {
+      if (!user || typeof user !== "object" || Array.isArray(user)) {
+        throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
+      }
+      const clerkId = canonicalClerkId(user.id);
+      if (!clerkId) {
+        throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
+      }
+      if (seenIds.has(clerkId)) continue;
+      seenIds.add(clerkId);
+      pageUsers.push(user);
+    }
+    const fingerprint = parsed.users
+      .map((user) => canonicalClerkId(user?.id))
+      .join("|");
+    if (fingerprint && seenPages.has(fingerprint)) {
+      throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
+    }
+    if (fingerprint) seenPages.add(fingerprint);
+    users.push(...pageUsers);
+    if (users.length > maxRecords) {
+      throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
+    }
     if (parsed.total !== null && users.length >= parsed.total) {
       return users;
     }
-    if (parsed.users.length < CLERK_PAGE_SIZE) {
+    if (parsed.users.length < pageSize) {
       if (parsed.total !== null && users.length < parsed.total) {
-        throw new Error("CLERK_USERS_RESPONSE_INVALID");
+        throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
       }
       return users;
     }
   }
-  throw new Error("CLERK_USERS_PAGE_LIMIT_EXCEEDED");
+  throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
 }
 
-async function fetchAllProfiles(supabase) {
+export async function fetchAllProfiles(supabase, options = {}) {
+  const pageSize = Math.min(PROFILE_PAGE_SIZE, Math.max(1, Number(options.pageSize) || PROFILE_PAGE_SIZE));
+  const maxPages = Math.min(MAX_PROFILE_PAGES, Math.max(1, Number(options.maxPages) || MAX_PROFILE_PAGES));
   const profiles = [];
-  for (let page = 0; page < MAX_PROFILE_PAGES; page += 1) {
-    const from = page * PROFILE_PAGE_SIZE;
+  for (let page = 0; page < maxPages; page += 1) {
+    const from = page * pageSize;
     const { data, error } = await supabase
       .from("profiles")
-      .select("id,clerk_id,email,full_name,username,wallet_tag,role,image_url,profile_pic_url,balance,bio,phone_number,last_login_at,last_seen_at,created_at,updated_at")
+      .select("id,clerk_id,email,full_name,username,wallet_tag,role,image_url,profile_pic_url,last_login_at,created_at")
       .order("created_at", { ascending: false })
-      .range(from, from + PROFILE_PAGE_SIZE - 1);
-    if (error) throw new Error("PROFILE_PAGE_LOOKUP_FAILED");
-    if (!Array.isArray(data)) throw new Error("PROFILE_PAGE_RESPONSE_INVALID");
+      .range(from, from + pageSize - 1);
+    if (error) throw new AdminUsersFailure("ADMIN_USERS_LOOKUP_FAILED", 503);
+    if (!Array.isArray(data)) {
+      throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
+    }
     profiles.push(...data);
-    if (data.length < PROFILE_PAGE_SIZE) return profiles;
+    if (data.length < pageSize) return profiles;
   }
-  throw new Error("PROFILE_PAGE_LIMIT_EXCEEDED");
+  throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
 }
 
 const primaryClerkEmail = (user) => {
-  const addresses = user.email_addresses || user.emailAddresses || [];
+  const candidateAddresses = user.email_addresses || user.emailAddresses;
+  const addresses = Array.isArray(candidateAddresses)
+    ? candidateAddresses.filter(
+        (entry) => entry && typeof entry === "object" && !Array.isArray(entry),
+      )
+    : [];
   const primaryId = user.primary_email_address_id || user.primaryEmailAddressId;
   return normalizeEmail(
     addresses.find((entry) => (entry.id || entry.emailAddressId) === primaryId)?.email_address ||
@@ -125,43 +223,44 @@ const primaryClerkEmail = (user) => {
 
 export function normalizeAdminUsers(clerkUsers, profiles) {
   const profilesByClerkId = new Map();
-  const profilesByEmail = new Map();
   for (const profile of profiles) {
-    const clerkId = textValue(profile.clerk_id);
-    const email = normalizeEmail(profile.email);
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) continue;
+    const clerkId = canonicalClerkId(profile.clerk_id);
     if (clerkId && !profilesByClerkId.has(clerkId)) profilesByClerkId.set(clerkId, profile);
-    if (email && !profilesByEmail.has(email)) profilesByEmail.set(email, profile);
   }
 
   const claimedProfiles = new Set();
   const normalized = [];
   const seenClerkIds = new Set();
-  const seenEmails = new Set();
+  const seenProfileIds = new Set();
 
   for (const clerkUser of clerkUsers) {
-    const clerkId = textValue(clerkUser.id);
+    if (!clerkUser || typeof clerkUser !== "object" || Array.isArray(clerkUser)) continue;
+    const clerkId = canonicalClerkId(clerkUser.id);
     const email = primaryClerkEmail(clerkUser);
-    if (!clerkId || seenClerkIds.has(clerkId) || (email && seenEmails.has(email))) continue;
+    if (!clerkId || seenClerkIds.has(clerkId)) continue;
 
-    let profile = profilesByClerkId.get(clerkId) || null;
-    if (!profile && email) {
-      const emailCandidate = profilesByEmail.get(email) || null;
-      if (!textValue(emailCandidate?.clerk_id) || textValue(emailCandidate?.clerk_id) === clerkId) {
-        profile = emailCandidate;
-      }
+    const profile = profilesByClerkId.get(clerkId) || null;
+    const profileId = textValue(profile?.id);
+    if (profileId) {
+      claimedProfiles.add(profileId);
+      seenProfileIds.add(profileId);
     }
-    if (profile) claimedProfiles.add(profile.id);
 
     const firstName = textValue(clerkUser.first_name || clerkUser.firstName);
     const lastName = textValue(clerkUser.last_name || clerkUser.lastName);
     const clerkUsername = textValue(clerkUser.username);
     const fullName = textValue(`${firstName} ${lastName}`) || clerkUsername || email.split("@")[0] || "Plugsy Member";
     const clerkRole = clerkUser.public_metadata?.role ?? clerkUser.publicMetadata?.role;
-    const role = normalizeRole(clerkRole || profile?.role || "user");
+    const role =
+      normalizeAdminDisplayRole(clerkRole) === "admin" ||
+      normalizeAdminDisplayRole(profile?.role) === "admin"
+        ? "admin"
+        : "user";
 
     normalized.push({
-      id: profile?.id || clerkId,
-      profile_id: profile?.id || null,
+      id: profileId || clerkId,
+      profile_id: profileId || null,
       clerk_id: clerkId,
       clerk_linked: true,
       email,
@@ -175,22 +274,20 @@ export function normalizeAdminUsers(clerkUsers, profiles) {
       created_at: toIsoDate(clerkUser.created_at || clerkUser.createdAt),
       last_login_at: toIsoDate(clerkUser.last_sign_in_at || clerkUser.lastSignInAt),
       role,
-      balance: profile?.balance ?? null,
-      bio: profile?.bio ?? null,
-      phone_number: profile?.phone_number ?? null,
-      last_seen_at: profile?.last_seen_at ?? profile?.last_login_at ?? null,
     });
     seenClerkIds.add(clerkId);
-    if (email) seenEmails.add(email);
   }
 
   for (const profile of profiles) {
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) continue;
+    const profileId = textValue(profile.id);
+    if (!profileId || seenProfileIds.has(profileId)) continue;
     const email = normalizeEmail(profile.email);
-    const clerkId = textValue(profile.clerk_id);
-    if (claimedProfiles.has(profile.id) || (clerkId && seenClerkIds.has(clerkId)) || (email && seenEmails.has(email))) continue;
+    const clerkId = canonicalClerkId(profile.clerk_id);
+    if (claimedProfiles.has(profileId) || (clerkId && seenClerkIds.has(clerkId))) continue;
     normalized.push({
-      id: profile.id,
-      profile_id: profile.id,
+      id: profileId,
+      profile_id: profileId,
       clerk_id: clerkId || null,
       clerk_linked: false,
       email,
@@ -203,17 +300,21 @@ export function normalizeAdminUsers(clerkUsers, profiles) {
       imageUrl: textValue(profile.profile_pic_url || profile.image_url),
       created_at: toIsoDate(profile.created_at),
       last_login_at: toIsoDate(profile.last_login_at),
-      role: normalizeRole(profile.role),
-      balance: profile.balance ?? null,
-      bio: profile.bio ?? null,
-      phone_number: profile.phone_number ?? null,
-      last_seen_at: profile.last_seen_at ?? profile.last_login_at ?? null,
+      role: normalizeAdminDisplayRole(profile.role),
     });
+    seenProfileIds.add(profileId);
     if (clerkId) seenClerkIds.add(clerkId);
-    if (email) seenEmails.add(email);
   }
 
-  return normalized;
+  return normalized.sort((left, right) => {
+    const dateDifference =
+      (Date.parse(right.created_at || "") || 0) -
+      (Date.parse(left.created_at || "") || 0);
+    if (dateDifference) return dateDifference;
+    return String(left.clerk_id || left.id).localeCompare(
+      String(right.clerk_id || right.id),
+    );
+  });
 }
 
 const ADMIN_MESSAGE_INSERT_FIELDS = new Set([
@@ -271,6 +372,51 @@ async function requireVerifiedAdmin(req, res, supabase) {
     return null;
   }
   return writer;
+}
+
+const getAdminUsersClient = () => {
+  const supabaseUrl = textValue(
+    process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
+  );
+  const serviceRoleKey = textValue(process.env.SUPABASE_SERVICE_ROLE_KEY);
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new AdminUsersFailure("ADMIN_USERS_CONFIGURATION_ERROR", 503);
+  }
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    db: { schema: "public" },
+  });
+};
+
+async function authorizeAdminUsersActor(actor, res, supabase) {
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("clerk_id", actor.userId)
+    .maybeSingle();
+  if (error) {
+    res.status(503).json({
+      success: false,
+      code: "ADMIN_USERS_LOOKUP_FAILED",
+      error: "The admin user service is temporarily unavailable.",
+    });
+    return false;
+  }
+  const clerkRole = normalizeRole(
+    actor.clerkUser?.publicMetadata?.role ||
+      actor.clerkUser?.public_metadata?.role ||
+      "",
+  );
+  const profileRole = normalizeRole(profile?.role || "");
+  if (clerkRole !== "admin" && profileRole !== "admin") {
+    res.status(403).json({
+      success: false,
+      code: "ADMIN_ACCESS_DENIED",
+      error: "This account does not have admin access.",
+    });
+    return false;
+  }
+  return true;
 }
 
 async function handleSendLoginEmail(req, res) {
@@ -898,31 +1044,87 @@ async function handleListProfiles(req, res) {
   }
 }
 
-async function handleListUsers(req, res) {
+export async function handleListUsers(req, res, dependencies = {}) {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
   if (req.method !== "GET") {
-    return res.status(405).json({ success: false, error: "METHOD_NOT_ALLOWED" });
+    res.setHeader("Allow", "GET");
+    return res.status(405).json({
+      success: false,
+      code: "METHOD_NOT_ALLOWED",
+      error: "GET is required for this endpoint.",
+    });
   }
+  if (!/^Bearer\s+\S+$/i.test(textValue(req.headers?.authorization))) {
+    return res.status(401).json({
+      success: false,
+      code: "ADMIN_AUTH_REQUIRED",
+      error: "Sign-in is required.",
+    });
+  }
+  const requestHeader = textValue(req.headers?.["x-request-id"]);
+  const requestId = /^[A-Za-z0-9_-]{8,80}$/.test(requestHeader)
+    ? requestHeader
+    : randomUUID();
   try {
-    const supabase = getClient();
-    const writer = await requireVerifiedAdmin(req, res, supabase);
-    if (!writer) return;
+    const authenticate =
+      dependencies.authenticate || requireVerifiedClerkUser;
+    const actor = await authenticate(req, res);
+    if (!actor) return;
+    const supabase = dependencies.supabase || getAdminUsersClient();
+    const authorize =
+      dependencies.authorize || authorizeAdminUsersActor;
+    if (!(await authorize(actor, res, supabase))) return;
 
     const [clerkUsers, profiles] = await Promise.all([
-      fetchAllClerkUsers(),
-      fetchAllProfiles(supabase),
+      (dependencies.fetchClerkUsers || fetchAllClerkUsers)(),
+      (dependencies.fetchProfiles || fetchAllProfiles)(supabase),
     ]);
+    if (!Array.isArray(clerkUsers) || !Array.isArray(profiles)) {
+      throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
+    }
     const normalizedUsers = normalizeAdminUsers(clerkUsers, profiles);
 
     return res.status(200).json({
       success: true,
       users: normalizedUsers,
       admins: normalizedUsers.filter((user) => user.role === "admin"),
-      totalClerkUsers: clerkUsers.length,
-      syncedAt: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("[list-users] unified user lookup failed:", error?.message || error);
-    return res.status(503).json({ success: false, error: "LIST_USERS_FAILED" });
+    const failure =
+      error instanceof AdminUsersFailure
+        ? error
+        : new AdminUsersFailure("ADMIN_USERS_LOOKUP_FAILED", 503);
+    console.error("[admin-users] request failed", {
+      code: failure.code,
+      status: failure.status,
+      routeAction: "list-users",
+      providerStatus: failure.providerStatus,
+      requestId,
+    });
+    if (failure.retryAfter !== null) {
+      res.setHeader("Retry-After", String(failure.retryAfter));
+    }
+    const safeMessages = {
+      ADMIN_USERS_CONFIGURATION_ERROR:
+        "The admin user service is not configured.",
+      ADMIN_USERS_PROVIDER_UNAUTHORIZED:
+        "The admin user provider could not be authorized.",
+      ADMIN_USERS_RATE_LIMITED:
+        "User synchronization is temporarily rate limited.",
+      ADMIN_USERS_RESPONSE_INVALID:
+        "The admin user service returned an invalid response.",
+      ADMIN_USERS_LOOKUP_FAILED:
+        "Users could not be refreshed right now.",
+    };
+    return res.status(failure.status).json({
+      success: false,
+      code: failure.code,
+      error:
+        safeMessages[failure.code] ||
+        safeMessages.ADMIN_USERS_LOOKUP_FAILED,
+      requestId,
+    });
   }
 }
 

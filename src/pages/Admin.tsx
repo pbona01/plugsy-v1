@@ -55,6 +55,11 @@ import {
   isSupportChat,
   selectCanonicalSupportChat,
 } from '../utils/supportChatMessages';
+import {
+  ADMIN_USERS_CLIENT_MESSAGES,
+  createAdminUsersRequestGate,
+  parseAdminUsersResponse,
+} from '../../shared/admin-users.js';
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -70,7 +75,8 @@ export default function Admin() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [adminUsersLoading, setAdminUsersLoading] = useState(false);
   const [adminUsersError, setAdminUsersError] = useState<string | null>(null);
-  const adminUsersRequestIdRef = useRef(0);
+  const [hasConfirmedAdminUsers, setHasConfirmedAdminUsers] = useState(false);
+  const adminUsersRequestGateRef = useRef(createAdminUsersRequestGate());
   const adminUsersInFlightRef = useRef<Promise<void> | null>(null);
   const [orders, setOrders] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
@@ -178,37 +184,56 @@ export default function Admin() {
   const fetchAdminUsers = useCallback(async () => {
     if (adminUsersInFlightRef.current) return adminUsersInFlightRef.current;
 
-    const requestId = ++adminUsersRequestIdRef.current;
-    const request = (async () => {
+    const requestState = adminUsersRequestGateRef.current.begin();
+    if (!requestState) return;
+    const requestPromise = (async () => {
       setAdminUsersLoading(true);
       try {
         const token = await getToken();
-        if (!token) throw new Error("Admin authentication is required.");
+        if (!token) throw new Error(ADMIN_USERS_CLIENT_MESSAGES.unauthorized);
         const response = await fetch("/api/admin?action=list-users", {
-          headers: { Authorization: `Bearer ${token}` },
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          cache: "no-store",
+          signal: requestState.controller.signal,
         });
-        const data = await response.json().catch(() => null);
-        if (!response.ok || !data?.success || !Array.isArray(data.users) || !Array.isArray(data.admins)) {
-          throw new Error("Users could not be refreshed.");
-        }
-        if (requestId !== adminUsersRequestIdRef.current) return;
-        setAllUsers(data.users);
-        setAdmins(data.admins);
+        const result = await parseAdminUsersResponse(response);
+        if (!adminUsersRequestGateRef.current.isCurrent(requestState.id)) return;
+        setAllUsers(result.users);
+        setAdmins(result.admins);
+        setHasConfirmedAdminUsers(true);
         setAdminUsersError(null);
       } catch (error: any) {
-        if (requestId === adminUsersRequestIdRef.current) {
-          setAdminUsersError(error?.message || "Users could not be refreshed.");
+        if (
+          error?.name !== "AbortError" &&
+          adminUsersRequestGateRef.current.isCurrent(requestState.id)
+        ) {
+          setAdminUsersError(
+            error instanceof Error &&
+              Object.values(ADMIN_USERS_CLIENT_MESSAGES).some(
+                (message) => message === error.message,
+              )
+              ? error.message
+              : ADMIN_USERS_CLIENT_MESSAGES.unavailable,
+          );
         }
       } finally {
-        if (requestId === adminUsersRequestIdRef.current) setAdminUsersLoading(false);
+        const isCurrent = adminUsersRequestGateRef.current.isCurrent(requestState.id);
+        if (isCurrent) setAdminUsersLoading(false);
+        adminUsersRequestGateRef.current.finish(requestState.id);
       }
     })();
 
-    adminUsersInFlightRef.current = request;
+    adminUsersInFlightRef.current = requestPromise;
     try {
-      await request;
+      await requestPromise;
     } finally {
-      if (adminUsersInFlightRef.current === request) adminUsersInFlightRef.current = null;
+      if (adminUsersInFlightRef.current === requestPromise) {
+        adminUsersInFlightRef.current = null;
+      }
     }
   }, [getToken]);
 
@@ -216,22 +241,16 @@ export default function Admin() {
     if (activeTab !== "users" || !userId) return;
 
     void fetchAdminUsers();
-    const interval = window.setInterval(() => void fetchAdminUsers(), 30_000);
-    const handleFocus = () => void fetchAdminUsers();
-    window.addEventListener("focus", handleFocus);
-    const channel = supabase
-      .channel(`admin-users-${userId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => {
-        void fetchAdminUsers();
-      })
-      .subscribe();
-
     return () => {
-      window.clearInterval(interval);
-      window.removeEventListener("focus", handleFocus);
-      void supabase.removeChannel(channel);
+      adminUsersRequestGateRef.current.invalidate();
+      adminUsersInFlightRef.current = null;
     };
   }, [activeTab, userId, fetchAdminUsers]);
+
+  useEffect(
+    () => () => adminUsersRequestGateRef.current.dispose(),
+    [],
+  );
 
   // Financial Dashboard States
   const [financialData, setFinancialData] = useState<{
@@ -1552,16 +1571,17 @@ export default function Admin() {
 
             {activeTab === 'users' && (
               <div className="space-y-8">
-                {adminUsersLoading && allUsers.length === 0 ? (
+                {adminUsersLoading && !hasConfirmedAdminUsers ? (
                   <div className="card-premium p-20 text-center flex flex-col items-center justify-center gap-6">
                     <Loader2 size={48} className="animate-spin text-brand-accent" />
                     <p className="font-black uppercase tracking-widest text-sm text-brand-text">Loading Clerk Users</p>
                   </div>
-                ) : adminUsersError && allUsers.length === 0 ? (
+                ) : adminUsersError && !hasConfirmedAdminUsers ? (
                   <div className="card-premium p-20 text-center flex flex-col items-center justify-center gap-6">
                     <AlertCircle size={48} className="text-red-500" />
-                    <p className="font-black uppercase tracking-widest text-sm text-brand-text">Users Node Sync Failed</p>
-                    <LiquidGlass button chromaticAberration={2} onClick={() => void fetchAdminUsers()} className="btn-primary h-12 px-8 flex items-center gap-2">
+                    <p className="font-black uppercase tracking-widest text-sm text-brand-text">Admin users could not be loaded</p>
+                    <p className="max-w-md text-sm text-brand-text-secondary">{adminUsersError}</p>
+                    <LiquidGlass button chromaticAberration={2} onClick={() => void fetchAdminUsers()} disabled={adminUsersLoading} className="btn-primary h-12 px-8 flex items-center gap-2">
                        <RefreshCw size={16} /> Retry Load
                     </LiquidGlass>
                   </div>
@@ -1595,10 +1615,10 @@ export default function Admin() {
                   </div>
                 </header>
 
-                {adminUsersError && (
+                {adminUsersError && hasConfirmedAdminUsers && (
                   <div className="flex items-center justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs font-bold text-amber-500">
-                    <span>Live user refresh failed. Showing the last confirmed Clerk result.</span>
-                    <button type="button" onClick={() => void fetchAdminUsers()} className="underline underline-offset-2">Retry</button>
+                    <span>{adminUsersError} Showing the last confirmed user list.</span>
+                    <button type="button" disabled={adminUsersLoading} onClick={() => void fetchAdminUsers()} className="underline underline-offset-2 disabled:opacity-50">Retry</button>
                   </div>
                 )}
 
