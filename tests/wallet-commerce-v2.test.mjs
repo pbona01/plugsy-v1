@@ -4,6 +4,10 @@ import test from "node:test";
 
 import paymentsHandler from "../api/payments.js";
 import walletHandler from "../api/wallet.js";
+import {
+  classifyWithdrawalInitiationResponse,
+  resolvePayoutWorkerConfiguration,
+} from "../api/_walletCommerce.js";
 
 const read = (path) =>
   fs.readFileSync(path, "utf8").replace(/\r\n/g, "\n");
@@ -160,11 +164,213 @@ test("referral rewards and notifications are deduplicated and non-blocking", () 
 
 test("withdrawal reservation precedes provider transfer and uses manual review", () => {
   const commerce = read("api/_walletCommerce.js");
-  const reserve = commerce.indexOf("reserve_wallet_withdrawal_v2");
-  const provider = commerce.indexOf("api.flutterwave.com/v3/transfers");
-  assert.ok(reserve >= 0 && provider > reserve);
+  const withdrawal = commerce.slice(
+    commerce.indexOf("export async function handleWithdrawal"),
+    commerce.indexOf("export async function processWithdrawalWebhook"),
+  );
+  const config = withdrawal.indexOf("payoutWorkerConfig(res)");
+  const reserve = withdrawal.indexOf("reserve_wallet_withdrawal_v2");
+  const provider = withdrawal.indexOf('operation: "initiate"');
+  assert.ok(config >= 0 && reserve > config && provider > reserve);
+  assert.doesNotMatch(withdrawal, /api\.flutterwave\.com\/v3\/transfers/);
   assert.match(commerce, /record_financial_manual_review_v2/);
   assert.match(commerce, /mark_wallet_withdrawal_submitted_v2/);
+});
+
+test("payout callback configuration fails closed before reservation", () => {
+  const base = {
+    enabled: "true",
+    workerUrl: "https://plugsy-payout-egress-pbona01.fly.dev",
+    hmacSecret: "test-only-hmac-secret-32-bytes-minimum-value",
+    callbackOrigin: "https://plugsy.ng",
+  };
+  assert.equal(
+    resolvePayoutWorkerConfiguration({ ...base, callbackOrigin: "" }),
+    null,
+  );
+  for (const callbackOrigin of [
+    " https://plugsy.ng",
+    "https://plugsy.ng ",
+    "http://plugsy.ng",
+    "https://www.plugsy.ng",
+    "https://user@plugsy.ng",
+    "https://plugsy.ng/path",
+    "https://plugsy.ng?query=1",
+    "https://plugsy.ng#fragment",
+  ]) {
+    assert.equal(
+      resolvePayoutWorkerConfiguration({ ...base, callbackOrigin }),
+      null,
+      callbackOrigin,
+    );
+  }
+  assert.deepEqual(resolvePayoutWorkerConfiguration(base), {
+    baseUrl: "https://plugsy-payout-egress-pbona01.fly.dev",
+    hmacSecret: base.hmacSecret,
+    callbackOrigin: "https://plugsy.ng",
+  });
+
+  const commerce = read("api/_walletCommerce.js");
+  const withdrawal = commerce.slice(
+    commerce.indexOf("export async function handleWithdrawal"),
+    commerce.indexOf("export async function processWithdrawalWebhook"),
+  );
+  const configIndex = withdrawal.indexOf(
+    "const payoutWorker = payoutWorkerConfig(res)",
+  );
+  const configReturnIndex = withdrawal.indexOf(
+    "if (!payoutWorker) return",
+    configIndex,
+  );
+  const supabaseIndex = withdrawal.indexOf(
+    "const supabase = getWalletServiceClient(res)",
+  );
+  const reserveIndex = withdrawal.indexOf("reserve_wallet_withdrawal_v2");
+  assert.ok(
+    configIndex >= 0 &&
+      configReturnIndex > configIndex &&
+      supabaseIndex > configReturnIndex &&
+      reserveIndex > supabaseIndex,
+  );
+});
+
+const providerResponse = ({ status, outcome = null }) => ({
+  status,
+  ok: status >= 200 && status < 300,
+  headers: {
+    get(name) {
+      return name === "x-plugsy-worker-outcome" ? outcome : null;
+    },
+  },
+});
+
+test("only the exact labelled worker 400 is a confirmed local rejection", () => {
+  const labelled = classifyWithdrawalInitiationResponse({
+    response: providerResponse({
+      status: 400,
+      outcome: "pre-provider-rejected",
+    }),
+    provider: {
+      success: false,
+      code: "TRANSFER_REQUEST_INVALID",
+      error: "The transfer request is invalid.",
+    },
+    hasValidProviderJson: true,
+  });
+  assert.equal(labelled.accepted, false);
+  assert.equal(labelled.confirmedRejection, true);
+  assert.equal(labelled.workerPreProviderRejected, true);
+
+  for (const candidate of [
+    {
+      response: providerResponse({ status: 400 }),
+      provider: { code: "TRANSFER_REQUEST_INVALID" },
+      hasValidProviderJson: true,
+    },
+    {
+      response: providerResponse({
+        status: 400,
+        outcome: "pre-provider-rejected",
+      }),
+      provider: { code: "OTHER_CODE" },
+      hasValidProviderJson: true,
+    },
+    {
+      response: providerResponse({
+        status: 400,
+        outcome: "pre-provider-rejected",
+      }),
+      provider: null,
+      hasValidProviderJson: false,
+    },
+  ]) {
+    const result = classifyWithdrawalInitiationResponse(candidate);
+    assert.equal(result.confirmedRejection, false);
+    assert.equal(result.workerPreProviderRejected, false);
+  }
+});
+
+test("existing confirmed provider rejection remains independent of worker label", () => {
+  const result = classifyWithdrawalInitiationResponse({
+    response: providerResponse({ status: 400 }),
+    provider: { status: "error", message: "Invalid bank code" },
+    hasValidProviderJson: true,
+  });
+  assert.equal(result.confirmedRejection, true);
+  assert.equal(result.workerPreProviderRejected, false);
+});
+
+test("ambiguous transport statuses never become confirmed rejection", () => {
+  for (const status of [408, 409, 425, 429, 500, 502, 503, 504]) {
+    const result = classifyWithdrawalInitiationResponse({
+      response: providerResponse({ status }),
+      provider: { status: "error", message: "provider unavailable" },
+      hasValidProviderJson: true,
+    });
+    assert.equal(result.accepted, false, String(status));
+    assert.equal(result.confirmedRejection, false, String(status));
+  }
+
+  const commerce = read("api/_walletCommerce.js");
+  const withdrawal = commerce.slice(
+    commerce.indexOf("export async function handleWithdrawal"),
+    commerce.indexOf("export async function processWithdrawalWebhook"),
+  );
+  assert.match(
+    withdrawal,
+    /\} catch \{[\s\S]*markWithdrawalInitiationManualReview/,
+  );
+});
+
+test("successful initiation and webhook verification remain worker-routed", () => {
+  const success = classifyWithdrawalInitiationResponse({
+    response: providerResponse({ status: 200 }),
+    provider: {
+      status: "success",
+      data: { id: "12345", status: "NEW" },
+    },
+    hasValidProviderJson: true,
+  });
+  assert.equal(success.accepted, true);
+
+  const commerce = read("api/_walletCommerce.js");
+  const withdrawalStart = commerce.indexOf(
+    "export async function handleWithdrawal",
+  );
+  const webhookStart = commerce.indexOf(
+    "export async function processWithdrawalWebhook",
+  );
+  const withdrawal = commerce.slice(withdrawalStart, webhookStart);
+  const webhook = commerce.slice(webhookStart);
+  assert.match(withdrawal, /operation: "initiate"/);
+  assert.match(webhook, /operation: "verify"/);
+  assert.match(webhook, /verifiedReference !== reference/);
+  assert.match(webhook, /settle_wallet_withdrawal_success_v2/);
+  assert.match(webhook, /refund_wallet_withdrawal_v2/);
+});
+
+test("labelled rejection reaches the existing idempotent refund branch", () => {
+  const commerce = read("api/_walletCommerce.js");
+  const withdrawal = commerce.slice(
+    commerce.indexOf("export async function handleWithdrawal"),
+    commerce.indexOf("export async function processWithdrawalWebhook"),
+  );
+  const classifier = withdrawal.indexOf(
+    "classifyWithdrawalInitiationResponse",
+  );
+  const confirmed = withdrawal.indexOf("if (!confirmedRejection)", classifier);
+  const refund = withdrawal.indexOf('"refund_wallet_withdrawal_v2"', confirmed);
+  const eventKey = withdrawal.indexOf("`init-failed:${key}`", refund);
+  assert.ok(
+    classifier >= 0 &&
+      confirmed > classifier &&
+      refund > confirmed &&
+      eventKey > refund,
+  );
+  assert.match(withdrawal, /worker_pre_provider_rejected/);
+  assert.match(withdrawal, /WITHDRAWAL_PROVIDER_REJECTED/);
+  assert.match(withdrawal, /refunded: true/);
+  assert.match(withdrawal, /pending: false/);
 });
 
 test("active financial API routes contain no JavaScript balance arithmetic", () => {
@@ -386,11 +592,11 @@ test("withdrawal submission owns provider-ID collision handling and cannot retry
   const webhookStart = api.indexOf("export async function processWithdrawalWebhook");
   assert.ok(withdrawalStart >= 0 && webhookStart > withdrawalStart);
   const withdrawal = api.slice(withdrawalStart, webhookStart);
-  const secret = withdrawal.indexOf("const secretKey = flutterwaveSecret(res);");
+  const config = withdrawal.indexOf("const payoutWorker = payoutWorkerConfig(res);");
   const reserve = withdrawal.indexOf("reserve_wallet_withdrawal_v2");
   const reviewedRetry = withdrawal.indexOf("reservation.pending_manual_review === true");
   const attempt = withdrawal.indexOf("mark_wallet_withdrawal_attempt_started_v2");
-  assert.ok(secret >= 0 && reserve > secret);
+  assert.ok(config >= 0 && reserve > config);
   assert.ok(reviewedRetry >= 0 && attempt > reviewedRetry);
   assert.match(withdrawal, /callWithdrawalCallbackRpc\([\s\S]*mark_wallet_withdrawal_submitted_v2/);
   assert.match(withdrawal, /submitted\.manual_review === true/);
@@ -440,5 +646,6 @@ test("withdrawal UI uses the persisted Flutterwave bank fields without changing 
   assert.match(submit, /fetch\('\/api\/wallet\?action=withdraw'/);
   assert.match(submit, /body: JSON\.stringify\(\{\s*amount: Number\(withdrawAmount\),\s*pin: withdrawPin\s*\}\)/);
   assert.doesNotMatch(submit, /bank_code|bank_name|account_number|account_name/);
-  assert.match(commerce, /https:\/\/api\.flutterwave\.com\/v3\/transfers/);
+  assert.match(commerce, /operation: "initiate"/);
+  assert.doesNotMatch(commerce, /https:\/\/api\.flutterwave\.com\/v3\/transfers/);
 });

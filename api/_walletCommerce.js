@@ -607,6 +607,9 @@ const PAYOUT_WORKER_ENDPOINTS = Object.freeze({
 });
 const PAYOUT_WORKER_REQUEST_TIMEOUT_MS = 18_000;
 const PAYOUT_WORKER_MIN_SECRET_BYTES = 32;
+const PAYOUT_CALLBACK_ORIGIN = "https://plugsy.ng";
+const PAYOUT_WORKER_PRE_PROVIDER_REJECTION = "pre-provider-rejected";
+const PAYOUT_WORKER_OUTCOME_HEADER = "x-plugsy-worker-outcome";
 
 const pauseWithdrawals = (res) =>
   send(
@@ -616,21 +619,28 @@ const pauseWithdrawals = (res) =>
     "Withdrawals are temporarily paused.",
   );
 
-const payoutWorkerConfig = (res) => {
-  if (lower(process.env.PAYOUT_WORKER_ENABLED) !== "true") {
-    pauseWithdrawals(res);
-    return null;
-  }
+export const resolvePayoutWorkerConfiguration = ({
+  enabled,
+  workerUrl,
+  hmacSecret,
+  callbackOrigin,
+}) => {
+  if (lower(enabled) !== "true") return null;
 
-  const rawUrl = text(process.env.PAYOUT_WORKER_URL);
-  const hmacSecret = String(
-    process.env.PAYOUT_WORKER_HMAC_SECRET || "",
-  );
+  const rawUrl = text(workerUrl);
+  const rawHmacSecret = String(hmacSecret || "");
+  const rawCallbackOrigin = String(callbackOrigin || "");
   let parsedUrl;
+  let parsedCallbackOrigin;
   try {
     parsedUrl = new URL(rawUrl);
   } catch {
     parsedUrl = null;
+  }
+  try {
+    parsedCallbackOrigin = new URL(rawCallbackOrigin);
+  } catch {
+    parsedCallbackOrigin = null;
   }
 
   if (
@@ -642,18 +652,39 @@ const payoutWorkerConfig = (res) => {
     parsedUrl.search ||
     parsedUrl.hash ||
     (parsedUrl.pathname !== "/" && parsedUrl.pathname !== "") ||
-    hmacSecret !== hmacSecret.trim() ||
-    Buffer.byteLength(hmacSecret, "utf8") <
-      PAYOUT_WORKER_MIN_SECRET_BYTES
+    rawHmacSecret !== rawHmacSecret.trim() ||
+    Buffer.byteLength(rawHmacSecret, "utf8") <
+      PAYOUT_WORKER_MIN_SECRET_BYTES ||
+    rawCallbackOrigin !== rawCallbackOrigin.trim() ||
+    !parsedCallbackOrigin ||
+    parsedCallbackOrigin.protocol !== "https:" ||
+    parsedCallbackOrigin.origin !== PAYOUT_CALLBACK_ORIGIN ||
+    parsedCallbackOrigin.pathname !== "/" ||
+    parsedCallbackOrigin.username ||
+    parsedCallbackOrigin.password ||
+    parsedCallbackOrigin.search ||
+    parsedCallbackOrigin.hash
   ) {
-    pauseWithdrawals(res);
     return null;
   }
 
   return {
     baseUrl: parsedUrl.origin,
-    hmacSecret,
+    hmacSecret: rawHmacSecret,
+    callbackOrigin: parsedCallbackOrigin.origin,
   };
+};
+
+const payoutWorkerConfig = (res) => {
+  const config = resolvePayoutWorkerConfiguration({
+    enabled: process.env.PAYOUT_WORKER_ENABLED,
+    workerUrl: process.env.PAYOUT_WORKER_URL,
+    hmacSecret: process.env.PAYOUT_WORKER_HMAC_SECRET,
+    callbackOrigin: process.env.PAYOUT_CALLBACK_ORIGIN,
+  });
+  if (config) return config;
+  pauseWithdrawals(res);
+  return null;
 };
 
 const requestPayoutWorker = async ({
@@ -778,7 +809,71 @@ const flutterwaveInitiationDiagnostics = ({
         provider?.data?.complete_message,
     ) || null,
   providerTraceHeader: flutterwaveTraceHeader(response) || null,
+  workerOutcome:
+    sanitizeProviderDiagnostic(
+      response?.headers?.get?.(PAYOUT_WORKER_OUTCOME_HEADER),
+      48,
+    ) || null,
+  workerCode:
+    sanitizeProviderDiagnostic(provider?.code, 64) || null,
 });
+
+export const classifyWithdrawalInitiationResponse = ({
+  response,
+  provider,
+  hasValidProviderJson,
+}) => {
+  const providerId = text(provider?.data?.id);
+  const providerStatus = lower(provider?.status);
+  const providerTransferStatus = lower(provider?.data?.status);
+  const providerMessage =
+    provider?.message ||
+    provider?.complete_message ||
+    provider?.data?.complete_message;
+  const hasFinalFailureStatus =
+    isFinalWithdrawalFailureStatus(providerTransferStatus);
+  const accepted =
+    response?.ok === true &&
+    providerStatus === "success" &&
+    Boolean(providerId) &&
+    !hasFinalFailureStatus;
+  const workerPreProviderRejected =
+    hasValidProviderJson === true &&
+    response?.status === 400 &&
+    response?.headers?.get?.(PAYOUT_WORKER_OUTCOME_HEADER) ===
+      PAYOUT_WORKER_PRE_PROVIDER_REJECTION &&
+    provider?.code === "TRANSFER_REQUEST_INVALID" &&
+    !providerId;
+  const hasAmbiguousTransportStatus =
+    AMBIGUOUS_WITHDRAWAL_HTTP_STATUSES.has(response?.status) ||
+    response?.status >= 500;
+  const isSafePreSubmissionRejection =
+    SAFE_PRE_SUBMISSION_REJECTION_HTTP_STATUSES.has(
+      response?.status,
+    ) &&
+    !providerId &&
+    SAFE_PROVIDER_REJECTION_STATUSES.has(providerStatus) &&
+    !hasAmbiguousProviderRejectionMessage(providerMessage);
+  const hasExplicitFinalFailure =
+    hasFinalFailureStatus ||
+    (response?.ok === true &&
+      !providerId &&
+      isFinalWithdrawalFailureStatus(providerStatus));
+  const confirmedRejection =
+    workerPreProviderRejected ||
+    (hasValidProviderJson === true &&
+      !hasAmbiguousTransportStatus &&
+      (hasExplicitFinalFailure || isSafePreSubmissionRejection));
+
+  return {
+    accepted,
+    confirmedRejection,
+    workerPreProviderRejected,
+    providerId,
+    providerStatus,
+    providerTransferStatus,
+  };
+};
 
 const markWithdrawalInitiationManualReview = async ({
   supabase,
@@ -1429,10 +1524,6 @@ export async function handleWithdrawal(req, res) {
   let provider;
   let response;
   try {
-    const siteUrl =
-      text(process.env.NEXT_PUBLIC_SITE_URL) ||
-      text(process.env.SITE_URL) ||
-      "https://www.plugsy.ng";
     response = await requestPayoutWorker({
       config: payoutWorker,
       operation: "initiate",
@@ -1445,7 +1536,7 @@ export async function handleWithdrawal(req, res) {
         debit_currency: "NGN",
         reference: reservation.reference,
         callback_url:
-          siteUrl.replace(/\/$/, "") +
+          payoutWorker.callbackOrigin +
           "/api/wallet?action=transfer-webhook",
       },
     });
@@ -1466,43 +1557,21 @@ export async function handleWithdrawal(req, res) {
       diagnostics,
     );
 
-    const providerId = text(provider?.data?.id);
-    const providerStatus = lower(provider?.status);
-    const providerTransferStatus = lower(provider?.data?.status);
-    const providerMessage =
-      provider?.message ||
-      provider?.complete_message ||
-      provider?.data?.complete_message;
-    const hasFinalFailureStatus =
-      isFinalWithdrawalFailureStatus(providerTransferStatus);
-    const accepted =
-      response.ok &&
-      providerStatus === "success" &&
-      Boolean(providerId) &&
-      !hasFinalFailureStatus;
+    const classification = classifyWithdrawalInitiationResponse({
+      response,
+      provider,
+      hasValidProviderJson,
+    });
+    const {
+      accepted,
+      confirmedRejection,
+      workerPreProviderRejected,
+      providerId,
+      providerStatus,
+      providerTransferStatus,
+    } = classification;
 
     if (!accepted) {
-      const hasAmbiguousTransportStatus =
-        AMBIGUOUS_WITHDRAWAL_HTTP_STATUSES.has(response.status) ||
-        response.status >= 500;
-      const isSafePreSubmissionRejection =
-        SAFE_PRE_SUBMISSION_REJECTION_HTTP_STATUSES.has(
-          response.status,
-        ) &&
-        !providerId &&
-        SAFE_PROVIDER_REJECTION_STATUSES.has(providerStatus) &&
-        !hasAmbiguousProviderRejectionMessage(providerMessage);
-      const hasExplicitFinalFailure =
-        hasFinalFailureStatus ||
-        (response.ok &&
-          !providerId &&
-          isFinalWithdrawalFailureStatus(providerStatus));
-      const confirmedRejection =
-        hasValidProviderJson &&
-        !hasAmbiguousTransportStatus &&
-        (hasExplicitFinalFailure ||
-          isSafePreSubmissionRejection);
-
       if (!confirmedRejection) {
         const manualReviewRecorded =
           await markWithdrawalInitiationManualReview({
@@ -1539,9 +1608,11 @@ export async function handleWithdrawal(req, res) {
           p_reference: reservation.reference,
           p_provider_transaction_id: providerId || null,
           p_provider_status:
-            text(providerTransferStatus) ||
-            text(providerStatus) ||
-            "initialization_failed",
+            workerPreProviderRejected
+              ? "worker_pre_provider_rejected"
+              : text(providerTransferStatus) ||
+                text(providerStatus) ||
+                "initialization_failed",
           p_event_key: `init-failed:${key}`,
         },
       );

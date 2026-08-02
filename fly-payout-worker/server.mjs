@@ -13,7 +13,9 @@ const NONCE_CLEANUP_INTERVAL_MS = 30 * 1000;
 const MAX_REPLAY_CACHE_ENTRIES = 10_000;
 const PROVIDER_TIMEOUT_MS = 15_000;
 const HMAC_SECRET_MIN_BYTES = 32;
-const EXPECTED_CALLBACK_ORIGIN = "https://www.plugsy.ng";
+const EXPECTED_CALLBACK_ORIGIN = "https://plugsy.ng";
+const PRE_PROVIDER_REJECTION_HEADER = "x-plugsy-worker-outcome";
+const PRE_PROVIDER_REJECTION_VALUE = "pre-provider-rejected";
 const PROVIDER_ORIGIN = "https://api.flutterwave.com";
 const BANK_CODE_PATTERN = /^[A-Za-z0-9_-]{2,12}$/;
 const ACCOUNT_NUMBER_PATTERN = /^\d{10}$/;
@@ -57,8 +59,19 @@ const writeJson = (res, status, payload, extraHeaders = {}) => {
   res.end(body);
 };
 
-const errorResponse = (res, status, code, message) =>
-  writeJson(res, status, { success: false, code, error: message });
+const errorResponse = (
+  res,
+  status,
+  code,
+  message,
+  extraHeaders = {},
+) =>
+  writeJson(
+    res,
+    status,
+    { success: false, code, error: message },
+    extraHeaders,
+  );
 
 const readRawBody = (req) =>
   new Promise((resolve, reject) => {
@@ -147,7 +160,7 @@ const readRuntimeConfig = (env) => {
     env.FLUTTERWAVE_SECRET_KEY || "",
   );
   const hmacSecret = String(env.PLUGSY_PAYOUT_HMAC_SECRET || "");
-  const callbackOriginValue = String(env.PLUGSY_CALLBACK_ORIGIN || "").trim();
+  const callbackOriginValue = String(env.PLUGSY_CALLBACK_ORIGIN || "");
   let callbackOrigin;
   try {
     callbackOrigin = new URL(callbackOriginValue);
@@ -160,6 +173,7 @@ const readRuntimeConfig = (env) => {
     flutterwaveSecretKey !== flutterwaveSecretKey.trim() ||
     hmacSecret !== hmacSecret.trim() ||
     Buffer.byteLength(hmacSecret, "utf8") < HMAC_SECRET_MIN_BYTES ||
+    callbackOriginValue !== callbackOriginValue.trim() ||
     !callbackOrigin ||
     callbackOrigin.origin !== EXPECTED_CALLBACK_ORIGIN ||
     callbackOrigin.pathname !== "/" ||
@@ -458,6 +472,10 @@ export const createPayoutWorkerHandler = ({
             400,
             "TRANSFER_REQUEST_INVALID",
             "The transfer request is invalid.",
+            {
+              [PRE_PROVIDER_REJECTION_HEADER]:
+                PRE_PROVIDER_REJECTION_VALUE,
+            },
           );
         }
         return callProviderOnce({

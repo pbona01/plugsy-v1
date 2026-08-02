@@ -9,7 +9,7 @@ const TEST_SECRET = "test-only-hmac-secret-32-bytes-minimum-value";
 const TEST_ENV = {
   FLUTTERWAVE_SECRET_KEY: "test-only-provider-secret",
   PLUGSY_PAYOUT_HMAC_SECRET: TEST_SECRET,
-  PLUGSY_CALLBACK_ORIGIN: "https://www.plugsy.ng",
+  PLUGSY_CALLBACK_ORIGIN: "https://plugsy.ng",
   PORT: "8080",
 };
 const VALID_INITIATION = {
@@ -21,8 +21,10 @@ const VALID_INITIATION = {
   debit_currency: "NGN",
   reference: "test:withdrawal:reference:0001",
   callback_url:
-    "https://www.plugsy.ng/api/wallet?action=transfer-webhook",
+    "https://plugsy.ng/api/wallet?action=transfer-webhook",
 };
+const PRE_PROVIDER_REJECTION_HEADER = "x-plugsy-worker-outcome";
+const PRE_PROVIDER_REJECTION_VALUE = "pre-provider-rejected";
 
 let nonceSequence = 0;
 const nextNonce = () => (++nonceSequence).toString(16).padStart(32, "0");
@@ -269,7 +271,7 @@ test("rejects the wrong currency", async () => {
   });
 });
 
-test("rejects an invalid callback URL", async () => {
+test("rejects any other callback origin", async () => {
   await withWorker(async (origin) => {
     const response = await postSigned(
       origin,
@@ -281,10 +283,68 @@ test("rejects an invalid callback URL", async () => {
       },
     );
     assert.equal(response.status, 400);
+    assert.equal(
+      response.headers.get(PRE_PROVIDER_REJECTION_HEADER),
+      PRE_PROVIDER_REJECTION_VALUE,
+    );
   });
 });
 
-test("forwards one exact valid initiation payload", async () => {
+test("rejects the www callback origin before calling the provider", async () => {
+  let calls = 0;
+  await withWorker(
+    async (origin) => {
+      const response = await postSigned(
+        origin,
+        "/v1/transfers/initiate",
+        {
+          ...VALID_INITIATION,
+          callback_url:
+            "https://www.plugsy.ng/api/wallet?action=transfer-webhook",
+        },
+      );
+      assert.equal(response.status, 400);
+      assert.equal(
+        response.headers.get(PRE_PROVIDER_REJECTION_HEADER),
+        PRE_PROVIDER_REJECTION_VALUE,
+      );
+      assert.equal(calls, 0);
+    },
+    { providerFetch: async () => { calls += 1; } },
+  );
+});
+
+test("rejects the wrong callback path", async () => {
+  await withWorker(async (origin) => {
+    const response = await postSigned(
+      origin,
+      "/v1/transfers/initiate",
+      {
+        ...VALID_INITIATION,
+        callback_url:
+          "https://plugsy.ng/api/other?action=transfer-webhook",
+      },
+    );
+    assert.equal(response.status, 400);
+  });
+});
+
+test("rejects extra callback query parameters", async () => {
+  await withWorker(async (origin) => {
+    const response = await postSigned(
+      origin,
+      "/v1/transfers/initiate",
+      {
+        ...VALID_INITIATION,
+        callback_url:
+          "https://plugsy.ng/api/wallet?action=transfer-webhook&extra=1",
+      },
+    );
+    assert.equal(response.status, 400);
+  });
+});
+
+test("accepts https://plugsy.ng and forwards one exact initiation payload", async () => {
   const providerCalls = [];
   await withWorker(
     async (origin) => {
@@ -294,6 +354,10 @@ test("forwards one exact valid initiation payload", async () => {
         VALID_INITIATION,
       );
       assert.equal(response.status, 200);
+      assert.equal(
+        response.headers.get(PRE_PROVIDER_REJECTION_HEADER),
+        null,
+      );
       assert.equal(providerCalls.length, 1);
       assert.equal(
         providerCalls[0].url,
@@ -390,7 +454,7 @@ test("returns 502 on provider network failure without retrying", async () => {
   );
 });
 
-test("does not retry a completed provider HTTP response", async () => {
+test("forwards provider responses without worker outcome headers or retries", async () => {
   let calls = 0;
   await withWorker(
     async (origin) => {
@@ -400,6 +464,10 @@ test("does not retry a completed provider HTTP response", async () => {
         VALID_INITIATION,
       );
       assert.equal(response.status, 500);
+      assert.equal(
+        response.headers.get(PRE_PROVIDER_REJECTION_HEADER),
+        null,
+      );
       assert.equal(calls, 1);
     },
     {
@@ -465,6 +533,10 @@ test("does not call the provider when schema validation fails", async () => {
         { providerTransactionId: "../arbitrary-path" },
       );
       assert.equal(response.status, 400);
+      assert.equal(
+        response.headers.get(PRE_PROVIDER_REJECTION_HEADER),
+        null,
+      );
       assert.equal(calls, 0);
     },
     { providerFetch: async () => { calls += 1; } },

@@ -24,13 +24,14 @@ Fly worker secrets/configuration:
 
 - `FLUTTERWAVE_SECRET_KEY`
 - `PLUGSY_PAYOUT_HMAC_SECRET`
-- `PLUGSY_CALLBACK_ORIGIN=https://www.plugsy.ng`
+- `PLUGSY_CALLBACK_ORIGIN=https://plugsy.ng`
 - `PORT=8080` (provided by the image/configuration)
 
 Vercel wallet API configuration:
 
 - `PAYOUT_WORKER_URL=https://plugsy-payout-egress-pbona01.fly.dev`
 - `PAYOUT_WORKER_HMAC_SECRET` (the same value as the Fly HMAC secret)
+- `PAYOUT_CALLBACK_ORIGIN=https://plugsy.ng`
 - `PAYOUT_WORKER_ENABLED=false` initially
 
 No real secret values belong in Git, Fly configuration files, build arguments, logs, or frontend environment variables.
@@ -79,7 +80,7 @@ Do not deploy from a development workstation until the branch, security review, 
    ```
 
 7. Record the app-scoped **egress IPv4** shown by the allocation/list command. Whitelist that IPv4 in Flutterwave. Do not use the public Fly Proxy ingress address or the IPv6 value as a substitute for the required IPv4 allowlist entry.
-8. Keep Vercel disabled. Configure `PAYOUT_WORKER_URL` and the matching `PAYOUT_WORKER_HMAC_SECRET`, deploy the reviewed Vercel release, and verify the pause response still happens before reservation.
+8. Keep Vercel disabled. Configure `PAYOUT_WORKER_URL`, the matching `PAYOUT_WORKER_HMAC_SECRET`, and `PAYOUT_CALLBACK_ORIGIN=https://plugsy.ng`; deploy the reviewed Vercel release, and verify the pause response still happens before reservation.
 9. Check generic readiness only:
 
    ```powershell
