@@ -7,7 +7,13 @@ import {
   resolveOrCreateSupportChat,
 } from "./_supportChats.js";
 import { requireVerifiedClerkUser } from "../api/_clerkAuth.js";
+import { clerkClient } from "@clerk/clerk-sdk-node";
 import { reconcileWalletFunding } from "../api/_walletFundingWebhook.js";
+import {
+  AdminOverviewFailure,
+  buildOverviewMetrics,
+  fetchBoundedRows,
+} from "../shared/admin-overview.js";
 
 const getClient = () => createClient(
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co',
@@ -1044,6 +1050,95 @@ async function handleListProfiles(req, res) {
   }
 }
 
+export async function handleOverviewMetrics(req, res, dependencies = {}) {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  if (req.method !== "GET") {
+    res.setHeader("Allow", "GET");
+    return res.status(405).json({ success: false, code: "METHOD_NOT_ALLOWED", error: "GET is required." });
+  }
+  if (!/^Bearer\s+\S+$/i.test(textValue(req.headers?.authorization))) {
+    return res.status(401).json({ success: false, code: "ADMIN_AUTH_REQUIRED", error: "Sign-in is required." });
+  }
+  try {
+    const authenticate = dependencies.authenticate || requireVerifiedClerkUser;
+    const actor = await authenticate(req, res);
+    if (!actor) return;
+    const supabase = dependencies.supabase || getAdminUsersClient();
+    const authorize = dependencies.authorize || authorizeAdminUsersActor;
+    if (!(await authorize(actor, res, supabase))) return;
+    if (!textValue(dependencies.secretKey ?? process.env.CLERK_SECRET_KEY)) {
+      throw new AdminOverviewFailure("ADMIN_OVERVIEW_CLERK_CONFIGURATION_ERROR");
+    }
+    const clerk = dependencies.clerkClient || clerkClient;
+    const clerkCountResult = await (dependencies.getClerkCount
+      ? dependencies.getClerkCount()
+      : clerk.users.getCount());
+    const registeredUsers = Number(
+      typeof clerkCountResult === "number" ? clerkCountResult : clerkCountResult?.count,
+    );
+    if (!Number.isSafeInteger(registeredUsers) || registeredUsers < 0) {
+      throw new AdminOverviewFailure("ADMIN_OVERVIEW_CLERK_COUNT_FAILED");
+    }
+    const profileCountResult = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true });
+    if (profileCountResult?.error || !Number.isSafeInteger(profileCountResult?.count) || profileCountResult.count < 0) {
+      throw new AdminOverviewFailure("ADMIN_OVERVIEW_DATABASE_ERROR");
+    }
+    const orderCountResult = await supabase
+      .from("orders")
+      .select("id", { count: "exact", head: true });
+    if (orderCountResult?.error || !Number.isSafeInteger(orderCountResult?.count) || orderCountResult.count < 0) {
+      throw new AdminOverviewFailure("ADMIN_OVERVIEW_DATABASE_ERROR");
+    }
+    const profiles = await fetchBoundedRows((from, to) => supabase
+      .from("profiles")
+      .select("id,clerk_id,email,full_name,username,bio,profile_pic_url,image_url,one_link_username,one_link_display_name,one_link_avatar_url,one_link_settings,one_link_updated_at,updated_at")
+      .order("id", { ascending: true })
+      .range(from, to));
+    const orders = await fetchBoundedRows((from, to) => supabase
+      .from("orders")
+      .select("id,status,amount,delivery_status,product_name,subscription_expires_at,created_at")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to));
+    const portfolioPurchases = await fetchBoundedRows((from, to) => supabase
+      .from("portfolio_purchases")
+      .select("id,amount,created_at")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to));
+    const chats = await fetchBoundedRows((from, to) => supabase
+      .from("chats")
+      .select("id,user_id,userId,status,needs_admin_attention,metadata,created_at")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to));
+    const metrics = buildOverviewMetrics({
+      clerkCount: registeredUsers,
+      profiles,
+      orders,
+      portfolioPurchases,
+      chats,
+      totalOrders: orderCountResult.count,
+      syncedProfiles: profileCountResult.count,
+    });
+    return res.status(200).json({ success: true, metrics, updatedAt: new Date().toISOString() });
+  } catch (error) {
+    const failure = error instanceof AdminOverviewFailure
+      ? error
+      : new AdminOverviewFailure("ADMIN_OVERVIEW_DATABASE_ERROR");
+    const messages = {
+      ADMIN_OVERVIEW_CLERK_CONFIGURATION_ERROR: "The overview user service is not configured.",
+      ADMIN_OVERVIEW_CLERK_COUNT_FAILED: "Registered users are temporarily unavailable.",
+      ADMIN_OVERVIEW_DATABASE_ERROR: "Overview metrics are temporarily unavailable.",
+      ADMIN_OVERVIEW_RESPONSE_INVALID: "The overview service returned an invalid response.",
+    };
+    return res.status(failure.status).json({ success: false, code: failure.code, error: messages[failure.code] || messages.ADMIN_OVERVIEW_DATABASE_ERROR });
+  }
+}
+
 export async function handleListUsers(req, res, dependencies = {}) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
@@ -1270,6 +1365,7 @@ export default async function handler(req, res) {
   if (action === "list-orders") return await handleListOrders(req, res)
   if (action === "list-subscriptions") return await handleListSubscriptions(req, res)
   if (action === "list-profiles") return await handleListProfiles(req, res)
+  if (action === "overview-metrics") return await handleOverviewMetrics(req, res)
   if (action === "list-users") return await handleListUsers(req, res)
   if (action === "list-portfolio_purchases") return await handleListPortfolioPurchases(req, res)
   if (action === "send-login-email" || action === "send-logins-email") return await handleSendLoginEmail(req, res)
