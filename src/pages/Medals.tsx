@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { useUser } from "@clerk/clerk-react";
@@ -21,6 +21,7 @@ import { LiquidGlass } from "../components/ui/LiquidGlass";
 import { Helmet } from "react-helmet-async";
 import { toast } from "react-hot-toast";
 import { cn } from "../lib/utils";
+import { MEDAL_CAPACITY, validateMedalSalesResponse } from "../../shared/medals.js";
 
 interface MedalPlan {
   id: string;
@@ -41,17 +42,51 @@ export default function Medals() {
   const [medalPlans, setMedalPlans] = useState<MedalPlan[]>([]);
   const [activeMedal, setActiveMedal] = useState<any>(null);
   const [medalNumber, setMedalNumber] = useState<number | null>(null);
-  const [totalSold, setTotalSold] = useState(0);
+  const [totalSold, setTotalSold] = useState<number | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const salesSequenceRef = useRef(0);
+  const salesAbortRef = useRef<AbortController | null>(null);
+  const salesInFlightRef = useRef(false);
+
+  const refreshMedalSales = useCallback(async (force = false) => {
+    if (!force && document.visibilityState !== "visible") return;
+    if (salesInFlightRef.current) return;
+    salesInFlightRef.current = true;
+    const sequence = ++salesSequenceRef.current;
+    salesAbortRef.current?.abort();
+    const controller = new AbortController();
+    salesAbortRef.current = controller;
+    try {
+      const response = await fetch("/api/payments?action=get-medal-sales", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const contentType = response.headers.get("content-type") || "";
+      let payload: unknown = null;
+      if (contentType.toLowerCase().includes("application/json")) {
+        try { payload = await response.json(); } catch { payload = null; }
+      }
+      if (response.ok && sequence === salesSequenceRef.current && validateMedalSalesResponse(payload)) {
+        setTotalSold(payload.totalSold);
+      }
+    } catch {
+      // Preserve the last confirmed count; the next focus/interval retries.
+    } finally {
+      if (sequence === salesSequenceRef.current) salesInFlightRef.current = false;
+    }
+  }, []);
 
   useEffect(() => {
     if (searchParams.get('success') === 'medal') {
       setShowSuccessModal(true);
+      void refreshMedalSales(true);
       // Clean URL
       const newUrl = window.location.pathname;
       window.history.replaceState({}, '', newUrl);
     }
-  }, [searchParams]);
+  }, [searchParams, refreshMedalSales]);
 
   useEffect(() => {
     async function initData() {
@@ -66,24 +101,14 @@ export default function Medals() {
         if (plansError) throw plansError;
         setMedalPlans(plans || []);
 
-        // Fetch user medal status and overall sales
+        // Fetch user medal status separately from the public aggregate count.
         if (userId) {
           const res = await fetch(`/api/payments?action=get-medal-status&userId=${userId}&t=${Date.now()}`);
           const data = await res.json();
           if (data?.success) {
             setActiveMedal(data.medal);
             setMedalNumber(data.medalNumber);
-            setTotalSold(data.totalSold);
           }
-        } else {
-          // If logged out, fetch general sales count
-          const { data: allPaidOrders } = await supabase
-            .from("orders")
-            .select("product_name")
-            .in("status", ["paid", "completed"]);
-          
-          const count = allPaidOrders?.filter(o => o.product_name?.toLowerCase().includes("medal")).length || 0;
-          setTotalSold(count || 0);
         }
       } catch (err) {
         console.error("Error loading medals page data:", err);
@@ -94,6 +119,26 @@ export default function Medals() {
 
     initData();
   }, [userId]);
+
+  useEffect(() => {
+    void refreshMedalSales(true);
+    const interval = window.setInterval(() => void refreshMedalSales(), 10000);
+    const onFocus = () => void refreshMedalSales();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refreshMedalSales();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      salesSequenceRef.current += 1;
+      salesAbortRef.current?.abort();
+      salesAbortRef.current = null;
+      salesInFlightRef.current = false;
+    };
+  }, [refreshMedalSales]);
 
   const getMedalStyles = (tierName: string) => {
     const name = tierName.toLowerCase();
@@ -230,12 +275,14 @@ export default function Medals() {
             <div className="bg-brand-surface border border-brand-border p-4 rounded-2xl max-w-md mx-auto space-y-3">
               <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
                 <span className="text-brand-text/60">Global Medal Capacity</span>
-                <span className="text-brand-accent">{totalSold} / 160 Claimed</span>
+                <span className="text-brand-accent" aria-live="polite">
+                  {totalSold === null ? `Updating count / ${MEDAL_CAPACITY} Claimed` : `${totalSold} / ${MEDAL_CAPACITY} Claimed`}
+                </span>
               </div>
               <div className="w-full bg-brand-bg rounded-full h-2.5 overflow-hidden border border-brand-border/40">
                 <motion.div
                   initial={{ width: 0 }}
-                  animate={{ width: `${Math.min((totalSold / 160) * 100, 100)}%` }}
+                  animate={{ width: `${totalSold === null ? 0 : Math.min((totalSold / MEDAL_CAPACITY) * 100, 100)}%` }}
                   transition={{ duration: 1, ease: "easeOut" }}
                   className="bg-brand-accent h-full rounded-full shadow-lg shadow-brand-accent/40"
                 />

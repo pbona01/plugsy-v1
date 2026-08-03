@@ -1,6 +1,7 @@
 import {
   getWalletServiceClient,
   handleMedalStatus,
+  handleMedalSales,
   handleWalletProductPurchase,
   handleWalletProductStatus,
 } from "./_walletCommerce.js"
@@ -140,6 +141,10 @@ export default async function handler(req, res) {
 
   if (action === "get-medal-status") {
     return handleMedalStatus(req, res)
+  }
+
+  if (action === "get-medal-sales") {
+    return handleMedalSales(req, res)
   }
 
   if (action === "initialize") {

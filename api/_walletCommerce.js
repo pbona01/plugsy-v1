@@ -8,6 +8,10 @@ import {
 import { createClient } from "@supabase/supabase-js";
 import { requireVerifiedClerkUser } from "./_clerkAuth.js";
 import { prepareJsonRequestBody } from "./_walletFundingWebhook.js";
+import {
+  MEDAL_CAPACITY,
+  MEDAL_PLAN_CATEGORIES,
+} from "../shared/medals.js";
 
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const USERNAME_PATTERN = /^[a-z0-9_]{3,30}$/;
@@ -17,6 +21,138 @@ const REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,180}$/;
 
 const text = (value) => String(value || "").trim();
 const lower = (value) => text(value).toLowerCase();
+
+const MEDAL_STATUS_VALUES = new Set(["paid", "completed"]);
+
+const normalizePlanMap = (plans) =>
+  new Map(
+    plans
+      .filter((plan) => plan && plan.id)
+      .map((plan) => [String(plan.id), plan]),
+  );
+
+const isVerifiedMedalPlan = (plan) =>
+  Boolean(
+    plan &&
+      (text(plan.wallet_product_type) === "medal" ||
+        MEDAL_PLAN_CATEGORIES.includes(text(plan.category))),
+  );
+
+export function classifyMedalOrder(order, plansById) {
+  const plan = plansById.get(String(order?.plan_id || ""));
+  const statusQualified = MEDAL_STATUS_VALUES.has(order?.status);
+  const productTypeMatch = order?.product_type === "medal";
+  const planMatch = isVerifiedMedalPlan(plan);
+  const legacyNameMatch = lower(order?.product_name).includes("medal");
+  return {
+    statusQualified,
+    productTypeMatch,
+    planMatch,
+    legacyNameMatch,
+    qualifies:
+      statusQualified &&
+      (productTypeMatch || planMatch || legacyNameMatch),
+    plan,
+  };
+}
+
+export function countQualifyingMedalSalesFromRows(orders, plans) {
+  const plansById = normalizePlanMap(plans);
+  const seenOrderIds = new Set();
+  const qualifyingOrders = [];
+  const excludedCandidates = [];
+
+  orders.forEach((order, index) => {
+    const classification = classifyMedalOrder(order, plansById);
+    if (
+      !classification.statusQualified &&
+      (classification.productTypeMatch ||
+        classification.planMatch ||
+        classification.legacyNameMatch)
+    ) {
+      excludedCandidates.push(order);
+    }
+    if (!classification.qualifies) return;
+    const key = order?.id ? `id:${order.id}` : `row:${index}`;
+    if (seenOrderIds.has(key)) return;
+    seenOrderIds.add(key);
+    qualifyingOrders.push({ order, classification });
+  });
+
+  return {
+    totalSold: qualifyingOrders.length,
+    qualifyingOrders,
+    excludedCandidates,
+    plansById,
+  };
+}
+
+export async function countQualifyingMedalSales(supabase) {
+  let ordersResult;
+  let plansResult;
+  try {
+    [ordersResult, plansResult] = await Promise.all([
+      supabase
+        .from("orders")
+        .select("id,user_id,product_name,product_type,plan_id,status,created_at"),
+      supabase
+        .from("plans")
+        .select("id,name,wallet_product_type,category"),
+    ]);
+  } catch {
+    return { ok: false, code: "MEDAL_SALES_UNAVAILABLE" };
+  }
+
+  if (ordersResult?.error || plansResult?.error) {
+    return { ok: false, code: "MEDAL_SALES_UNAVAILABLE" };
+  }
+  if (!Array.isArray(ordersResult?.data) || !Array.isArray(plansResult?.data)) {
+    return { ok: false, code: "MEDAL_SALES_INVALID_RESULT" };
+  }
+
+  return {
+    ok: true,
+    ...countQualifyingMedalSalesFromRows(
+      ordersResult.data,
+      plansResult.data,
+    ),
+  };
+}
+
+const inferMedalTier = ({ order, classification }) => {
+  const category = text(classification.plan?.category);
+  if (category === "medal_20k") return "Gold";
+  if (category === "medal_15k") return "Silver";
+  if (category === "medal_8k") return "Bronze";
+  const name = lower(order?.product_name);
+  if (classification.legacyNameMatch) {
+    if (name.includes("gold") || name.includes("20k")) return "Gold";
+    if (name.includes("silver") || name.includes("15k")) return "Silver";
+    if (name.includes("bronze") || name.includes("8k")) return "Bronze";
+  }
+  return "";
+};
+
+const medalNumberForUser = (qualifyingOrders, userId) => {
+  const seenUsers = new Set();
+  const orderedUsers = [];
+  [...qualifyingOrders]
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.order?.created_at || "") || 0;
+      const rightTime = Date.parse(right.order?.created_at || "") || 0;
+      return leftTime - rightTime ||
+        String(left.order?.id || "").localeCompare(String(right.order?.id || ""));
+    })
+    .forEach(({ order }) => {
+      const owner = text(order?.user_id);
+      if (owner && !seenUsers.has(owner)) {
+        seenUsers.add(owner);
+        orderedUsers.push(owner);
+      }
+    });
+  const index = orderedUsers.indexOf(userId);
+  return index >= 0 ? index + 1 : null;
+};
 
 const send = (res, status, code, error, extra = {}) =>
   res.status(status).json({
@@ -312,7 +448,7 @@ export async function handleWalletProductStatus(req, res) {
   });
 }
 
-export async function handleMedalStatus(req, res) {
+export async function handleMedalStatus(req, res, dependencies = {}) {
   if (req.method !== "GET") {
     return send(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
   }
@@ -327,24 +463,21 @@ export async function handleMedalStatus(req, res) {
     );
   }
 
-  const supabase = getWalletServiceClient(res);
+  const getClient =
+    dependencies.getWalletServiceClient || getWalletServiceClient;
+  const supabase = getClient(res);
   if (!supabase) return;
 
-  const [{ data: profile, error }, { count, error: countError }] =
-    await Promise.all([
-      supabase
-        .from("profiles")
-        .select("medal_tier,medal_number")
-        .eq("clerk_id", userId)
-        .maybeSingle(),
-      supabase
-        .from("orders")
-        .select("id", { count: "exact", head: true })
-        .eq("product_type", "medal")
-        .in("status", ["paid", "completed"]),
-    ]);
+  const profileResult = await supabase
+    .from("profiles")
+    .select("medal_tier,medal_number")
+    .eq("clerk_id", userId)
+    .maybeSingle();
+  const countSales =
+    dependencies.countQualifyingMedalSales || countQualifyingMedalSales;
+  const sales = await countSales(supabase);
 
-  if (error || countError) {
+  if (profileResult?.error || !sales?.ok) {
     return send(
       res,
       503,
@@ -353,7 +486,12 @@ export async function handleMedalStatus(req, res) {
     );
   }
 
-  const tier = text(profile?.medal_tier);
+  const qualifyingOrder = sales.qualifyingOrders.find(
+    ({ order }) => text(order?.user_id) === userId,
+  );
+  const tier =
+    text(profileResult?.data?.medal_tier) ||
+    (qualifyingOrder ? inferMedalTier(qualifyingOrder) : "");
   const discount =
     tier === "Gold" ? 0.5 : tier === "Silver" ? 0.3 : tier === "Bronze" ? 0.15 : 0;
   const commissionBonus =
@@ -369,8 +507,68 @@ export async function handleMedalStatus(req, res) {
           commissionBonus,
         }
       : null,
-    medalNumber: profile?.medal_number || null,
-    totalSold: count || 0,
+    medalNumber:
+      profileResult?.data?.medal_number ||
+      medalNumberForUser(sales.qualifyingOrders, userId),
+    totalSold: sales.totalSold,
+  });
+}
+
+export async function handleMedalSales(req, res, dependencies = {}) {
+  if (req.method !== "GET") {
+    return send(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
+  }
+
+  res.setHeader(
+    "Cache-Control",
+    "public, s-maxage=5, stale-while-revalidate=10",
+  );
+  const getClient =
+    dependencies.getWalletServiceClient || getWalletServiceClient;
+  const supabase = getClient(res);
+  if (!supabase) return;
+
+  const countSales =
+    dependencies.countQualifyingMedalSales || countQualifyingMedalSales;
+  let sales;
+  try {
+    sales = await countSales(supabase);
+  } catch {
+    return send(
+      res,
+      503,
+      "MEDAL_SALES_UNAVAILABLE",
+      "Medal sales are temporarily unavailable.",
+    );
+  }
+  if (!sales?.ok) {
+    return send(
+      res,
+      503,
+      sales?.code === "MEDAL_SALES_INVALID_RESULT"
+        ? "MEDAL_SALES_INVALID_RESULT"
+        : "MEDAL_SALES_UNAVAILABLE",
+      "Medal sales are temporarily unavailable.",
+    );
+  }
+
+  const totalSold = sales.totalSold;
+  if (!Number.isSafeInteger(totalSold) || totalSold < 0) {
+    return send(
+      res,
+      503,
+      "MEDAL_SALES_INVALID_RESULT",
+      "Medal sales are temporarily unavailable.",
+    );
+  }
+
+  return res.status(200).json({
+    success: true,
+    totalSold,
+    capacity: MEDAL_CAPACITY,
+    remaining: Math.max(0, MEDAL_CAPACITY - totalSold),
+    soldOut: totalSold >= MEDAL_CAPACITY,
+    updatedAt: new Date().toISOString(),
   });
 }
 
