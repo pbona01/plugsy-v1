@@ -127,7 +127,7 @@ async function findOwnerProfile(supabase, ownerUserId) {
   return { profile: data || null, failed: false };
 }
 
-function toOwnerResponse(profile) {
+export function toOwnerResponse(profile) {
   const parsed = parseOneLinkProfileBio(profile.bio);
   const independentInitialized = profile.one_link_updated_at !== null;
   const hasIndependentUsername =
@@ -170,9 +170,11 @@ function toOwnerResponse(profile) {
       profile.one_link_wallpaper_text_mode,
     ),
     messageUsername: normalizeOneLinkUsername(profile.username) || null,
-    settings: normalizeOneLinkSettings(
-      hasIndependentSettings ? profile.one_link_settings : parsed.settings,
-    ),
+    settings: hasIndependentSettings
+      ? normalizeOneLinkSettings(profile.one_link_settings, {
+          publicationContext: "independent",
+        })
+      : parsed.settings,
   };
 }
 
@@ -184,7 +186,7 @@ const revisionConflict = (res) =>
     "Your One Link changed in another tab. Refresh before saving again.",
   );
 
-const revisionMatches = (expected, persisted) =>
+export const revisionMatches = (expected, persisted) =>
   expected === (persisted ?? null);
 
 const nextRevision = (currentRevision) => {
@@ -199,15 +201,36 @@ const nextRevision = (currentRevision) => {
   ).toISOString();
 };
 
-const withRevisionMatch = (query, revision) =>
+export const withRevisionMatch = (query, revision) =>
   revision === null
     ? query.is("one_link_updated_at", null)
     : query.eq("one_link_updated_at", revision);
 
-async function publicationConfirmation(supabase, profile) {
+export const readPersistedRevision = (profile) => {
+  const revision = profile?.one_link_updated_at;
+  return typeof revision === "string" && revision.trim()
+    ? revision
+    : null;
+};
+
+export function classifyOneLinkUpdateResult(data, error) {
+  if (error) return { kind: "database_error", revision: null };
+  if (!data) return { kind: "zero_rows", revision: null };
+  const revision = readPersistedRevision(data);
+  if (!revision) {
+    return { kind: "persisted_revision_invalid", revision: null };
+  }
+  return { kind: "success", revision };
+}
+
+async function publicationConfirmation(
+  supabase,
+  profile,
+  lookupPublicOwner = findProfileByUsername,
+) {
   const owner = toOwnerResponse(profile);
   if (!owner.settings.published || !owner.username) return false;
-  const resolved = await findProfileByUsername(supabase, owner.username);
+  const resolved = await lookupPublicOwner(supabase, owner.username);
   if (
     resolved.failed ||
     !resolved.profile ||
@@ -347,7 +370,7 @@ async function destroyCloudinaryAsset(cloudinary, publicId) {
   );
 }
 
-async function handlePublic(req, res) {
+export async function handlePublic(req, res, dependencies = {}) {
   if (req.method !== "GET") {
     return sendError(
       res,
@@ -367,9 +390,11 @@ async function handlePublic(req, res) {
     );
   }
 
-  const supabase = getServiceClient(res);
+  const supabase = dependencies.supabase || getServiceClient(res);
   if (!supabase) return;
-  const result = await findProfileByUsername(supabase, username);
+  const lookupPublicOwner =
+    dependencies.findProfileByUsername || findProfileByUsername;
+  const result = await lookupPublicOwner(supabase, username);
 
   if (result.failed) {
     return sendError(
@@ -458,7 +483,89 @@ async function handleOwner(req, res) {
   });
 }
 
-async function handleDraftMutation(req, res, action) {
+export async function confirmFailClosedPublicationRollback({
+  supabase,
+  ownerUserId,
+  username,
+  settings,
+  publishRevision,
+  createRevision = nextRevision,
+  loadOwner = findOwnerProfile,
+  logger = console,
+}) {
+  const reportUnconfirmed = (rollbackErrorCategory) => {
+    logger.error("[onelink] CRITICAL publish fail-closed unconfirmed", {
+      code: "ONELINK_PUBLISH_FAIL_CLOSED_UNCONFIRMED",
+      ownerIdHash: createHash("sha256")
+        .update(String(ownerUserId || ""))
+        .digest("hex")
+        .slice(0, 12),
+      username,
+      attemptedRevision: publishRevision,
+      rollbackErrorCategory,
+    });
+    return {
+      confirmed: false,
+      revision: null,
+      rollbackErrorCategory,
+    };
+  };
+
+  const attemptedRollbackRevision = createRevision(publishRevision);
+  let rollbackQuery = supabase
+    .from("profiles")
+    .update({
+      one_link_settings: {
+        ...settings,
+        published: false,
+      },
+      one_link_updated_at: attemptedRollbackRevision,
+    })
+    .eq("clerk_id", ownerUserId);
+  rollbackQuery = withRevisionMatch(
+    rollbackQuery,
+    publishRevision,
+  );
+  const { data: rolledBack, error: rollbackError } =
+    await rollbackQuery.select(PROFILE_COLUMNS).maybeSingle();
+  const rollbackResult = classifyOneLinkUpdateResult(
+    rolledBack,
+    rollbackError,
+  );
+  if (rollbackResult.kind !== "success") {
+    return reportUnconfirmed(rollbackResult.kind);
+  }
+
+  const rollbackRevision = rollbackResult.revision;
+  const reread = await loadOwner(supabase, ownerUserId);
+  if (reread.failed) {
+    return reportUnconfirmed("owner_reread_failed");
+  }
+  if (!reread.profile) {
+    return reportUnconfirmed("owner_reread_missing");
+  }
+  if (reread.profile.clerk_id !== ownerUserId) {
+    return reportUnconfirmed("owner_identity_mismatch");
+  }
+  if (reread.profile.one_link_settings?.published !== false) {
+    return reportUnconfirmed("owner_still_published");
+  }
+  if (readPersistedRevision(reread.profile) !== rollbackRevision) {
+    return reportUnconfirmed("rollback_revision_mismatch");
+  }
+  return {
+    confirmed: true,
+    revision: rollbackRevision,
+    rollbackErrorCategory: null,
+  };
+}
+
+export async function handleDraftMutation(
+  req,
+  res,
+  action,
+  dependencies = {},
+) {
   if (req.method !== "POST") {
     return sendError(
       res,
@@ -468,10 +575,16 @@ async function handleDraftMutation(req, res, action) {
     );
   }
 
-  const actor = await requireVerifiedClerkUser(req, res);
+  const authenticate =
+    dependencies.authenticate || requireVerifiedClerkUser;
+  const actor = await authenticate(req, res);
   if (!actor) return;
-  const supabase = getServiceClient(res);
+  const supabase = dependencies.supabase || getServiceClient(res);
   if (!supabase) return;
+  const lookupPublicOwner =
+    dependencies.findProfileByUsername || findProfileByUsername;
+  const loadOwner = dependencies.findOwnerProfile || findOwnerProfile;
+  const createRevision = dependencies.nextRevision || nextRevision;
 
   let payload;
   try {
@@ -488,7 +601,7 @@ async function handleDraftMutation(req, res, action) {
     );
   }
 
-  const ownerResult = await findOwnerProfile(
+  const ownerResult = await loadOwner(
     supabase,
     actor.userId,
   );
@@ -526,9 +639,8 @@ async function handleDraftMutation(req, res, action) {
     );
   }
 
-
   if (action === "publish") {
-    const publicOwner = await findProfileByUsername(supabase, username);
+    const publicOwner = await lookupPublicOwner(supabase, username);
     if (publicOwner.failed) {
       return sendError(
         res,
@@ -550,7 +662,12 @@ async function handleDraftMutation(req, res, action) {
     }
   }
 
-  const cloudinary = getCloudinaryConfig();
+  const cloudinary = Object.prototype.hasOwnProperty.call(
+    dependencies,
+    "cloudinary",
+  )
+    ? dependencies.cloudinary
+    : getCloudinaryConfig();
   const unchangedLegacyAvatar =
     Boolean(payload.imageUrl) &&
     !payload.imagePublicId &&
@@ -591,7 +708,7 @@ async function handleDraftMutation(req, res, action) {
       replacement: payload.wallpaperPublicId,
     },
   ];
-  const revision = nextRevision(currentRevision);
+  const attemptedRevision = createRevision(currentRevision);
   const persistedSettings = {
     ...payload.settings,
     published:
@@ -614,18 +731,18 @@ async function handleDraftMutation(req, res, action) {
       one_link_wallpaper_public_id: payload.wallpaperPublicId,
       one_link_wallpaper_text_mode: payload.wallpaperTextMode,
       one_link_settings: persistedSettings,
-      one_link_updated_at: revision,
+      one_link_updated_at: attemptedRevision,
     })
     .eq("clerk_id", actor.userId);
   updateQuery = withRevisionMatch(updateQuery, currentRevision);
   const { data: updated, error: updateError } = await updateQuery
     .select(PROFILE_COLUMNS)
     .maybeSingle();
-
-  if (!updated) {
-    return revisionConflict(res);
-  }
-  if (updateError) {
+  const updateResult = classifyOneLinkUpdateResult(
+    updated,
+    updateError,
+  );
+  if (updateResult.kind === "database_error") {
     return sendError(
       res,
       503,
@@ -633,12 +750,23 @@ async function handleDraftMutation(req, res, action) {
       "Your One Link could not be saved.",
     );
   }
-
+  if (updateResult.kind === "zero_rows") {
+    return revisionConflict(res);
+  }
+  if (updateResult.kind !== "success") {
+    return sendError(
+      res,
+      503,
+      "ONELINK_SAVE_FAILED",
+      "Your One Link could not be saved.",
+    );
+  }
+  const persistedRevision = updateResult.revision;
 
   let liveConfirmed = false;
   if (action === "publish") {
-    const verifiedOwner = await findOwnerProfile(supabase, actor.userId);
-    const verifiedPublic = await findProfileByUsername(
+    const verifiedOwner = await loadOwner(supabase, actor.userId);
+    const verifiedPublic = await lookupPublicOwner(
       supabase,
       username,
     );
@@ -646,7 +774,8 @@ async function handleDraftMutation(req, res, action) {
       !verifiedOwner.failed &&
         verifiedOwner.profile &&
         toOwnerResponse(verifiedOwner.profile).settings.published &&
-        verifiedOwner.profile.one_link_updated_at === revision &&
+        readPersistedRevision(verifiedOwner.profile) ===
+          persistedRevision &&
         !verifiedPublic.failed &&
         verifiedPublic.profile &&
         verifiedPublic.profile.clerk_id === actor.userId &&
@@ -655,19 +784,24 @@ async function handleDraftMutation(req, res, action) {
     );
 
     if (!liveConfirmed) {
-      const failClosedRevision = nextRevision(revision);
-      let failClosedQuery = supabase
-        .from("profiles")
-        .update({
-          one_link_settings: {
-            ...persistedSettings,
-            published: false,
-          },
-          one_link_updated_at: failClosedRevision,
-        })
-        .eq("clerk_id", actor.userId);
-      failClosedQuery = withRevisionMatch(failClosedQuery, revision);
-      await failClosedQuery.select("clerk_id").maybeSingle();
+      const rollback = await confirmFailClosedPublicationRollback({
+        supabase,
+        ownerUserId: actor.userId,
+        username,
+        settings: persistedSettings,
+        publishRevision: persistedRevision,
+        createRevision,
+        loadOwner,
+        logger: dependencies.logger || console,
+      });
+      if (!rollback.confirmed) {
+        return sendError(
+          res,
+          503,
+          "ONELINK_PUBLISH_FAIL_CLOSED_UNCONFIRMED",
+          "Your One Link publication could not be safely confirmed.",
+        );
+      }
       return sendError(
         res,
         503,
@@ -676,7 +810,11 @@ async function handleDraftMutation(req, res, action) {
       );
     }
   } else if (persistedSettings.published) {
-    liveConfirmed = await publicationConfirmation(supabase, updated);
+    liveConfirmed = await publicationConfirmation(
+      supabase,
+      updated,
+      lookupPublicOwner,
+    );
   }
 
   if (cloudinary) {
@@ -704,7 +842,7 @@ async function handleDraftMutation(req, res, action) {
   return res.status(200).json({
     success: true,
     profile: toOwnerResponse(updated),
-    revision,
+    revision: persistedRevision,
     published: persistedSettings.published,
     liveConfirmed,
   });
@@ -718,14 +856,22 @@ async function handlePublish(req, res) {
   return handleDraftMutation(req, res, "publish");
 }
 
-async function handleUnpublish(req, res) {
+export async function handleUnpublish(
+  req,
+  res,
+  dependencies = {},
+) {
   if (req.method !== "POST") {
     return sendError(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
   }
-  const actor = await requireVerifiedClerkUser(req, res);
+  const authenticate =
+    dependencies.authenticate || requireVerifiedClerkUser;
+  const actor = await authenticate(req, res);
   if (!actor) return;
-  const supabase = getServiceClient(res);
+  const supabase = dependencies.supabase || getServiceClient(res);
   if (!supabase) return;
+  const createRevision = dependencies.nextRevision || nextRevision;
+  const loadOwner = dependencies.findOwnerProfile || findOwnerProfile;
 
   let payload;
   try {
@@ -742,7 +888,7 @@ async function handleUnpublish(req, res) {
     );
   }
 
-  const ownerResult = await findOwnerProfile(supabase, actor.userId);
+  const ownerResult = await loadOwner(supabase, actor.userId);
   if (ownerResult.failed) {
     return sendError(
       res,
@@ -764,7 +910,7 @@ async function handleUnpublish(req, res) {
   if (!revisionMatches(payload.expectedRevision, currentRevision)) {
     return revisionConflict(res);
   }
-  const revision = nextRevision(currentRevision);
+  const attemptedRevision = createRevision(currentRevision);
   const storedSettings =
     ownerResult.profile.one_link_settings &&
     typeof ownerResult.profile.one_link_settings === "object" &&
@@ -779,15 +925,18 @@ async function handleUnpublish(req, res) {
     .from("profiles")
     .update({
       one_link_settings: settings,
-      one_link_updated_at: revision,
+      one_link_updated_at: attemptedRevision,
     })
     .eq("clerk_id", actor.userId);
   updateQuery = withRevisionMatch(updateQuery, currentRevision);
   const { data: updated, error: updateError } = await updateQuery
     .select(PROFILE_COLUMNS)
     .maybeSingle();
-  if (!updated) return revisionConflict(res);
-  if (updateError) {
+  const updateResult = classifyOneLinkUpdateResult(
+    updated,
+    updateError,
+  );
+  if (updateResult.kind === "database_error") {
     return sendError(
       res,
       503,
@@ -795,12 +944,24 @@ async function handleUnpublish(req, res) {
       "Your One Link could not be unpublished.",
     );
   }
-  const verifiedOwner = await findOwnerProfile(supabase, actor.userId);
+  if (updateResult.kind === "zero_rows") {
+    return revisionConflict(res);
+  }
+  if (updateResult.kind !== "success") {
+    return sendError(
+      res,
+      503,
+      "ONELINK_UNPUBLISH_FAILED",
+      "Your One Link could not be unpublished.",
+    );
+  }
+  const persistedRevision = updateResult.revision;
+  const verifiedOwner = await loadOwner(supabase, actor.userId);
   if (
     verifiedOwner.failed ||
     !verifiedOwner.profile ||
-    verifiedOwner.profile.one_link_updated_at !== revision ||
-    toOwnerResponse(verifiedOwner.profile).settings.published
+    readPersistedRevision(verifiedOwner.profile) !== persistedRevision ||
+    verifiedOwner.profile.one_link_settings?.published !== false
   ) {
     return sendError(
       res,
@@ -812,7 +973,7 @@ async function handleUnpublish(req, res) {
   return res.status(200).json({
     success: true,
     profile: toOwnerResponse(verifiedOwner.profile),
-    revision,
+    revision: persistedRevision,
     published: false,
     liveConfirmed: false,
   });

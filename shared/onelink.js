@@ -177,6 +177,7 @@ export function parseOneLinkProfileBio(rawBio) {
   let topLevel = {};
   let biography = raw;
   let rawSettings = {};
+  let hasLegacyOneLinkConfiguration = false;
 
   if (raw.trimStart().startsWith("{")) {
     try {
@@ -185,7 +186,10 @@ export function parseOneLinkProfileBio(rawBio) {
         topLevel = cloneCompatibleJson(parsed) || {};
         biography =
           typeof parsed.bio === "string" ? parsed.bio : "";
-        rawSettings = isPlainObject(parsed.onelink)
+        hasLegacyOneLinkConfiguration =
+          Object.prototype.hasOwnProperty.call(parsed, "onelink") &&
+          isPlainObject(parsed.onelink);
+        rawSettings = hasLegacyOneLinkConfiguration
           ? parsed.onelink
           : {};
       }
@@ -200,13 +204,21 @@ export function parseOneLinkProfileBio(rawBio) {
       !TEXT_CONTROL_PATTERN.test(biography)
         ? biography.trim()
         : "",
-    settings: normalizeOneLinkSettings(rawSettings),
+    settings: normalizeOneLinkSettings(rawSettings, {
+      publicationContext: hasLegacyOneLinkConfiguration
+        ? "legacy"
+        : "fresh",
+    }),
     topLevel,
     rawSettings,
+    hasLegacyOneLinkConfiguration,
   };
 }
 
-export function normalizeOneLinkSettings(value) {
+export function normalizeOneLinkSettings(
+  value,
+  { publicationContext = "fresh" } = {},
+) {
   const source = isPlainObject(value) ? value : {};
   const theme = ONE_LINK_THEME_IDS.includes(source.theme)
     ? source.theme
@@ -307,7 +319,9 @@ export function normalizeOneLinkSettings(value) {
     socials,
     projects,
     published:
-      typeof source.published === "boolean" ? source.published : false,
+      typeof source.published === "boolean"
+        ? source.published
+        : publicationContext === "legacy",
     seoTitle: boundedString(
       source.seoTitle,
       ONE_LINK_LIMITS.seoTitle,
@@ -798,7 +812,11 @@ export function serializeOneLinkProfileBio(
   };
 
   const normalizedExisting =
-    normalizeOneLinkSettings(existingSettings);
+    normalizeOneLinkSettings(existingSettings, {
+      publicationContext: parsed.hasLegacyOneLinkConfiguration
+        ? "legacy"
+        : "fresh",
+    });
   const mergedSocials = mergeCompatibleItems(
     settings.socials,
     existingSettings.socials,
