@@ -95,6 +95,9 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     /^\d{10}$/.test(String(profile?.account_number || "")) &&
     profile?.account_name
   );
+  const maskedWithdrawalAccount = hasWithdrawalBankAccount
+    ? `••••${String(profile.account_number).slice(-4)}`
+    : "";
 
   // PIN Security states
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1104,6 +1107,36 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
         </button>
       </div>
 
+      {hasWithdrawalBankAccount && (
+        <div className="bg-brand-surface border border-brand-border rounded-2xl p-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <Building2 size={18} className="text-brand-accent shrink-0" />
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-widest text-brand-text-secondary">
+                Withdrawal Account
+              </p>
+              <p className="text-sm font-bold text-brand-text-primary truncate">
+                {profile.account_name}
+              </p>
+              <p className="text-xs text-brand-text-secondary truncate">
+                {profile.bank_name} · {maskedWithdrawalAccount}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label="Edit bank account"
+            onClick={() => {
+              setIsWithdrawModalOpen(false);
+              setIsBankModalOpen(true);
+            }}
+            className="shrink-0 rounded-xl border border-brand-border bg-brand-background/50 px-3.5 py-2 text-xs font-bold text-brand-text-secondary hover:bg-brand-background hover:text-brand-text-primary transition-colors"
+          >
+            Edit Bank
+          </button>
+        </div>
+      )}
+
       {/* 4. BANK STATUS BANNER (If bank not set up) */}
       {!hasWithdrawalBankAccount && showBankBanner && (
         <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4.5 flex items-center justify-between gap-4 text-xs shadow-xs animate-in slide-in-from-top duration-300">
@@ -1288,10 +1321,21 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
               {hasWithdrawalBankAccount && (
                 <div className="bg-brand-text/5 border border-brand-border rounded-xl p-3.5 flex items-center gap-3">
                   <Building2 size={18} className="text-brand-accent" />
-                  <div className="text-xs">
+                  <div className="text-xs flex-1">
                     <p className="font-bold text-brand-text-primary">{profile.bank_name}</p>
-                    <p className="text-brand-text-secondary mt-0.5">{profile.account_number} • {profile.account_name}</p>
+                    <p className="text-brand-text-secondary mt-0.5">{maskedWithdrawalAccount} • {profile.account_name}</p>
                   </div>
+                  <button
+                    type="button"
+                    aria-label="Edit bank account"
+                    onClick={() => {
+                      setIsWithdrawModalOpen(false);
+                      setIsBankModalOpen(true);
+                    }}
+                    className="shrink-0 rounded-lg border border-brand-border px-2.5 py-1.5 text-[10px] font-bold text-brand-text-secondary hover:text-brand-text-primary"
+                  >
+                    Edit
+                  </button>
                 </div>
               )}
 
@@ -1355,8 +1399,10 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           <div className="absolute inset-0" onClick={() => setIsBankModalOpen(false)} />
           <div className="relative w-full max-w-md bg-brand-surface border border-brand-border rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 p-6 space-y-6">
             <div className="flex justify-between items-center pb-2 border-b border-brand-border">
-              <h3 className="text-base font-black uppercase tracking-widest text-brand-text-primary">Bank Account Setup</h3>
-              <button onClick={() => setIsBankModalOpen(false)} className="text-brand-text-secondary hover:text-brand-text">
+              <h3 className="text-base font-black uppercase tracking-widest text-brand-text-primary">
+                {hasWithdrawalBankAccount ? "Edit Bank Account" : "Add Bank Account"}
+              </h3>
+              <button type="button" aria-label="Close bank account settings" onClick={() => setIsBankModalOpen(false)} className="text-brand-text-secondary hover:text-brand-text">
                 <X size={20} />
               </button>
             </div>
@@ -1367,15 +1413,17 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
               currentBank={
                 profile?.account_number
                   ? {
+                      bank_code: profile.bank_code,
                       bank_name: profile.bank_name,
                       account_number: profile.account_number,
                       account_name: profile.account_name
                     }
                   : null
               }
-              onSaved={() => {
-                loadWalletData();
+              onSaved={async () => {
+                await loadWalletData();
                 setIsBankModalOpen(false);
+                toast.success("Bank account updated successfully.");
               }}
             />
           </div>

@@ -977,8 +977,17 @@ export async function handleResolveBankAccount(req, res) {
   }
 }
 
-export async function handleSaveBankAccount(req, res) {
-  const context = await requireMutationContext(req, res);
+const maskBankAccountNumber = (accountNumber) =>
+  `••••${accountNumber.slice(-4)}`;
+
+export async function handleSaveBankAccount(
+  req,
+  res,
+  dependencies = {},
+) {
+  const requireContext =
+    dependencies.requireMutationContext || requireMutationContext;
+  const context = await requireContext(req, res);
   if (!context) return;
 
   const accountNumber = text(context.body.accountNumber);
@@ -997,12 +1006,14 @@ export async function handleSaveBankAccount(req, res) {
     );
   }
 
-  const secretKey = flutterwaveSecret(res);
+  const secretKey = dependencies.secretKey || flutterwaveSecret(res);
   if (!secretKey) return;
 
   let accountName;
   try {
-    accountName = await resolveBankAccount({
+    const resolve =
+      dependencies.resolveBankAccount || resolveBankAccount;
+    accountName = await resolve({
       accountNumber,
       bankCode,
       secretKey,
@@ -1016,10 +1027,12 @@ export async function handleSaveBankAccount(req, res) {
     );
   }
 
-  const supabase = getWalletServiceClient(res);
+  const getClient =
+    dependencies.getWalletServiceClient || getWalletServiceClient;
+  const supabase = getClient(res);
   if (!supabase) return;
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("profiles")
     .update({
       bank_code: bankCode,
@@ -1028,7 +1041,9 @@ export async function handleSaveBankAccount(req, res) {
       account_name: accountName,
       updated_at: new Date().toISOString(),
     })
-    .eq("clerk_id", context.actor.userId);
+    .eq("clerk_id", context.actor.userId)
+    .select("bank_code,bank_name,account_number,account_name")
+    .maybeSingle();
 
   if (error) {
     return send(
@@ -1038,10 +1053,25 @@ export async function handleSaveBankAccount(req, res) {
       "The bank account could not be saved.",
     );
   }
+  if (!updated) {
+    return send(
+      res,
+      404,
+      "PROFILE_NOT_FOUND",
+      "Profile not found.",
+    );
+  }
 
   return res.status(200).json({
     success: true,
-    accountName,
+    bank: {
+      bankCode: text(updated.bank_code),
+      bankName: text(updated.bank_name),
+      maskedAccountNumber: maskBankAccountNumber(
+        text(updated.account_number),
+      ),
+      accountName: text(updated.account_name),
+    },
   });
 }
 

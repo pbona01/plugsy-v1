@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useAuth } from "@clerk/clerk-react"
 import { getStableIdempotencyKey } from "../../utils/idempotency"
 import { CheckCircle2, ChevronDown, ChevronUp, Search, Loader2 } from "lucide-react"
@@ -12,6 +12,7 @@ interface BankAccountFormProps {
   userId: string
   userEmail: string
   currentBank?: {
+    bank_code: string
     bank_name: string
     account_number: string
     account_name: string
@@ -37,6 +38,28 @@ export default function BankAccountForm({
   const [resolveError, setResolveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [editing, setEditing] = useState(!currentBank)
+  const resolveSequenceRef = useRef(0)
+  const resolveAbortRef = useRef<AbortController | null>(null)
+
+  const clearResolution = () => {
+    resolveSequenceRef.current += 1
+    resolveAbortRef.current?.abort()
+    resolveAbortRef.current = null
+    setResolvedName(null)
+    setResolveError(null)
+    setResolving(false)
+  }
+
+  const restoreCurrentBank = () => {
+    if (!currentBank) return
+    const savedBank = banks.find((bank) => bank.code === currentBank.bank_code)
+    setSelectedBank(savedBank || {
+      code: currentBank.bank_code,
+      name: currentBank.bank_name,
+    })
+    setAccountNumber(currentBank.account_number)
+    clearResolution()
+  }
 
   // Fetch bank list once, cache in sessionStorage
   useEffect(() => {
@@ -64,15 +87,33 @@ export default function BankAccountForm({
       .catch(() => setLoadingBanks(false))
   }, [])
 
+  useEffect(() => {
+    if (!currentBank) return
+    const savedBank = banks.find((bank) => bank.code === currentBank.bank_code)
+    setSelectedBank(savedBank || {
+      code: currentBank.bank_code,
+      name: currentBank.bank_name,
+    })
+    setAccountNumber(currentBank.account_number)
+  }, [
+    banks,
+    currentBank?.bank_code,
+    currentBank?.bank_name,
+    currentBank?.account_number,
+  ])
+
   // Auto-resolve account when both bank + 10-digit number present
   useEffect(() => {
-    setResolvedName(null)
-    setResolveError(null)
+    clearResolution()
 
-    if (!selectedBank || accountNumber.length !== 10) return
+    if (!editing || !selectedBank || accountNumber.length !== 10) return
 
+    const sequence = resolveSequenceRef.current
     const timer = setTimeout(async () => {
+      if (sequence !== resolveSequenceRef.current) return
       setResolving(true)
+      const controller = new AbortController()
+      resolveAbortRef.current = controller
       try {
         const token = await getToken()
         const res = await fetch("/api/wallet?action=resolve-account", {
@@ -84,23 +125,35 @@ export default function BankAccountForm({
           body: JSON.stringify({
             accountNumber,
             bankCode: selectedBank.code
-          })
+          }),
+          signal: controller.signal,
         })
         const data = await res.json()
+        if (sequence !== resolveSequenceRef.current) return
         if (data.success) {
           setResolvedName(data.accountName)
         } else {
           setResolveError(data.error || "Could not verify account")
         }
       } catch (e) {
+        if (controller.signal.aborted || sequence !== resolveSequenceRef.current) return
         setResolveError("Network error verifying account")
       } finally {
-        setResolving(false)
+        if (sequence === resolveSequenceRef.current) {
+          setResolving(false)
+          resolveAbortRef.current = null
+        }
       }
     }, 500)
 
-    return () => clearTimeout(timer)
-  }, [selectedBank, accountNumber])
+    return () => {
+      clearTimeout(timer)
+      if (resolveAbortRef.current === null || sequence === resolveSequenceRef.current) {
+        resolveAbortRef.current?.abort()
+        resolveAbortRef.current = null
+      }
+    }
+  }, [selectedBank, accountNumber, editing])
 
   const filteredBanks = banks.filter(b =>
     b.name.toLowerCase().includes(search.toLowerCase())
@@ -119,12 +172,11 @@ export default function BankAccountForm({
           Authorization: `Bearer ${token}`,
           "Idempotency-Key": getStableIdempotencyKey("bank-account"),
         },
-        body: JSON.stringify({
-          accountNumber,
-          bankCode: selectedBank.code,
-          bankName: selectedBank.name,
-          accountName: resolvedName
-        })
+          body: JSON.stringify({
+            accountNumber,
+            bankCode: selectedBank.code,
+            bankName: selectedBank.name,
+          })
       })
       const data = await res.json()
       if (data.success) {
@@ -140,10 +192,9 @@ export default function BankAccountForm({
     }
   }
 
-  // SAVED STATE - show masked account, allow change
+  // SAVED STATE - show masked account, allow deliberate edit
   if (currentBank && !editing) {
-    const masked = currentBank.account_number.slice(0, 3) +
-      "••••" + currentBank.account_number.slice(-3)
+    const masked = `••••${currentBank.account_number.slice(-4)}`
 
     return (
       <div className="bg-brand-surface border border-brand-border rounded-2xl p-4">
@@ -160,10 +211,15 @@ export default function BankAccountForm({
             </p>
           </div>
           <button
-            onClick={() => setEditing(true)}
+            type="button"
+            aria-label="Edit bank account"
+            onClick={() => {
+              restoreCurrentBank()
+              setEditing(true)
+            }}
             className="bg-brand-background/50 border border-brand-border rounded-lg text-brand-text-secondary px-3.5 py-2 text-xs font-semibold cursor-pointer hover:bg-brand-background/80 hover:text-brand-text-primary transition-colors"
           >
-            Change
+            Edit Bank
           </button>
         </div>
       </div>
@@ -174,8 +230,23 @@ export default function BankAccountForm({
   return (
     <div className="bg-brand-surface border border-brand-border rounded-2xl p-4">
       <p className="text-[10px] font-bold tracking-widest uppercase text-brand-text-secondary/80 mb-3">
-        ADD BANK ACCOUNT
+        {currentBank ? "Edit Bank Account" : "Add Bank Account"}
       </p>
+      {currentBank && (
+        <div className="mb-3 rounded-xl border border-brand-border bg-brand-background/50 px-3 py-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-brand-text-secondary">
+            Current verified account
+          </p>
+          <p className="mt-1 text-sm font-semibold text-brand-text-primary">
+            {currentBank.account_name}
+          </p>
+        </div>
+      )}
+      {currentBank && (
+        <p className="mb-3 text-[11px] leading-relaxed text-brand-text-secondary">
+          Changing your bank affects future withdrawals only. Existing withdrawal records will not be changed.
+        </p>
+      )}
 
       {/* Bank selector */}
       <div className="relative mb-3">
@@ -183,6 +254,7 @@ export default function BankAccountForm({
           BANK
         </label>
         <button
+          type="button"
           onClick={() => setShowDropdown(!showDropdown)}
           className={`w-full bg-brand-background border border-brand-border rounded-xl px-3.5 py-3 text-sm text-left cursor-pointer flex justify-between items-center transition-colors ${selectedBank ? 'text-brand-text-primary' : 'text-brand-text-secondary/50'} hover:border-brand-accent/50`}
         >
@@ -221,6 +293,7 @@ export default function BankAccountForm({
                   <button
                     key={`${bank.code}-${index}`}
                     onClick={() => {
+                      clearResolution()
                       setSelectedBank(bank)
                       setShowDropdown(false)
                       setSearch("")
@@ -247,9 +320,10 @@ export default function BankAccountForm({
         </label>
         <input
           value={accountNumber}
-          onChange={e =>
+          onChange={e => {
+            clearResolution()
             setAccountNumber(e.target.value.replace(/\D/g, "").slice(0, 10))
-          }
+          }}
           placeholder="0123456789"
           inputMode="numeric"
           maxLength={10}
@@ -287,19 +361,27 @@ export default function BankAccountForm({
       <div className="flex gap-2 pt-1">
         <button
           onClick={handleSave}
-          disabled={!resolvedName || saving}
+          disabled={!resolvedName || resolving || saving}
           className={`flex-1 border-none rounded-xl py-3 text-sm font-bold transition-colors ${
             resolvedName && !saving
               ? "bg-brand-accent text-white cursor-pointer hover:bg-opacity-90"
               : "bg-brand-background border border-brand-border text-brand-text-secondary/50 cursor-not-allowed"
           }`}
         >
-          {saving ? "Saving..." : "Save Account"}
+          {saving
+            ? "Saving..."
+            : currentBank
+              ? "Verify & Update"
+              : "Save Account"}
         </button>
 
         {currentBank && (
           <button
-            onClick={() => setEditing(false)}
+            type="button"
+            onClick={() => {
+              restoreCurrentBank()
+              setEditing(false)
+            }}
             className="bg-transparent border border-brand-border rounded-xl text-brand-text-secondary px-4 py-3 text-sm cursor-pointer hover:bg-brand-background transition-colors"
           >
             Cancel
