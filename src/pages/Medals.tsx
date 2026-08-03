@@ -22,6 +22,7 @@ import { Helmet } from "react-helmet-async";
 import { toast } from "react-hot-toast";
 import { cn } from "../lib/utils";
 import { MEDAL_CAPACITY, validateMedalSalesResponse } from "../../shared/medals.js";
+import { createMedalSalesRefreshCoordinator } from "../../shared/medalSalesRefresh.js";
 
 interface MedalPlan {
   id: string;
@@ -44,38 +45,29 @@ export default function Medals() {
   const [medalNumber, setMedalNumber] = useState<number | null>(null);
   const [totalSold, setTotalSold] = useState<number | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const salesSequenceRef = useRef(0);
-  const salesAbortRef = useRef<AbortController | null>(null);
-  const salesInFlightRef = useRef(false);
+  const salesCoordinatorRef = useRef<ReturnType<typeof createMedalSalesRefreshCoordinator> | null>(null);
 
   const refreshMedalSales = useCallback(async (force = false) => {
-    if (!force && document.visibilityState !== "visible") return;
-    if (salesInFlightRef.current) return;
-    salesInFlightRef.current = true;
-    const sequence = ++salesSequenceRef.current;
-    salesAbortRef.current?.abort();
-    const controller = new AbortController();
-    salesAbortRef.current = controller;
+    return salesCoordinatorRef.current?.refresh(force);
+  }, []);
+
+  const fetchMedalSales = useCallback(async (signal: AbortSignal) => {
     try {
       const response = await fetch("/api/payments?action=get-medal-sales", {
         method: "GET",
         headers: { Accept: "application/json" },
-        cache: "no-store",
-        signal: controller.signal,
+        signal,
       });
       const contentType = response.headers.get("content-type") || "";
       let payload: unknown = null;
       if (contentType.toLowerCase().includes("application/json")) {
         try { payload = await response.json(); } catch { payload = null; }
       }
-      if (response.ok && sequence === salesSequenceRef.current && validateMedalSalesResponse(payload)) {
-        setTotalSold(payload.totalSold);
-      }
+      if (response.ok && validateMedalSalesResponse(payload)) return payload.totalSold;
     } catch {
-      // Preserve the last confirmed count; the next focus/interval retries.
-    } finally {
-      if (sequence === salesSequenceRef.current) salesInFlightRef.current = false;
+      // Coordinator preserves the last confirmed count.
     }
+    return null;
   }, []);
 
   useEffect(() => {
@@ -121,24 +113,24 @@ export default function Medals() {
   }, [userId]);
 
   useEffect(() => {
-    void refreshMedalSales(true);
-    const interval = window.setInterval(() => void refreshMedalSales(), 10000);
-    const onFocus = () => void refreshMedalSales();
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") void refreshMedalSales();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
+    const coordinator = createMedalSalesRefreshCoordinator({
+      fetchSales: fetchMedalSales,
+      onConfirmed: setTotalSold,
+      isVisible: () => document.visibilityState === "visible",
+      setIntervalFn: (callback, ms) => window.setInterval(callback, ms),
+      clearIntervalFn: (timer) => window.clearInterval(timer),
+      addWindowListener: (event, listener) => window.addEventListener(event, listener),
+      removeWindowListener: (event, listener) => window.removeEventListener(event, listener),
+      addDocumentListener: (event, listener) => document.addEventListener(event, listener),
+      removeDocumentListener: (event, listener) => document.removeEventListener(event, listener),
+    });
+    salesCoordinatorRef.current = coordinator;
+    coordinator.start();
     return () => {
-      window.clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-      salesSequenceRef.current += 1;
-      salesAbortRef.current?.abort();
-      salesAbortRef.current = null;
-      salesInFlightRef.current = false;
+      coordinator.stop();
+      salesCoordinatorRef.current = null;
     };
-  }, [refreshMedalSales]);
+  }, [fetchMedalSales]);
 
   const getMedalStyles = (tierName: string) => {
     const name = tierName.toLowerCase();

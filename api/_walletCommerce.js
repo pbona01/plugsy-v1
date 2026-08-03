@@ -23,6 +23,10 @@ const text = (value) => String(value || "").trim();
 const lower = (value) => text(value).toLowerCase();
 
 const MEDAL_STATUS_VALUES = new Set(["paid", "completed"]);
+const MEDAL_PAGE_SIZE = 500;
+const MEDAL_MAX_PAGES = 100;
+const MEDAL_ORDER_FIELDS = "id,user_id,product_name,product_type,plan_id,status,created_at";
+const MEDAL_PLAN_FIELDS = "id,name,wallet_product_type,category";
 
 const normalizePlanMap = (plans) =>
   new Map(
@@ -87,35 +91,79 @@ export function countQualifyingMedalSalesFromRows(orders, plans) {
   };
 }
 
+async function loadBoundedPages(makeQuery) {
+  const rows = [];
+  const pageSignatures = new Set();
+  for (let page = 0; page < MEDAL_MAX_PAGES; page += 1) {
+    const from = page * MEDAL_PAGE_SIZE;
+    const to = from + MEDAL_PAGE_SIZE - 1;
+    let result;
+    try {
+      result = await makeQuery(from, to);
+    } catch {
+      return { ok: false, code: "MEDAL_SALES_UNAVAILABLE" };
+    }
+    if (result?.error) return { ok: false, code: "MEDAL_SALES_UNAVAILABLE" };
+    if (!Array.isArray(result?.data)) {
+      return { ok: false, code: "MEDAL_SALES_INVALID_RESULT" };
+    }
+    if (result.data.some((row) => !row || typeof row !== "object" || !text(row.id))) {
+      return { ok: false, code: "MEDAL_SALES_INVALID_RESULT" };
+    }
+    const signature = result.data.map((row) => String(row.id)).join(",");
+    if (pageSignatures.has(signature)) {
+      return { ok: false, code: "MEDAL_SALES_INVALID_RESULT" };
+    }
+    pageSignatures.add(signature);
+    rows.push(...result.data);
+    if (result.data.length < MEDAL_PAGE_SIZE) return { ok: true, rows };
+  }
+  return { ok: false, code: "MEDAL_SALES_INVALID_RESULT" };
+}
+
 export async function countQualifyingMedalSales(supabase) {
-  let ordersResult;
-  let plansResult;
-  try {
-    [ordersResult, plansResult] = await Promise.all([
-      supabase
-        .from("orders")
-        .select("id,user_id,product_name,product_type,plan_id,status,created_at"),
-      supabase
-        .from("plans")
-        .select("id,name,wallet_product_type,category"),
-    ]);
-  } catch {
-    return { ok: false, code: "MEDAL_SALES_UNAVAILABLE" };
+  const plansResult = await loadBoundedPages((from, to) =>
+    supabase
+      .from("plans")
+      .select(MEDAL_PLAN_FIELDS)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (!plansResult.ok) return plansResult;
+  const plansById = normalizePlanMap(plansResult.rows);
+  const verifiedPlanIds = [...plansById.values()]
+    .filter(isVerifiedMedalPlan)
+    .map((plan) => String(plan.id));
+  const orderRows = [];
+  const queries = [
+    (from, to) => supabase.from("orders")
+      .select(MEDAL_ORDER_FIELDS)
+      .in("status", [...MEDAL_STATUS_VALUES])
+      .eq("product_type", "medal")
+      .order("id", { ascending: true })
+      .range(from, to),
+    (from, to) => supabase.from("orders")
+      .select(MEDAL_ORDER_FIELDS)
+      .in("status", [...MEDAL_STATUS_VALUES])
+      .in("plan_id", verifiedPlanIds.length ? verifiedPlanIds : ["__no_verified_medal_plan__"])
+      .order("id", { ascending: true })
+      .range(from, to),
+    (from, to) => supabase.from("orders")
+      .select(MEDAL_ORDER_FIELDS)
+      .in("status", [...MEDAL_STATUS_VALUES])
+      .ilike("product_name", "%medal%")
+      .order("id", { ascending: true })
+      .range(from, to),
+  ];
+  for (const query of queries) {
+    const result = await loadBoundedPages(query);
+    if (!result.ok) return result;
+    orderRows.push(...result.rows);
   }
-
-  if (ordersResult?.error || plansResult?.error) {
-    return { ok: false, code: "MEDAL_SALES_UNAVAILABLE" };
-  }
-  if (!Array.isArray(ordersResult?.data) || !Array.isArray(plansResult?.data)) {
-    return { ok: false, code: "MEDAL_SALES_INVALID_RESULT" };
-  }
-
+  const uniqueOrders = [...new Map(orderRows.map((row) => [String(row.id), row])).values()];
   return {
     ok: true,
-    ...countQualifyingMedalSalesFromRows(
-      ordersResult.data,
-      plansResult.data,
-    ),
+    ...countQualifyingMedalSalesFromRows(uniqueOrders, plansResult.rows),
   };
 }
 
@@ -515,14 +563,10 @@ export async function handleMedalStatus(req, res, dependencies = {}) {
 }
 
 export async function handleMedalSales(req, res, dependencies = {}) {
+  res.setHeader("Cache-Control", "no-store");
   if (req.method !== "GET") {
     return send(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
   }
-
-  res.setHeader(
-    "Cache-Control",
-    "public, s-maxage=5, stale-while-revalidate=10",
-  );
   const getClient =
     dependencies.getWalletServiceClient || getWalletServiceClient;
   const supabase = getClient(res);
@@ -562,6 +606,10 @@ export async function handleMedalSales(req, res, dependencies = {}) {
     );
   }
 
+  res.setHeader(
+    "Cache-Control",
+    "public, s-maxage=5, stale-while-revalidate=10",
+  );
   return res.status(200).json({
     success: true,
     totalSold,
