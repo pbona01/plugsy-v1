@@ -5,6 +5,9 @@ import {
   buildOverviewMetrics,
 } from "../shared/admin-overview.js";
 import { handleOverviewMetrics } from "../api-handlers/admin.js";
+import { handleListPublishedOneLinks } from "../api-handlers/admin.js";
+import { getPublishedOneLinkRecord } from "../shared/admin-overview.js";
+import fs from "node:fs";
 
 const response = () => {
   const out = { statusCode: 200, headers: {}, body: null };
@@ -104,4 +107,37 @@ test("overview endpoint uses injected Clerk count and returns allowlisted metric
   assert.equal(res.out.body.metrics.registeredUsers, 524);
   assert.equal(res.out.body.metrics.syncedProfiles, 1);
   assert.deepEqual(Object.keys(res.out.body.metrics).sort(), ["actionRequiredChats", "activeSubscriptions", "openSupportChats", "paidVolume", "pendingOrders", "publishedOneLinks", "registeredUsers", "syncedProfiles", "totalOrders"].sort());
+});
+
+test("published One Link compatibility includes legacy and independent pages only once", () => {
+  const legacy = getPublishedOneLinkRecord({ clerk_id: "user_legacy", username: "legacy", full_name: "Legacy", bio: JSON.stringify({ onelink: { theme: "midnight" } }), one_link_updated_at: null, one_link_settings: null });
+  const independent = getPublishedOneLinkRecord({ clerk_id: "user_independent", one_link_username: "independent", one_link_updated_at: "2026-01-01T00:00:00Z", one_link_settings: { published: true } });
+  const draft = getPublishedOneLinkRecord({ clerk_id: "user_draft", one_link_username: "draft", one_link_updated_at: "2026-01-01T00:00:00Z", one_link_settings: { published: false } });
+  assert.equal(legacy.publicationSource, "legacy");
+  assert.equal(independent.publicationSource, "independent");
+  assert.equal(draft, null);
+});
+
+test("published One Links endpoint is read-only, allowlisted, and deduplicates owners", async () => {
+  const rows = [
+    { id: "1", clerk_id: "user_1", username: "legacy", full_name: "Legacy", email: "legacy@example.com", bio: JSON.stringify({ onelink: {} }), one_link_settings: null, one_link_updated_at: null },
+    { id: "2", clerk_id: "user_1", one_link_username: "independent", one_link_settings: { published: true }, one_link_updated_at: "2026-01-01T00:00:00Z" },
+    { id: "3", clerk_id: "user_3", one_link_username: "draft", one_link_settings: { published: false }, one_link_updated_at: "2026-01-01T00:00:00Z" },
+  ];
+  const supabase = { from() { const builder = { select() { return builder; }, order() { return builder; }, range(from, to) { return Promise.resolve({ data: rows.slice(from, to + 1), error: null }); } }; return builder; } };
+  const res = response();
+  await handleListPublishedOneLinks({ method: "GET", headers: { authorization: "Bearer token" } }, res, { authenticate: async () => ({ userId: "user_admin" }), authorize: async () => true, supabase });
+  assert.equal(res.out.statusCode, 200);
+  assert.equal(res.out.body.total, 1);
+  assert.equal(res.out.body.oneLinks[0].publicationSource, "legacy");
+  assert.equal("one_link_settings" in res.out.body.oneLinks[0], false);
+});
+
+test("presence exposes canonical Clerk-only aggregate and cleans up channel", () => {
+  const source = fs.readFileSync(new URL("../src/contexts/OnlinePresenceContext.tsx", import.meta.url), "utf8");
+  assert.match(source, /onlineClerkUserIds/);
+  assert.match(source, /onlineSignedInCount/);
+  assert.match(source, /\^user_\[A-Za-z0-9_\-\]/);
+  assert.doesNotMatch(source, /profile_id\) onlineSet/);
+  assert.match(source, /removeChannel\(channel\)/);
 });

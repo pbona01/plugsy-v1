@@ -13,6 +13,7 @@ import {
   AdminOverviewFailure,
   buildOverviewMetrics,
   fetchBoundedRows,
+  getPublishedOneLinkRecord,
 } from "../shared/admin-overview.js";
 
 const getClient = () => createClient(
@@ -1139,6 +1140,37 @@ export async function handleOverviewMetrics(req, res, dependencies = {}) {
   }
 }
 
+export async function handleListPublishedOneLinks(req, res, dependencies = {}) {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  if (req.method !== "GET") return res.status(405).json({ success: false, code: "METHOD_NOT_ALLOWED", error: "GET is required." });
+  if (!/^Bearer\s+\S+$/i.test(textValue(req.headers?.authorization))) {
+    return res.status(401).json({ success: false, code: "ADMIN_AUTH_REQUIRED", error: "Sign-in is required." });
+  }
+  try {
+    const actor = await (dependencies.authenticate || requireVerifiedClerkUser)(req, res);
+    if (!actor) return;
+    const supabase = dependencies.supabase || getAdminUsersClient();
+    if (!await (dependencies.authorize || authorizeAdminUsersActor)(actor, res, supabase)) return;
+    const profiles = await fetchBoundedRows((from, to) => supabase
+      .from("profiles")
+      .select("clerk_id,email,full_name,username,bio,profile_pic_url,image_url,one_link_username,one_link_display_name,one_link_avatar_url,one_link_settings,one_link_updated_at,updated_at")
+      .order("clerk_id", { ascending: true })
+      .range(from, to));
+    const seenOwners = new Set();
+    const oneLinks = profiles.map(getPublishedOneLinkRecord).filter((record) => {
+      const owner = record?.ownerClerkId || `username:${record?.username}`;
+      if (!record || seenOwners.has(owner)) return false;
+      seenOwners.add(owner);
+      return true;
+    }).sort((left, right) => left.username.localeCompare(right.username));
+    return res.status(200).json({ success: true, oneLinks, total: oneLinks.length, updatedAt: new Date().toISOString() });
+  } catch (error) {
+    const code = error instanceof AdminOverviewFailure ? error.code : "ADMIN_OVERVIEW_DATABASE_ERROR";
+    return res.status(503).json({ success: false, code, error: "Published One Links are temporarily unavailable." });
+  }
+}
+
 export async function handleListUsers(req, res, dependencies = {}) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
@@ -1366,6 +1398,7 @@ export default async function handler(req, res) {
   if (action === "list-subscriptions") return await handleListSubscriptions(req, res)
   if (action === "list-profiles") return await handleListProfiles(req, res)
   if (action === "overview-metrics") return await handleOverviewMetrics(req, res)
+  if (action === "list-published-onelinks") return await handleListPublishedOneLinks(req, res)
   if (action === "list-users") return await handleListUsers(req, res)
   if (action === "list-portfolio_purchases") return await handleListPortfolioPurchases(req, res)
   if (action === "send-login-email" || action === "send-logins-email") return await handleSendLoginEmail(req, res)

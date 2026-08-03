@@ -63,7 +63,7 @@ import {
 
 export default function Admin() {
   const navigate = useNavigate();
-  const { isUserOnline } = useOnlinePresence();
+  const { isUserOnline, onlineSignedInCount, presenceUpdatedAt } = useOnlinePresence();
   const { signOut } = useClerk();
   const { isLoaded, userId, getToken } = useAuth();
   const { user } = useUser();
@@ -89,6 +89,15 @@ export default function Admin() {
   const [fetchErrors, setFetchErrors] = useState<Record<string, string | null>>({});
   const [adminSubscriptions, setAdminSubscriptions] = useState<any[]>([]);
   const [adminSubsLoading, setAdminSubsLoading] = useState(false);
+  const [overviewMetrics, setOverviewMetrics] = useState<any>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const overviewAbortRef = useRef<AbortController | null>(null);
+  const overviewRequestRef = useRef(0);
+  const [publishedOneLinks, setPublishedOneLinks] = useState<any[]>([]);
+  const [oneLinksLoading, setOneLinksLoading] = useState(false);
+  const [oneLinksError, setOneLinksError] = useState<string | null>(null);
+  const [oneLinksSearch, setOneLinksSearch] = useState('');
 
   // Broadcast Email States
   const [broadcastSubject, setBroadcastSubject] = useState('');
@@ -699,118 +708,78 @@ export default function Admin() {
     }, [fetchAll, userId]);
 
 
-  const [dbStats, setDbStats] = useState({
-    totalRevenue: 0,
-    portfolioRevenue: 0,
-    combinedRevenue: 0,
-    activeSubs: 0,
-    expiredSubs: 0,
-    totalOrders: 0,
-    pendingOrders: 0,
-    totalUsers: 0,
-    loading: true
-  });
-
-  useEffect(() => {
-    const loadStats = async () => {
-      console.log("[admin] loading stats from database via admin API proxy...");
-      try {
-        if (!userId) return;
-        const token = await getToken();
-        if (!token) return;
-        await setSupabaseAuth(getToken, true);
-        
-        // Fetch ALL orders via admin API proxy to bypass RLS securely
-        const ordersRes = await fetch("/api/admin?action=list-orders", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        if (!ordersRes.ok) throw new Error("Failed to fetch orders from admin API");
-        const ordersData = await ordersRes.json();
-        if (!ordersData.success) throw new Error(ordersData.error || "Unsuccessful orders API fetch");
-        const orders = ordersData.orders || [];
-
-        console.log("[admin] total orders fetched:", orders.length);
-        const now = new Date();
-
-        // Revenue: completed + paid
-        const subscriptionRevenue = orders
-          .filter((o: any) => o.status === "completed" || o.status === "paid")
-          .reduce((sum: number, o: any) => sum + (Number(o.amount) || 0), 0);
-
-        // Active: completed, login_sent, not expired
-        const activeSubsCount = orders.filter((o: any) =>
-          o.status === "completed" &&
-          o.delivery_status === "login_sent" &&
-          o.subscription_expires_at &&
-          new Date(o.subscription_expires_at) > now
-        ).length;
-
-        // Expired: completed, login_sent, IS expired
-        const expiredSubsCount = orders.filter((o: any) =>
-          o.status === "completed" &&
-          o.delivery_status === "login_sent" &&
-          o.subscription_expires_at &&
-          new Date(o.subscription_expires_at) <= now
-        ).length;
-
-        // Pending delivery
-        const pendingOrdersCount = orders.filter((o: any) => {
-          const status = o.status;
-          const delivery = o.delivery_status;
-          const isMedal = o.product_name?.toLowerCase().includes("medal");
-          return status === "paid" && delivery === "pending_login" && !isMedal;
-        }).length;
-
-        // Portfolio revenue via admin API proxy
-        const portfolioRes = await fetch("/api/admin?action=list-portfolio_purchases", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        const portfolioData = portfolioRes.ok ? await portfolioRes.json() : { success: false };
-        const portfolioPurchasesList = portfolioData.success ? (portfolioData.portfolio_purchases || []) : [];
-        const portfolioRevenue = portfolioPurchasesList
-          .reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0);
-
-        // Total users via admin API proxy
-        const profilesRes = await fetch("/api/admin?action=list-profiles", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        const profilesData = profilesRes.ok ? await profilesRes.json() : { success: false };
-        const profilesList = profilesData.success ? (profilesData.profiles || []) : [];
-        const totalUsersCount = profilesList.length;
-
-        const finalStats = {
-          totalRevenue: subscriptionRevenue,
-          portfolioRevenue: portfolioRevenue,
-          combinedRevenue: subscriptionRevenue + portfolioRevenue,
-          activeSubs: activeSubsCount,
-          expiredSubs: expiredSubsCount,
-          totalOrders: orders.length,
-          pendingOrders: pendingOrdersCount,
-          totalUsers: totalUsersCount || 0,
-          loading: false
-        };
-
-        console.log("[admin] FINAL STATS:", finalStats);
-        setDbStats(finalStats);
-
-      } catch (e: any) {
-        console.error("[admin] stats crash:", e.message);
-        setDbStats(prev => ({ ...prev, loading: false }));
-      }
-    };
-
-    if (userId) {
-      loadStats();
-      const interval = setInterval(loadStats, 60000);
-      return () => clearInterval(interval);
+  const refreshOverview = useCallback(async () => {
+    if (!userId || overviewAbortRef.current) return;
+    const requestId = ++overviewRequestRef.current;
+    const controller = new AbortController();
+    overviewAbortRef.current = controller;
+    setOverviewLoading(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Admin authentication is required.");
+      const response = await fetch("/api/admin?action=overview-metrics", {
+        headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success !== true || requestId !== overviewRequestRef.current) throw new Error("Overview metrics are unavailable.");
+      setOverviewMetrics({ ...payload.metrics, updatedAt: payload.updatedAt });
+      setOverviewError(null);
+    } catch (error: any) {
+      if (error?.name !== "AbortError") setOverviewError("Overview metrics are temporarily unavailable.");
+    } finally {
+      if (requestId === overviewRequestRef.current) setOverviewLoading(false);
+      if (overviewAbortRef.current === controller) overviewAbortRef.current = null;
     }
   }, [getToken, userId]);
+
+  useEffect(() => {
+    if (activeTab !== "overview") return;
+    void refreshOverview();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refreshOverview();
+    }, 30000);
+    const onFocus = () => void refreshOverview();
+    const onVisibility = () => { if (document.visibilityState === "visible") void refreshOverview(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      overviewRequestRef.current += 1;
+      overviewAbortRef.current?.abort();
+      overviewAbortRef.current = null;
+    };
+  }, [activeTab, refreshOverview]);
+
+  const dbStats = overviewMetrics
+    ? { ...overviewMetrics, combinedRevenue: overviewMetrics.paidVolume, totalRevenue: overviewMetrics.paidVolume, portfolioRevenue: 0 }
+    : {};
+
+  const loadPublishedOneLinks = useCallback(async () => {
+    if (!userId || oneLinksLoading) return;
+    setOneLinksLoading(true);
+    try {
+      const token = await getToken();
+      const response = await fetch("/api/admin?action=list-published-onelinks", { headers: { Accept: "application/json", Authorization: `Bearer ${token}` }, cache: "no-store" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success !== true || !Array.isArray(payload.oneLinks)) throw new Error("Published One Links are unavailable.");
+      setPublishedOneLinks(payload.oneLinks);
+      setOneLinksError(null);
+    } catch { setOneLinksError("Published One Links are temporarily unavailable."); }
+    finally { setOneLinksLoading(false); }
+  }, [getToken, userId, oneLinksLoading]);
+
+  useEffect(() => {
+    if (activeTab === "onelinks") void loadPublishedOneLinks();
+  }, [activeTab]);
+
+  const visibleOneLinks = publishedOneLinks.filter((entry) => {
+    const query = oneLinksSearch.toLowerCase();
+    return !query || [entry.ownerName, entry.ownerEmail, entry.username].some((value) => String(value || "").toLowerCase().includes(query));
+  });
 
   const stats = useMemo(() => {
     const safeOrders = safeArray(orders);
@@ -1202,6 +1171,7 @@ export default function Admin() {
     { id: 'overview', icon: LayoutDashboard, label: 'Overview' },
     { id: 'pending', icon: Clock, label: 'Pending Queue' },
     { id: 'users', icon: UsersIcon, label: 'Users' },
+    { id: 'onelinks', icon: Globe, label: 'One Links' },
     { id: 'orders', icon: CreditCard, label: 'Orders' },
     { id: 'medals', icon: Award, label: 'Medals' },
     { id: 'financial', icon: DollarSign, label: 'Financials' },
@@ -1477,14 +1447,16 @@ export default function Admin() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                     {[
-                      { icon: UsersIcon, label: 'Total Users', val: dbStats.loading ? '...' : (dbStats.totalUsers || 0).toLocaleString(), color: 'text-blue-500' },
+                      { icon: UsersIcon, label: 'Registered Users', val: overviewMetrics ? Number(dbStats.registeredUsers).toLocaleString() : '—', color: 'text-blue-500' },
+                      { icon: UsersIcon, label: 'Synced Profiles', val: overviewMetrics ? Number(dbStats.syncedProfiles).toLocaleString() : '—', color: 'text-cyan-500' },
                       { icon: CreditCard, label: 'Volume (Paid)', val: '₦' + (dbStats.combinedRevenue || 0).toLocaleString(), color: 'text-green-500', isRevenue: true },
-                      { icon: Crown, label: 'Active Subs', val: (dbStats.activeSubs || 0).toLocaleString(), color: 'text-brand-accent', tab: 'subscriptions' },
-                      { icon: Clock, label: 'Pending Orders', val: (dbStats.pendingOrders || 0).toLocaleString(), color: 'text-orange-500', tab: 'pending' },
-                      { icon: MessageSquare, label: 'Open Chats', val: stats.openChats.toLocaleString(), color: 'text-indigo-500', tab: 'chats' },
-                      { icon: AlertCircle, label: 'Action Required', val: stats.needsAttention.toLocaleString(), color: 'text-red-500', tab: 'chats' },
-                      { icon: Inbox, label: 'Total Orders', val: (dbStats.totalOrders || 0).toLocaleString(), color: 'text-brand-text-secondary' },
-                      { icon: XCircle, label: 'Expired/Ended', val: (dbStats.expiredSubs || 0).toLocaleString(), color: 'text-brand-text-secondary' }
+                      { icon: Crown, label: 'Active Subscriptions', val: overviewMetrics ? Number(dbStats.activeSubscriptions).toLocaleString() : '—', color: 'text-brand-accent', tab: 'subscriptions' },
+                      { icon: Clock, label: 'Pending Orders', val: overviewMetrics ? Number(dbStats.pendingOrders).toLocaleString() : '—', color: 'text-orange-500', tab: 'pending' },
+                      { icon: MessageSquare, label: 'Open Chats', val: overviewMetrics ? Number(dbStats.openSupportChats).toLocaleString() : '—', color: 'text-indigo-500', tab: 'chats' },
+                      { icon: AlertCircle, label: 'Action Required', val: overviewMetrics ? Number(dbStats.actionRequiredChats).toLocaleString() : '—', color: 'text-red-500', tab: 'chats' },
+                      { icon: Inbox, label: 'Total Orders', val: overviewMetrics ? Number(dbStats.totalOrders).toLocaleString() : '—', color: 'text-brand-text-secondary' },
+                      { icon: Globe, label: 'Published One Links', val: overviewMetrics ? Number(dbStats.publishedOneLinks).toLocaleString() : '—', color: 'text-purple-500', tab: 'onelinks' },
+                      { icon: UsersIcon, label: 'Signed-in Users Online Now', val: onlineSignedInCount.toLocaleString(), color: 'text-emerald-500' }
                     ].map((stat, i) => (
                     <button 
                       key={i} 
@@ -1504,6 +1476,11 @@ export default function Admin() {
                       )}
                     </button>
                   ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-4 text-xs text-brand-text-secondary">
+                  <button onClick={() => void refreshOverview()} disabled={overviewLoading} className="btn-primary h-10 px-4 flex items-center gap-2"><RefreshCw size={14} className={overviewLoading ? 'animate-spin' : ''} /> Refresh</button>
+                  <span>{overviewMetrics?.updatedAt ? `Last updated ${formatDate(overviewMetrics.updatedAt)}` : overviewError || 'Overview unavailable'}</span>
+                  <span>Anonymous visitors are not included. Presence updated {presenceUpdatedAt ? formatDate(presenceUpdatedAt) : '—'}.</span>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
@@ -1569,6 +1546,15 @@ export default function Admin() {
               </div>
             )}
 
+            {activeTab === 'onelinks' && (
+              <div className="space-y-8">
+                <header className="flex flex-wrap items-center justify-between gap-4">
+                  <div><h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">One Links</h2><p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">{publishedOneLinks.length} published pages</p></div>
+                  <div className="flex gap-3"><input aria-label="Search published One Links" value={oneLinksSearch} onChange={(event) => setOneLinksSearch(event.target.value)} placeholder="Search owner or username" className="h-10 px-4 rounded-xl bg-brand-surface border border-brand-border text-sm" /><button onClick={() => void loadPublishedOneLinks()} disabled={oneLinksLoading} className="btn-primary h-10 px-4 flex items-center gap-2"><RefreshCw size={14} /> Refresh</button></div>
+                </header>
+                {oneLinksLoading && publishedOneLinks.length === 0 ? <div className="card-premium p-16 text-center"><Loader2 className="animate-spin mx-auto" /></div> : oneLinksError && publishedOneLinks.length === 0 ? <div className="card-premium p-16 text-center text-red-500">{oneLinksError}</div> : visibleOneLinks.length === 0 ? <div className="card-premium p-16 text-center text-brand-text-secondary">No published One Links found.</div> : <div className="grid gap-4">{visibleOneLinks.map((entry) => <div key={`${entry.ownerClerkId || entry.username}`} className="card-premium p-5 flex flex-wrap items-center justify-between gap-4"><div><p className="font-black">{entry.ownerName} <span className="text-[9px] uppercase text-brand-accent ml-2">{entry.publicationSource}</span></p><p className="text-xs text-brand-text-secondary">{entry.ownerEmail || 'No email'} · @{entry.username}</p></div><div className="flex gap-2"><button onClick={() => navigator.clipboard?.writeText(entry.publicUrl)} className="h-9 px-3 rounded-lg border border-brand-border text-xs">Copy Link</button><a href={entry.publicUrl} target="_blank" rel="noopener noreferrer" className="h-9 px-3 rounded-lg bg-brand-accent text-white text-xs flex items-center">Open Live Link</a></div></div>)}</div>}
+              </div>
+            )}
             {activeTab === 'users' && (
               <div className="space-y-8">
                 {adminUsersLoading && !hasConfirmedAdminUsers ? (
