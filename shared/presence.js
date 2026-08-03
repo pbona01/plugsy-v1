@@ -8,3 +8,9 @@ export function extractCanonicalClerkIds(presenceState) {
   });
   return ids;
 }
+
+export function presenceStatusForChannelEvent(event) {
+  if (event === "SUBSCRIBED" || event === "SYNC") return "confirmed";
+  if (event === "CHANNEL_ERROR" || event === "TIMED_OUT" || event === "CLOSED") return "unavailable";
+  return "connecting";
+}

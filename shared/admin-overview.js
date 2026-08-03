@@ -127,8 +127,9 @@ export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPu
   const paidOrders = orders.filter((order) => order.status === "paid" || order.status === "completed");
   const contributingAmounts = [...paidOrders.map((order) => order.amount), ...portfolioPurchases.map((purchase) => purchase.amount)];
   if (contributingAmounts.some((amount) => finiteAmount(amount) === null)) throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
-  const paidVolume = paidOrders.reduce((sum, order) => sum + finiteAmount(order.amount), 0) +
-    portfolioPurchases.reduce((sum, purchase) => sum + finiteAmount(purchase.amount), 0);
+  const subscriptionPaidVolume = paidOrders.reduce((sum, order) => sum + finiteAmount(order.amount), 0);
+  const portfolioPaidVolume = portfolioPurchases.reduce((sum, purchase) => sum + finiteAmount(purchase.amount), 0);
+  const paidVolume = subscriptionPaidVolume + portfolioPaidVolume;
   const activeSubscriptions = orders.filter((order) =>
     order.status === "completed" && order.delivery_status === "login_sent" &&
     order.subscription_expires_at && new Date(order.subscription_expires_at) > now,
@@ -143,6 +144,8 @@ export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPu
     registeredUsers: clerkCount,
     syncedProfiles,
     totalOrders,
+    subscriptionPaidVolume,
+    portfolioPaidVolume,
     paidVolume,
     activeSubscriptions,
     pendingOrders,

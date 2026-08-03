@@ -1121,7 +1121,7 @@ export async function handleOverviewMetrics(req, res, dependencies = {}) {
     if (chatsCountResult?.error || !Number.isSafeInteger(chatsCountResult?.count) || chatsCountResult.count < 0) throw new AdminOverviewFailure("ADMIN_OVERVIEW_DATABASE_ERROR");
     const chats = await fetchBoundedRows((from, to) => supabase
       .from("chats")
-      .select("id,user_id,userId,status,needs_admin_attention,metadata,created_at")
+      .select("id,user_id,chat_type,status,needs_admin_attention,last_message_at,updated_at,created_at")
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
       .range(from, to), { expectedCount: chatsCountResult.count });

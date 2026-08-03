@@ -759,8 +759,8 @@ export default function Admin() {
   }, [activeTab, refreshOverview]);
 
   const dbStats = overviewMetrics
-    ? { ...overviewMetrics, combinedRevenue: overviewMetrics.paidVolume, totalRevenue: overviewMetrics.paidVolume, portfolioRevenue: 0 }
-    : {};
+    ? { ...overviewMetrics, combinedRevenue: overviewMetrics.paidVolume, totalRevenue: overviewMetrics.subscriptionPaidVolume, portfolioRevenue: overviewMetrics.portfolioPaidVolume }
+    : { combinedRevenue: '—', totalRevenue: '—', portfolioRevenue: '—' };
 
   const loadPublishedOneLinks = useCallback(async () => {
     if (!userId || oneLinksInFlightRef.current) return;
@@ -778,7 +778,14 @@ export default function Admin() {
       setOneLinksUpdatedAt(payload.updatedAt || null);
       setOneLinksError(null);
     } catch (error: any) { if (error?.name !== 'AbortError' && sequence === oneLinksSequenceRef.current) setOneLinksError("Published One Links refresh failed; showing the previous confirmed list."); }
-    finally { if (sequence === oneLinksSequenceRef.current) setOneLinksLoading(false); oneLinksInFlightRef.current = false; }
+    finally {
+      const ownsRequest = sequence === oneLinksSequenceRef.current && oneLinksAbortRef.current === controller;
+      if (ownsRequest) {
+        setOneLinksLoading(false);
+        oneLinksInFlightRef.current = false;
+        oneLinksAbortRef.current = null;
+      }
+    }
   }, [getToken, userId]);
 
   useEffect(() => {

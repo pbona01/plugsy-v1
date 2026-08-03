@@ -1,7 +1,7 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { supabase } from '../lib/supabase';
-import { extractCanonicalClerkIds } from '../../shared/presence.js';
+import { extractCanonicalClerkIds, presenceStatusForChannelEvent } from '../../shared/presence.js';
 
 interface OnlinePresenceContextType {
   onlineUserIds: Set<string>;
@@ -20,6 +20,7 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
   const [onlineClerkUserIds, setOnlineClerkUserIds] = useState<Set<string>>(new Set());
   const [presenceUpdatedAt, setPresenceUpdatedAt] = useState<string | null>(null);
   const [presenceStatus, setPresenceStatus] = useState<'connecting' | 'confirmed' | 'unavailable'>('connecting');
+  const generationRef = useRef(0);
 
   useEffect(() => {
     if (!userId) {
@@ -31,6 +32,7 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
     }
 
     let channel: any = null;
+    const generation = ++generationRef.current;
     setPresenceStatus('connecting');
 
     const setupPresence = async () => {
@@ -46,17 +48,19 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
 
         channel
           .on('presence', { event: 'sync' }, () => {
+            if (generation !== generationRef.current) return;
             const presenceState = channel.presenceState();
             const onlineSet = extractCanonicalClerkIds(presenceState);
 
             setOnlineUserIds(onlineSet);
             setOnlineClerkUserIds(new Set(onlineSet));
             setPresenceUpdatedAt(new Date().toISOString());
-            setPresenceStatus('confirmed');
+            setPresenceStatus(presenceStatusForChannelEvent('SYNC'));
           })
           .subscribe(async (status: string) => {
+            if (generation !== generationRef.current) return;
             if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-              setPresenceStatus('unavailable');
+              setPresenceStatus(presenceStatusForChannelEvent(status));
               return;
             }
             if (status === 'SUBSCRIBED') {
@@ -72,6 +76,7 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
     setupPresence();
 
     return () => {
+      generationRef.current += 1;
       if (channel) {
         supabase.removeChannel(channel).catch((err) => {
           console.warn('[OnlinePresence] Error removing presence channel:', err);

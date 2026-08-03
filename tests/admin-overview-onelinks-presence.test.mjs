@@ -10,7 +10,8 @@ import { handleOverviewMetrics } from "../api-handlers/admin.js";
 import { handleListPublishedOneLinks } from "../api-handlers/admin.js";
 import { getPublishedOneLinkRecord } from "../shared/admin-overview.js";
 import fs from "node:fs";
-import { extractCanonicalClerkIds } from "../shared/presence.js";
+import { extractCanonicalClerkIds, presenceStatusForChannelEvent } from "../shared/presence.js";
+import { createOwnedRequestCoordinator } from "../shared/admin-refresh.js";
 
 const response = () => {
   const out = { statusCode: 200, headers: {}, body: null };
@@ -63,6 +64,15 @@ test("overview definitions preserve paid volume, subscriptions, pending deliveri
   assert.equal(metrics.pendingOrders, 1);
   assert.equal(metrics.openSupportChats, 1);
   assert.equal(metrics.actionRequiredChats, 1);
+  assert.equal(metrics.subscriptionPaidVolume, 175);
+  assert.equal(metrics.portfolioPaidVolume, 10);
+  assert.equal(metrics.paidVolume, metrics.subscriptionPaidVolume + metrics.portfolioPaidVolume);
+});
+
+test("overview chat query selects canonical persisted support fields", () => {
+  const source = fs.readFileSync(new URL("../api-handlers/admin.js", import.meta.url), "utf8");
+  assert.match(source, /select\("id,user_id,chat_type,status,needs_admin_attention,last_message_at,updated_at,created_at"\)/);
+  assert.doesNotMatch(source, /select\("id,user_id,userId,status,needs_admin_attention,metadata,created_at"\)/);
 });
 
 test("invalid Clerk count fails instead of becoming zero", () => {
@@ -133,7 +143,7 @@ test("overview endpoint uses injected Clerk count and returns allowlisted metric
   assert.equal(res.out.statusCode, 200);
   assert.equal(res.out.body.metrics.registeredUsers, 524);
   assert.equal(res.out.body.metrics.syncedProfiles, 1);
-  assert.deepEqual(Object.keys(res.out.body.metrics).sort(), ["actionRequiredChats", "activeSubscriptions", "openSupportChats", "paidVolume", "pendingOrders", "publishedOneLinks", "registeredUsers", "syncedProfiles", "totalOrders"].sort());
+  assert.deepEqual(Object.keys(res.out.body.metrics).sort(), ["actionRequiredChats", "activeSubscriptions", "openSupportChats", "paidVolume", "pendingOrders", "portfolioPaidVolume", "publishedOneLinks", "registeredUsers", "subscriptionPaidVolume", "syncedProfiles", "totalOrders"].sort());
 });
 
 test("published One Link compatibility includes legacy and independent pages only once", () => {
@@ -177,4 +187,30 @@ test("presence exposes canonical Clerk-only aggregate and cleans up channel", ()
   assert.doesNotMatch(source, /profile_id\) onlineSet/);
   assert.match(source, /removeChannel\(channel\)/);
   assert.deepEqual([...extractCanonicalClerkIds({ a: [{ clerk_id: "user_abc" }, { clerk_id: "user_abc" }, { profile_id: "user_xyz" }, { clerk_id: "bad" }] })], ["user_abc"]);
+  assert.equal(presenceStatusForChannelEvent('SYNC'), 'confirmed');
+  assert.equal(presenceStatusForChannelEvent('CHANNEL_ERROR'), 'unavailable');
+  assert.equal(presenceStatusForChannelEvent('TIMED_OUT'), 'unavailable');
+  assert.equal(presenceStatusForChannelEvent('CLOSED'), 'unavailable');
+  assert.equal(presenceStatusForChannelEvent('SUBSCRIBED'), 'confirmed');
+});
+
+test("owned refresh coordinator cannot let an aborted stale request release a newer guard", async () => {
+  const deferred = [];
+  const successes = [];
+  const coordinator = createOwnedRequestCoordinator({
+    request: (signal) => new Promise((resolve, reject) => { signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }))); deferred.push({ resolve }); }),
+    onSuccess: (value) => successes.push(value),
+    onFailure: () => { throw new Error("unexpected failure"); },
+  });
+  coordinator.start();
+  await Promise.resolve();
+  coordinator.abort();
+  coordinator.start();
+  await Promise.resolve();
+  assert.equal(coordinator.start(), null);
+  deferred[0].resolve("stale");
+  deferred[1].resolve("current");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(successes, ["current"]);
+  assert.equal(coordinator.inFlight, false);
 });
