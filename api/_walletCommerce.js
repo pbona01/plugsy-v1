@@ -145,16 +145,18 @@ export async function countQualifyingMedalSales(supabase) {
     (from, to) => supabase.from("orders")
       .select(MEDAL_ORDER_FIELDS)
       .in("status", [...MEDAL_STATUS_VALUES])
-      .in("plan_id", verifiedPlanIds.length ? verifiedPlanIds : ["__no_verified_medal_plan__"])
-      .order("id", { ascending: true })
-      .range(from, to),
-    (from, to) => supabase.from("orders")
-      .select(MEDAL_ORDER_FIELDS)
-      .in("status", [...MEDAL_STATUS_VALUES])
       .ilike("product_name", "%medal%")
       .order("id", { ascending: true })
       .range(from, to),
   ];
+  if (verifiedPlanIds.length > 0) {
+    queries.splice(1, 0, (from, to) => supabase.from("orders")
+      .select(MEDAL_ORDER_FIELDS)
+      .in("status", [...MEDAL_STATUS_VALUES])
+      .in("plan_id", verifiedPlanIds)
+      .order("id", { ascending: true })
+      .range(from, to));
+  }
   for (const query of queries) {
     const result = await loadBoundedPages(query);
     if (!result.ok) return result;

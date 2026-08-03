@@ -11,8 +11,8 @@ import {
 import { createMedalSalesRefreshCoordinator } from "../shared/medalSalesRefresh.js";
 
 const plans = [
-  { id: "plan-medal", wallet_product_type: "medal", category: "other" },
-  { id: "plan-category", wallet_product_type: "wallet", category: "medal_15k" },
+  { id: "11111111-1111-4111-8111-111111111111", wallet_product_type: "medal", category: "other" },
+  { id: "22222222-2222-4222-8222-222222222222", wallet_product_type: "wallet", category: "medal_15k" },
 ];
 const order = (overrides = {}) => ({ id: crypto.randomUUID(), status: "paid", ...overrides });
 
@@ -21,14 +21,14 @@ test("authoritative classifier counts current and legacy medal sales", () => {
     order({ id: "current", product_type: "medal" }),
     order({ id: "completed", status: "completed", product_type: "medal" }),
     order({ id: "legacy", product_name: "Plugsy Gold Medal" }),
-    order({ id: "plan", plan_id: "plan-category", product_name: "Premium" }),
+    order({ id: "plan", plan_id: "22222222-2222-4222-8222-222222222222", product_name: "Premium" }),
   ];
   assert.equal(countQualifyingMedalSalesFromRows(rows, plans).totalSold, 4);
 });
 
 test("orders matching multiple rules count exactly once", () => {
   const result = countQualifyingMedalSalesFromRows([
-    order({ id: "same", product_type: "medal", plan_id: "plan-medal", product_name: "Medal" }),
+    order({ id: "same", product_type: "medal", plan_id: "11111111-1111-4111-8111-111111111111", product_name: "Medal" }),
   ], plans);
   assert.equal(result.totalSold, 1);
   assert.equal(classifyMedalOrder(result.qualifyingOrders[0].order, result.plansById).qualifies, true);
@@ -91,14 +91,16 @@ test("public endpoint safely classifies provider failures and invalid counts", a
 
 function pagedSupabase({ plans: planRows, orders: orderRows, failOn, repeatOn } = {}) {
   let calls = 0;
+  let planIdQueries = 0;
   return {
     get calls() { return calls; },
+    get planIdQueries() { return planIdQueries; },
     from(table) {
       const filters = {};
       return {
         select() { return this; },
         order() { return this; },
-        in(column, values) { filters[column] = values; return this; },
+        in(column, values) { filters[column] = values; if (table === "orders" && column === "plan_id") planIdQueries += 1; return this; },
         eq(column, value) { filters[column] = value; return this; },
         ilike(column, value) { filters[column] = value; return this; },
         async range(from, to) {
@@ -125,6 +127,44 @@ test("bounded pagination retrieves all pages, deduplicates queries, and preserve
   const result = await countQualifyingMedalSales(pagedSupabase({ plans, orders: rows }));
   assert.equal(result.ok, true);
   assert.equal(result.totalSold, 1001);
+});
+
+test("empty verified-plan sets skip plan_id queries while retaining current and legacy sales", async () => {
+  const client = pagedSupabase({
+    plans: [],
+    orders: [
+      order({ id: "current-no-plan", product_type: "medal" }),
+      order({ id: "legacy-no-plan", product_name: "Plugsy Medal" }),
+      order({ id: "unrelated-no-plan", product_name: "Premium 20k" }),
+    ],
+  });
+  const result = await countQualifyingMedalSales(client);
+  assert.equal(result.ok, true);
+  assert.equal(result.totalSold, 2);
+  assert.equal(client.planIdQueries, 0);
+});
+
+test("verified UUID plans use the plan_id query and failures remain safe", async () => {
+  const planId = "33333333-3333-4333-8333-333333333333";
+  const client = pagedSupabase({
+    plans: [{ id: planId, wallet_product_type: "medal", category: "other" }],
+    orders: [order({ id: "verified-plan", plan_id: planId, product_name: "Premium" })],
+  });
+  const result = await countQualifyingMedalSales(client);
+  assert.equal(result.ok, true);
+  assert.equal(result.totalSold, 1);
+  assert.equal(client.planIdQueries, 1);
+  const failed = await countQualifyingMedalSales(pagedSupabase({
+    plans: [{ id: planId, wallet_product_type: "medal", category: "other" }],
+    orders: [order({ id: "verified-plan", plan_id: planId, product_name: "Premium" })],
+    failOn: 3,
+  }));
+  assert.deepEqual(failed, { ok: false, code: "MEDAL_SALES_UNAVAILABLE" });
+});
+
+test("empty-plan implementation has no UUID sentinel", () => {
+  const source = fs.readFileSync(new URL("../api/_walletCommerce.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /__no_verified_medal_plan__/);
 });
 
 test("pagination failure on a later page never returns a partial count", async () => {
