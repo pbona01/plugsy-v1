@@ -5,6 +5,7 @@ import {
   buildOverviewMetrics,
   fetchBoundedRows,
   collectPublishedOneLinks,
+  parseMoneyToKobo,
 } from "../shared/admin-overview.js";
 import { handleOverviewMetrics } from "../api-handlers/admin.js";
 import { handleListPublishedOneLinks } from "../api-handlers/admin.js";
@@ -69,6 +70,32 @@ test("overview definitions preserve paid volume, subscriptions, pending deliveri
   assert.equal(metrics.paidVolume, metrics.subscriptionPaidVolume + metrics.portfolioPaidVolume);
 });
 
+test("fractional revenue uses exact kobo arithmetic while counts stay integral", () => {
+  const metrics = buildOverviewMetrics({
+    clerkCount: 524,
+    profiles: [],
+    orders: [{ id: "o1", status: "paid", amount: "1058171.29" }],
+    portfolioPurchases: [{ id: "p1", amount: 165450 }],
+    chats: [],
+  });
+  assert.equal(metrics.subscriptionPaidVolume, 1058171.29);
+  assert.equal(metrics.portfolioPaidVolume, 165450);
+  assert.equal(metrics.paidVolume, 1223621.29);
+  assert.equal(metrics.paidVolume, metrics.subscriptionPaidVolume + metrics.portfolioPaidVolume);
+  assert.equal(parseMoneyToKobo("1058171.29"), 105817129);
+  assert.equal(parseMoneyToKobo(0), 0);
+  assert.equal(parseMoneyToKobo(""), null);
+  assert.equal(parseMoneyToKobo("1.234"), null);
+  assert.equal(parseMoneyToKobo("-1"), null);
+  assert.equal(parseMoneyToKobo("Infinity"), null);
+  assert.equal(parseMoneyToKobo("90071992547409.92"), null);
+  assert.throws(() => buildOverviewMetrics({ clerkCount: 1.5, profiles: [], orders: [], portfolioPurchases: [], chats: [] }), AdminOverviewFailure);
+  assert.throws(() => buildOverviewMetrics({ clerkCount: 1, totalOrders: 1.5, profiles: [], orders: [], portfolioPurchases: [], chats: [] }), AdminOverviewFailure);
+  assert.throws(() => buildOverviewMetrics({ clerkCount: 1, profiles: [], orders: [{ status: "paid", amount: "" }], portfolioPurchases: [], chats: [] }), AdminOverviewFailure);
+  assert.throws(() => buildOverviewMetrics({ clerkCount: 1, profiles: [], orders: [{ status: "paid", amount: "not-a-number" }], portfolioPurchases: [], chats: [] }), AdminOverviewFailure);
+  assert.throws(() => buildOverviewMetrics({ clerkCount: 1, profiles: [], orders: [{ status: "paid", amount: "1.234" }], portfolioPurchases: [], chats: [] }), AdminOverviewFailure);
+});
+
 test("canonical support chat activity and tie-breakers are authoritative", () => {
   const base = (id, extra = {}) => ({ id, user_id: "user_support", status: "open", chat_type: null, needs_admin_attention: false, ...extra });
   const latestMessage = base("message", { last_message_at: "2099-01-03", updated_at: "2020-01-01", created_at: "2020-01-01", needs_admin_attention: true });
@@ -94,6 +121,7 @@ test("Overview revenue rendering has explicit placeholder, split formatter, and 
   assert.match(source, /new Date\(overviewMetrics\.updatedAt\)\.toLocaleString\(\)/);
   assert.match(source, /subscriptionPaidVolume/);
   assert.match(source, /portfolioPaidVolume/);
+  assert.match(source, /maximumFractionDigits: 2/);
 });
 
 test("invalid Clerk count fails instead of becoming zero", () => {

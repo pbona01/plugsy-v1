@@ -62,12 +62,19 @@ export async function fetchBoundedRows(makeQuery, options = {}) {
   throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
 }
 
-const finiteAmount = (value) => {
-  if (typeof value === "string" && value.trim() === "") return null;
+export function parseMoneyToKobo(value) {
   if (typeof value !== "number" && typeof value !== "string") return null;
-  const amount = Number(value);
-  return Number.isFinite(amount) && amount >= 0 ? amount : null;
-};
+  const text = typeof value === "string" ? value.trim() : String(value);
+  if (!/^\d+(?:\.\d{1,2})?$/.test(text)) return null;
+  const [nairaPart, koboPart = ""] = text.split(".");
+  try {
+    const kobo = BigInt(nairaPart) * 100n + BigInt((koboPart + "00").slice(0, 2));
+    if (kobo < 0n || kobo > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    return Number(kobo);
+  } catch {
+    return null;
+  }
+}
 
 export function countCanonicalSupportChats(chats) {
   const grouped = new Map();
@@ -125,10 +132,20 @@ export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPu
     throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
   }
   const paidOrders = orders.filter((order) => order.status === "paid" || order.status === "completed");
-  const contributingAmounts = [...paidOrders.map((order) => order.amount), ...portfolioPurchases.map((purchase) => purchase.amount)];
-  if (contributingAmounts.some((amount) => finiteAmount(amount) === null)) throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
-  const subscriptionPaidVolume = paidOrders.reduce((sum, order) => sum + finiteAmount(order.amount), 0);
-  const portfolioPaidVolume = portfolioPurchases.reduce((sum, purchase) => sum + finiteAmount(purchase.amount), 0);
+  const subscriptionKobo = paidOrders.reduce((sum, order) => {
+    const amount = parseMoneyToKobo(order.amount);
+    if (amount === null || !Number.isSafeInteger(sum + amount)) throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
+    return sum + amount;
+  }, 0);
+  const portfolioKobo = portfolioPurchases.reduce((sum, purchase) => {
+    const amount = parseMoneyToKobo(purchase.amount);
+    if (amount === null || !Number.isSafeInteger(sum + amount)) throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
+    return sum + amount;
+  }, 0);
+  const paidKobo = subscriptionKobo + portfolioKobo;
+  if (!Number.isSafeInteger(paidKobo)) throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
+  const subscriptionPaidVolume = subscriptionKobo / 100;
+  const portfolioPaidVolume = portfolioKobo / 100;
   const paidVolume = subscriptionPaidVolume + portfolioPaidVolume;
   const activeSubscriptions = orders.filter((order) =>
     order.status === "completed" && order.delivery_status === "login_sent" &&
@@ -153,8 +170,22 @@ export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPu
     actionRequiredChats: support.actionRequiredChats,
     publishedOneLinks: publishedRecords.length,
   };
-  for (const value of Object.values(result)) {
-    if (!Number.isSafeInteger(value) || value < 0) throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
+  const countMetrics = [
+    result.registeredUsers,
+    result.syncedProfiles,
+    result.totalOrders,
+    result.activeSubscriptions,
+    result.pendingOrders,
+    result.openSupportChats,
+    result.actionRequiredChats,
+    result.publishedOneLinks,
+  ];
+  if (countMetrics.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+    throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
+  }
+  if ([result.subscriptionPaidVolume, result.portfolioPaidVolume, result.paidVolume]
+    .some((value) => !Number.isFinite(value) || value < 0)) {
+    throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
   }
   return result;
 }

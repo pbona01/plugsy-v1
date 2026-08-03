@@ -152,7 +152,7 @@ export default function Admin() {
   };
 
   const formatOverviewRevenue = (value: number | null | undefined) =>
-    value === null || value === undefined ? '—' : `₦${value.toLocaleString()}`;
+    value === null || value === undefined ? '—' : `₦${value.toLocaleString('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
   // Safe status formatting helper
   const formatStatus = (status: any) => {
