@@ -13,7 +13,7 @@ import {
   AdminOverviewFailure,
   buildOverviewMetrics,
   fetchBoundedRows,
-  getPublishedOneLinkRecord,
+  collectPublishedOneLinks,
 } from "../shared/admin-overview.js";
 
 const getClient = () => createClient(
@@ -1072,9 +1072,14 @@ export async function handleOverviewMetrics(req, res, dependencies = {}) {
       throw new AdminOverviewFailure("ADMIN_OVERVIEW_CLERK_CONFIGURATION_ERROR");
     }
     const clerk = dependencies.clerkClient || clerkClient;
-    const clerkCountResult = await (dependencies.getClerkCount
-      ? dependencies.getClerkCount()
-      : clerk.users.getCount());
+    let clerkCountResult;
+    try {
+      clerkCountResult = await (dependencies.getClerkCount
+        ? dependencies.getClerkCount()
+        : clerk.users.getCount());
+    } catch {
+      throw new AdminOverviewFailure("ADMIN_OVERVIEW_CLERK_COUNT_FAILED");
+    }
     const registeredUsers = Number(
       typeof clerkCountResult === "number" ? clerkCountResult : clerkCountResult?.count,
     );
@@ -1097,31 +1102,36 @@ export async function handleOverviewMetrics(req, res, dependencies = {}) {
       .from("profiles")
       .select("id,clerk_id,email,full_name,username,bio,profile_pic_url,image_url,one_link_username,one_link_display_name,one_link_avatar_url,one_link_settings,one_link_updated_at,updated_at")
       .order("id", { ascending: true })
-      .range(from, to));
+      .range(from, to), { expectedCount: profileCountResult.count });
     const orders = await fetchBoundedRows((from, to) => supabase
       .from("orders")
       .select("id,status,amount,delivery_status,product_name,subscription_expires_at,created_at")
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
-      .range(from, to));
+      .range(from, to), { expectedCount: orderCountResult.count });
+    const portfolioCountResult = await supabase.from("portfolio_purchases").select("id", { count: "exact", head: true });
+    if (portfolioCountResult?.error || !Number.isSafeInteger(portfolioCountResult?.count) || portfolioCountResult.count < 0) throw new AdminOverviewFailure("ADMIN_OVERVIEW_DATABASE_ERROR");
     const portfolioPurchases = await fetchBoundedRows((from, to) => supabase
       .from("portfolio_purchases")
       .select("id,amount,created_at")
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
-      .range(from, to));
+      .range(from, to), { expectedCount: portfolioCountResult.count });
+    const chatsCountResult = await supabase.from("chats").select("id", { count: "exact", head: true });
+    if (chatsCountResult?.error || !Number.isSafeInteger(chatsCountResult?.count) || chatsCountResult.count < 0) throw new AdminOverviewFailure("ADMIN_OVERVIEW_DATABASE_ERROR");
     const chats = await fetchBoundedRows((from, to) => supabase
       .from("chats")
       .select("id,user_id,userId,status,needs_admin_attention,metadata,created_at")
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
-      .range(from, to));
+      .range(from, to), { expectedCount: chatsCountResult.count });
     const metrics = buildOverviewMetrics({
       clerkCount: registeredUsers,
       profiles,
       orders,
       portfolioPurchases,
       chats,
+      publishedOneLinks: collectPublishedOneLinks(profiles),
       totalOrders: orderCountResult.count,
       syncedProfiles: profileCountResult.count,
     });
@@ -1152,18 +1162,14 @@ export async function handleListPublishedOneLinks(req, res, dependencies = {}) {
     if (!actor) return;
     const supabase = dependencies.supabase || getAdminUsersClient();
     if (!await (dependencies.authorize || authorizeAdminUsersActor)(actor, res, supabase)) return;
+    const profileCountResult = await supabase.from("profiles").select("id", { count: "exact", head: true });
+    if (profileCountResult?.error || !Number.isSafeInteger(profileCountResult?.count) || profileCountResult.count < 0) throw new AdminOverviewFailure("ADMIN_OVERVIEW_DATABASE_ERROR");
     const profiles = await fetchBoundedRows((from, to) => supabase
       .from("profiles")
-      .select("clerk_id,email,full_name,username,bio,profile_pic_url,image_url,one_link_username,one_link_display_name,one_link_avatar_url,one_link_settings,one_link_updated_at,updated_at")
-      .order("clerk_id", { ascending: true })
-      .range(from, to));
-    const seenOwners = new Set();
-    const oneLinks = profiles.map(getPublishedOneLinkRecord).filter((record) => {
-      const owner = record?.ownerClerkId || `username:${record?.username}`;
-      if (!record || seenOwners.has(owner)) return false;
-      seenOwners.add(owner);
-      return true;
-    }).sort((left, right) => left.username.localeCompare(right.username));
+      .select("id,clerk_id,email,full_name,username,bio,profile_pic_url,image_url,one_link_username,one_link_display_name,one_link_avatar_url,one_link_settings,one_link_updated_at,updated_at")
+      .order("id", { ascending: true })
+      .range(from, to), { expectedCount: profileCountResult.count });
+    const oneLinks = collectPublishedOneLinks(profiles);
     return res.status(200).json({ success: true, oneLinks, total: oneLinks.length, updatedAt: new Date().toISOString() });
   } catch (error) {
     const code = error instanceof AdminOverviewFailure ? error.code : "ADMIN_OVERVIEW_DATABASE_ERROR";

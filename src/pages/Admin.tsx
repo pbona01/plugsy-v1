@@ -63,7 +63,7 @@ import {
 
 export default function Admin() {
   const navigate = useNavigate();
-  const { isUserOnline, onlineSignedInCount, presenceUpdatedAt } = useOnlinePresence();
+  const { isUserOnline, onlineSignedInCount, presenceUpdatedAt, presenceStatus } = useOnlinePresence();
   const { signOut } = useClerk();
   const { isLoaded, userId, getToken } = useAuth();
   const { user } = useUser();
@@ -98,6 +98,10 @@ export default function Admin() {
   const [oneLinksLoading, setOneLinksLoading] = useState(false);
   const [oneLinksError, setOneLinksError] = useState<string | null>(null);
   const [oneLinksSearch, setOneLinksSearch] = useState('');
+  const oneLinksAbortRef = useRef<AbortController | null>(null);
+  const oneLinksSequenceRef = useRef(0);
+  const oneLinksInFlightRef = useRef(false);
+  const [oneLinksUpdatedAt, setOneLinksUpdatedAt] = useState<string | null>(null);
 
   // Broadcast Email States
   const [broadcastSubject, setBroadcastSubject] = useState('');
@@ -759,22 +763,33 @@ export default function Admin() {
     : {};
 
   const loadPublishedOneLinks = useCallback(async () => {
-    if (!userId || oneLinksLoading) return;
+    if (!userId || oneLinksInFlightRef.current) return;
+    oneLinksInFlightRef.current = true;
+    const sequence = ++oneLinksSequenceRef.current;
+    const controller = new AbortController();
+    oneLinksAbortRef.current = controller;
     setOneLinksLoading(true);
     try {
       const token = await getToken();
-      const response = await fetch("/api/admin?action=list-published-onelinks", { headers: { Accept: "application/json", Authorization: `Bearer ${token}` }, cache: "no-store" });
+      const response = await fetch("/api/admin?action=list-published-onelinks", { headers: { Accept: "application/json", Authorization: `Bearer ${token}` }, cache: "no-store", signal: controller.signal });
       const payload = await response.json().catch(() => null);
-      if (!response.ok || payload?.success !== true || !Array.isArray(payload.oneLinks)) throw new Error("Published One Links are unavailable.");
+      if (!response.ok || payload?.success !== true || !Array.isArray(payload.oneLinks) || sequence !== oneLinksSequenceRef.current) throw new Error("Published One Links are unavailable.");
       setPublishedOneLinks(payload.oneLinks);
+      setOneLinksUpdatedAt(payload.updatedAt || null);
       setOneLinksError(null);
-    } catch { setOneLinksError("Published One Links are temporarily unavailable."); }
-    finally { setOneLinksLoading(false); }
-  }, [getToken, userId, oneLinksLoading]);
+    } catch (error: any) { if (error?.name !== 'AbortError' && sequence === oneLinksSequenceRef.current) setOneLinksError("Published One Links refresh failed; showing the previous confirmed list."); }
+    finally { if (sequence === oneLinksSequenceRef.current) setOneLinksLoading(false); oneLinksInFlightRef.current = false; }
+  }, [getToken, userId]);
 
   useEffect(() => {
     if (activeTab === "onelinks") void loadPublishedOneLinks();
-  }, [activeTab]);
+    return () => {
+      oneLinksSequenceRef.current += 1;
+      oneLinksAbortRef.current?.abort();
+      oneLinksAbortRef.current = null;
+      oneLinksInFlightRef.current = false;
+    };
+  }, [activeTab, loadPublishedOneLinks]);
 
   const visibleOneLinks = publishedOneLinks.filter((entry) => {
     const query = oneLinksSearch.toLowerCase();
@@ -1456,7 +1471,7 @@ export default function Admin() {
                       { icon: AlertCircle, label: 'Action Required', val: overviewMetrics ? Number(dbStats.actionRequiredChats).toLocaleString() : '—', color: 'text-red-500', tab: 'chats' },
                       { icon: Inbox, label: 'Total Orders', val: overviewMetrics ? Number(dbStats.totalOrders).toLocaleString() : '—', color: 'text-brand-text-secondary' },
                       { icon: Globe, label: 'Published One Links', val: overviewMetrics ? Number(dbStats.publishedOneLinks).toLocaleString() : '—', color: 'text-purple-500', tab: 'onelinks' },
-                      { icon: UsersIcon, label: 'Signed-in Users Online Now', val: onlineSignedInCount.toLocaleString(), color: 'text-emerald-500' }
+                      { icon: UsersIcon, label: 'Signed-in Users Online Now', val: presenceStatus === 'confirmed' ? onlineSignedInCount.toLocaleString() : (presenceStatus === 'connecting' ? 'Connecting…' : 'Unavailable'), color: 'text-emerald-500' }
                     ].map((stat, i) => (
                     <button 
                       key={i} 
@@ -1480,7 +1495,7 @@ export default function Admin() {
                 <div className="flex flex-wrap items-center gap-4 text-xs text-brand-text-secondary">
                   <button onClick={() => void refreshOverview()} disabled={overviewLoading} className="btn-primary h-10 px-4 flex items-center gap-2"><RefreshCw size={14} className={overviewLoading ? 'animate-spin' : ''} /> Refresh</button>
                   <span>{overviewMetrics?.updatedAt ? `Last updated ${formatDate(overviewMetrics.updatedAt)}` : overviewError || 'Overview unavailable'}</span>
-                  <span>Anonymous visitors are not included. Presence updated {presenceUpdatedAt ? formatDate(presenceUpdatedAt) : '—'}.</span>
+                  <span>Anonymous visitors are not included. Presence {presenceStatus}; updated {presenceUpdatedAt ? new Date(presenceUpdatedAt).toLocaleString() : '—'}.</span>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
@@ -1549,7 +1564,7 @@ export default function Admin() {
             {activeTab === 'onelinks' && (
               <div className="space-y-8">
                 <header className="flex flex-wrap items-center justify-between gap-4">
-                  <div><h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">One Links</h2><p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">{publishedOneLinks.length} published pages</p></div>
+                  <div><h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">One Links</h2><p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">{publishedOneLinks.length} published pages {oneLinksUpdatedAt ? `· updated ${new Date(oneLinksUpdatedAt).toLocaleString()}` : ''}</p>{oneLinksError && <p className="text-xs text-orange-500 mt-2">{oneLinksError}</p>}</div>
                   <div className="flex gap-3"><input aria-label="Search published One Links" value={oneLinksSearch} onChange={(event) => setOneLinksSearch(event.target.value)} placeholder="Search owner or username" className="h-10 px-4 rounded-xl bg-brand-surface border border-brand-border text-sm" /><button onClick={() => void loadPublishedOneLinks()} disabled={oneLinksLoading} className="btn-primary h-10 px-4 flex items-center gap-2"><RefreshCw size={14} /> Refresh</button></div>
                 </header>
                 {oneLinksLoading && publishedOneLinks.length === 0 ? <div className="card-premium p-16 text-center"><Loader2 className="animate-spin mx-auto" /></div> : oneLinksError && publishedOneLinks.length === 0 ? <div className="card-premium p-16 text-center text-red-500">{oneLinksError}</div> : visibleOneLinks.length === 0 ? <div className="card-premium p-16 text-center text-brand-text-secondary">No published One Links found.</div> : <div className="grid gap-4">{visibleOneLinks.map((entry) => <div key={`${entry.ownerClerkId || entry.username}`} className="card-premium p-5 flex flex-wrap items-center justify-between gap-4"><div><p className="font-black">{entry.ownerName} <span className="text-[9px] uppercase text-brand-accent ml-2">{entry.publicationSource}</span></p><p className="text-xs text-brand-text-secondary">{entry.ownerEmail || 'No email'} · @{entry.username}</p></div><div className="flex gap-2"><button onClick={() => navigator.clipboard?.writeText(entry.publicUrl)} className="h-9 px-3 rounded-lg border border-brand-border text-xs">Copy Link</button><a href={entry.publicUrl} target="_blank" rel="noopener noreferrer" className="h-9 px-3 rounded-lg bg-brand-accent text-white text-xs flex items-center">Open Live Link</a></div></div>)}</div>}

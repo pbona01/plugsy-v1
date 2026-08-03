@@ -9,6 +9,7 @@ import {
   normalizeOneLinkUsername,
   OneLinkValidationError,
   parseOneLinkProfileBio,
+  normalizeOneLinkOwnerProfile,
   validateOneLinkSavePayload,
   validateOneLinkUnpublishPayload,
 } from "../shared/onelink.js";
@@ -128,54 +129,7 @@ async function findOwnerProfile(supabase, ownerUserId) {
 }
 
 export function toOwnerResponse(profile) {
-  const parsed = parseOneLinkProfileBio(profile.bio);
-  const independentInitialized = profile.one_link_updated_at !== null;
-  const hasIndependentUsername =
-    independentInitialized || profile.one_link_username !== null;
-  const hasIndependentDisplayName =
-    independentInitialized || profile.one_link_display_name !== null;
-  const hasIndependentBiography =
-    independentInitialized || profile.one_link_biography !== null;
-  const hasIndependentAvatar =
-    independentInitialized || profile.one_link_avatar_url !== null;
-  const hasIndependentSettings =
-    independentInitialized || profile.one_link_settings !== null;
-  return {
-    username: normalizeOneLinkUsername(
-      hasIndependentUsername
-        ? profile.one_link_username
-        : profile.username,
-    ),
-    displayName: String(
-      hasIndependentDisplayName
-        ? profile.one_link_display_name
-        : profile.full_name || "",
-    ).trim(),
-    biography: String(
-      hasIndependentBiography
-        ? profile.one_link_biography || ""
-        : parsed.biography,
-    ),
-    imageUrl:
-      normalizeExternalUrl(
-        hasIndependentAvatar
-          ? profile.one_link_avatar_url
-          : profile.profile_pic_url || profile.image_url,
-      ) || null,
-    imagePublicId: profile.one_link_avatar_public_id || null,
-    wallpaperUrl:
-      normalizeExternalUrl(profile.one_link_wallpaper_url) || null,
-    wallpaperPublicId: profile.one_link_wallpaper_public_id || null,
-    wallpaperTextMode: normalizeOneLinkTextMode(
-      profile.one_link_wallpaper_text_mode,
-    ),
-    messageUsername: normalizeOneLinkUsername(profile.username) || null,
-    settings: hasIndependentSettings
-      ? normalizeOneLinkSettings(profile.one_link_settings, {
-          publicationContext: "independent",
-        })
-      : parsed.settings,
-  };
+  return normalizeOneLinkOwnerProfile(profile);
 }
 
 const revisionConflict = (res) =>

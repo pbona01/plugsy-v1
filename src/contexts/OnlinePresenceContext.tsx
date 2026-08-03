@@ -1,12 +1,14 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { supabase } from '../lib/supabase';
+import { extractCanonicalClerkIds } from '../../shared/presence.js';
 
 interface OnlinePresenceContextType {
   onlineUserIds: Set<string>;
   onlineClerkUserIds: Set<string>;
   onlineSignedInCount: number;
   presenceUpdatedAt: string | null;
+  presenceStatus: 'connecting' | 'confirmed' | 'unavailable';
   isUserOnline: (id: string | null | undefined, lastLoginAt?: string | null) => boolean;
 }
 
@@ -17,16 +19,19 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
   const [onlineClerkUserIds, setOnlineClerkUserIds] = useState<Set<string>>(new Set());
   const [presenceUpdatedAt, setPresenceUpdatedAt] = useState<string | null>(null);
+  const [presenceStatus, setPresenceStatus] = useState<'connecting' | 'confirmed' | 'unavailable'>('connecting');
 
   useEffect(() => {
     if (!userId) {
       setOnlineUserIds(new Set());
       setOnlineClerkUserIds(new Set());
       setPresenceUpdatedAt(null);
+      setPresenceStatus('unavailable');
       return;
     }
 
     let channel: any = null;
+    setPresenceStatus('connecting');
 
     const setupPresence = async () => {
       try {
@@ -42,25 +47,24 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
         channel
           .on('presence', { event: 'sync' }, () => {
             const presenceState = channel.presenceState();
-            const onlineSet = new Set<string>();
-
-            Object.values(presenceState).forEach((presences: any) => {
-              presences.forEach((p: any) => {
-                const clerkId = String(p.clerk_id || '').trim();
-                if (/^user_[A-Za-z0-9_-]{3,}$/.test(clerkId)) onlineSet.add(clerkId);
-              });
-            });
+            const onlineSet = extractCanonicalClerkIds(presenceState);
 
             setOnlineUserIds(onlineSet);
             setOnlineClerkUserIds(new Set(onlineSet));
             setPresenceUpdatedAt(new Date().toISOString());
+            setPresenceStatus('confirmed');
           })
           .subscribe(async (status: string) => {
+            if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+              setPresenceStatus('unavailable');
+              return;
+            }
             if (status === 'SUBSCRIBED') {
               await channel.track({ clerk_id: userId, online_at: new Date().toISOString() });
             }
           });
       } catch (err) {
+        setPresenceStatus('unavailable');
         console.warn('[OnlinePresence] Error setting up presence channel:', err);
       }
     };
@@ -75,6 +79,7 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
       }
       setOnlineUserIds(new Set());
       setOnlineClerkUserIds(new Set());
+      setPresenceStatus('unavailable');
     };
   }, [userId]);
 
@@ -98,7 +103,7 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <OnlinePresenceContext.Provider value={{ onlineUserIds, onlineClerkUserIds, onlineSignedInCount: onlineClerkUserIds.size, presenceUpdatedAt, isUserOnline }}>
+    <OnlinePresenceContext.Provider value={{ onlineUserIds, onlineClerkUserIds, onlineSignedInCount: onlineClerkUserIds.size, presenceUpdatedAt, presenceStatus, isUserOnline }}>
       {children}
     </OnlinePresenceContext.Provider>
   );

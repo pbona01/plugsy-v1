@@ -1,6 +1,5 @@
 import {
-  normalizeOneLinkUsername,
-  parseOneLinkProfileBio,
+  normalizeOneLinkOwnerProfile,
 } from "./onelink.js";
 import {
   isSupportChat,
@@ -23,6 +22,9 @@ export async function fetchBoundedRows(makeQuery, options = {}) {
   const pageSize = Math.min(1000, Math.max(1, Number(options.pageSize) || ADMIN_OVERVIEW_PAGE_SIZE));
   const maxPages = Math.min(ADMIN_OVERVIEW_MAX_PAGES, Math.max(1, Number(options.maxPages) || ADMIN_OVERVIEW_MAX_PAGES));
   const rows = [];
+  const rowKey = options.rowKey || ((row) => row?.id);
+  const expectedCount = options.expectedCount;
+  const seenKeys = new Set();
   const signatures = new Set();
   for (let page = 0; page < maxPages; page += 1) {
     let result;
@@ -36,20 +38,35 @@ export async function fetchBoundedRows(makeQuery, options = {}) {
     if (result.data.some((row) => !row || typeof row !== "object" || Array.isArray(row))) {
       throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
     }
-    const fingerprint = result.data.map((row) => String(row.id || "")).join("|");
+    const pageKeys = result.data.map((row) => String(rowKey(row) || "").trim());
+    if (pageKeys.some((key) => !key) || new Set(pageKeys).size !== pageKeys.length) {
+      throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
+    }
+    if (pageKeys.some((key) => seenKeys.has(key))) {
+      throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
+    }
+    pageKeys.forEach((key) => seenKeys.add(key));
+    const fingerprint = pageKeys.join("|");
     if (fingerprint && signatures.has(fingerprint)) {
       throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
     }
     if (fingerprint) signatures.add(fingerprint);
     rows.push(...result.data);
-    if (result.data.length < pageSize) return rows;
+    if (result.data.length < pageSize) {
+      if (expectedCount !== undefined && seenKeys.size !== expectedCount) {
+        throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
+      }
+      return rows;
+    }
   }
   throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
 }
 
 const finiteAmount = (value) => {
+  if (typeof value === "string" && value.trim() === "") return null;
+  if (typeof value !== "number" && typeof value !== "string") return null;
   const amount = Number(value);
-  return Number.isFinite(amount) && amount >= 0 ? amount : 0;
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
 };
 
 export function countCanonicalSupportChats(chats) {
@@ -73,39 +90,34 @@ export function countCanonicalSupportChats(chats) {
 
 export function getPublishedOneLinkRecord(profile) {
   if (!profile || typeof profile !== "object" || Array.isArray(profile)) return null;
-  const parsed = parseOneLinkProfileBio(profile.bio);
-  const independent = profile.one_link_updated_at !== null || profile.one_link_settings !== null;
-  const settings = independent
-    ? (profile.one_link_settings && typeof profile.one_link_settings === "object"
-      ? profile.one_link_settings
-      : {})
-    : parsed.settings;
-  const publicationContext = independent ? "independent" : "legacy";
-  const normalizedPublished = typeof settings.published === "boolean"
-    ? settings.published
-    : publicationContext === "legacy";
-  const username = normalizeOneLinkUsername(
-    independent ? profile.one_link_username : profile.username,
-  );
-  if (!normalizedPublished || !username) return null;
+  const normalized = normalizeOneLinkOwnerProfile(profile);
+  if (normalized.settings.published !== true || !normalized.username) return null;
   return {
     ownerClerkId: String(profile.clerk_id || "").trim() || null,
     ownerName: String(profile.full_name || profile.username || "").trim() || "Plugsy Member",
     ownerEmail: String(profile.email || "").trim().toLowerCase() || null,
-    username,
-    displayName: String(
-      independent ? profile.one_link_display_name : profile.full_name || "",
-    ).trim() || null,
-    publicUrl: `https://www.plugsy.ng/one/${username}`,
-    avatarUrl: String(
-      independent ? profile.one_link_avatar_url : profile.profile_pic_url || profile.image_url || "",
-    ).trim() || null,
+    username: normalized.username,
+    displayName: normalized.displayName || null,
+    publicUrl: `https://www.plugsy.ng/one/${normalized.username}`,
+    avatarUrl: normalized.imageUrl,
     updatedAt: profile.one_link_updated_at || profile.updated_at || null,
-    publicationSource: publicationContext,
+    publicationSource: normalized.publicationSource,
   };
 }
 
-export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPurchases, chats, totalOrders = orders?.length, syncedProfiles = profiles?.length, now = new Date() }) {
+export function collectPublishedOneLinks(profiles) {
+  const seen = new Set();
+  return profiles.map(getPublishedOneLinkRecord).filter((record, index) => {
+    if (!record) return false;
+    const profile = profiles[index];
+    const key = record.ownerClerkId || String(profile?.id || "").trim() || `username:${record.username}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((left, right) => left.username.localeCompare(right.username));
+}
+
+export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPurchases, chats, totalOrders = orders?.length, syncedProfiles = profiles?.length, now = new Date(), publishedOneLinks = null }) {
   if (!Number.isSafeInteger(clerkCount) || clerkCount < 0) {
     throw new AdminOverviewFailure("ADMIN_OVERVIEW_CLERK_COUNT_FAILED");
   }
@@ -113,6 +125,8 @@ export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPu
     throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
   }
   const paidOrders = orders.filter((order) => order.status === "paid" || order.status === "completed");
+  const contributingAmounts = [...paidOrders.map((order) => order.amount), ...portfolioPurchases.map((purchase) => purchase.amount)];
+  if (contributingAmounts.some((amount) => finiteAmount(amount) === null)) throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
   const paidVolume = paidOrders.reduce((sum, order) => sum + finiteAmount(order.amount), 0) +
     portfolioPurchases.reduce((sum, purchase) => sum + finiteAmount(purchase.amount), 0);
   const activeSubscriptions = orders.filter((order) =>
@@ -123,13 +137,9 @@ export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPu
     order.status === "paid" && order.delivery_status === "pending_login" &&
     !String(order.product_name || "").toLowerCase().includes("medal"),
   ).length;
-  const publishedOwners = new Set();
-  for (const profile of profiles) {
-    const record = getPublishedOneLinkRecord(profile);
-    if (record?.ownerClerkId) publishedOwners.add(record.ownerClerkId);
-  }
+  const publishedRecords = publishedOneLinks || collectPublishedOneLinks(profiles);
   const support = countCanonicalSupportChats(chats);
-  return {
+  const result = {
     registeredUsers: clerkCount,
     syncedProfiles,
     totalOrders,
@@ -138,6 +148,10 @@ export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPu
     pendingOrders,
     openSupportChats: support.openSupportChats,
     actionRequiredChats: support.actionRequiredChats,
-    publishedOneLinks: publishedOwners.size,
+    publishedOneLinks: publishedRecords.length,
   };
+  for (const value of Object.values(result)) {
+    if (!Number.isSafeInteger(value) || value < 0) throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");
+  }
+  return result;
 }

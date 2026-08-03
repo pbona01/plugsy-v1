@@ -3,11 +3,14 @@ import test from "node:test";
 import {
   AdminOverviewFailure,
   buildOverviewMetrics,
+  fetchBoundedRows,
+  collectPublishedOneLinks,
 } from "../shared/admin-overview.js";
 import { handleOverviewMetrics } from "../api-handlers/admin.js";
 import { handleListPublishedOneLinks } from "../api-handlers/admin.js";
 import { getPublishedOneLinkRecord } from "../shared/admin-overview.js";
 import fs from "node:fs";
+import { extractCanonicalClerkIds } from "../shared/presence.js";
 
 const response = () => {
   const out = { statusCode: 200, headers: {}, body: null };
@@ -66,6 +69,30 @@ test("invalid Clerk count fails instead of becoming zero", () => {
   assert.throws(() => buildOverviewMetrics({ clerkCount: -1, profiles: [], orders: [], portfolioPurchases: [], chats: [] }), AdminOverviewFailure);
 });
 
+test("bounded rows enforce stable keys, exact counts, duplicate pages, and full-page completeness", async () => {
+  const page = (offset) => Array.from({ length: offset === 0 ? 500 : 2 }, (_, index) => ({ id: `id-${offset + index}` }));
+  assert.equal((await fetchBoundedRows(async (from) => ({ data: page(from), error: null }), { expectedCount: 502 })).length, 502);
+  assert.equal((await fetchBoundedRows(async (from) => ({ data: from < 1000 ? Array.from({ length: 500 }, (_, index) => ({ id: `many-${from + index}` })) : Array.from({ length: 200 }, (_, index) => ({ id: `many-${from + index}` })), error: null }), { expectedCount: 1200 })).length, 1200);
+  await assert.rejects(() => fetchBoundedRows(async () => ({ data: [{ id: "same" }], error: null }), { expectedCount: 2 }), /ADMIN_OVERVIEW_RESPONSE_INVALID/);
+  await assert.rejects(() => fetchBoundedRows(async (from) => ({ data: from ? [{ id: "id-0" }] : Array.from({ length: 500 }, (_, i) => ({ id: `id-${i}` })), error: null })), /ADMIN_OVERVIEW_RESPONSE_INVALID/);
+  await assert.rejects(() => fetchBoundedRows(async (from) => ({ data: from ? null : Array.from({ length: 500 }, (_, i) => ({ id: `later-${i}` })), error: from ? new Error("later") : null })), /ADMIN_OVERVIEW_DATABASE_ERROR/);
+  await assert.rejects(() => fetchBoundedRows(async () => ({ data: [{ id: "" }], error: null })), /ADMIN_OVERVIEW_RESPONSE_INVALID/);
+});
+
+test("invalid financial values fail while explicit zero remains valid", () => {
+  const base = { clerkCount: 1, profiles: [], portfolioPurchases: [], chats: [] };
+  assert.equal(buildOverviewMetrics({ ...base, orders: [{ status: "paid", amount: 0 }] }).paidVolume, 0);
+  assert.throws(() => buildOverviewMetrics({ ...base, orders: [{ status: "paid", amount: "" }] }), /ADMIN_OVERVIEW_RESPONSE_INVALID/);
+  assert.throws(() => buildOverviewMetrics({ ...base, orders: [{ status: "paid", amount: "NaN" }] }), /ADMIN_OVERVIEW_RESPONSE_INVALID/);
+});
+
+test("Clerk provider failure has its own stable classification", async () => {
+  const res = response();
+  const supabase = { from() { const builder = { select() { return builder; }, order() { return builder; }, range() { return Promise.resolve({ data: [], error: null }); }, then(resolve) { return Promise.resolve({ count: 0, error: null }).then(resolve); } }; return builder; } };
+  await handleOverviewMetrics({ method: "GET", headers: { authorization: "Bearer token" } }, res, { authenticate: async () => ({ userId: "user_admin" }), authorize: async () => true, supabase, secretKey: "sk_test", getClerkCount: async () => { throw new Error("clerk down"); } });
+  assert.equal(res.out.body.code, "ADMIN_OVERVIEW_CLERK_COUNT_FAILED");
+});
+
 test("overview endpoint is GET-only and requires authentication", async () => {
   const method = response();
   await handleOverviewMetrics({ method: "POST", headers: {} }, method, {});
@@ -116,6 +143,14 @@ test("published One Link compatibility includes legacy and independent pages onl
   assert.equal(legacy.publicationSource, "legacy");
   assert.equal(independent.publicationSource, "independent");
   assert.equal(draft, null);
+  const settingsOnly = getPublishedOneLinkRecord({ clerk_id: "user_settings", username: "fallback", one_link_updated_at: "2026-01-01T00:00:00Z", one_link_username: null, one_link_settings: { published: true } });
+  assert.equal(settingsOnly.username, "fallback");
+  const mixedLegacy = getPublishedOneLinkRecord({ clerk_id: "user_mixed", username: "legacy_name", one_link_username: "new_name", one_link_updated_at: "2026-01-01T00:00:00Z", one_link_settings: null, bio: JSON.stringify({ onelink: { published: true } }) });
+  assert.equal(mixedLegacy.username, "new_name");
+  assert.equal(mixedLegacy.publicationSource, "legacy");
+  assert.equal(getPublishedOneLinkRecord({ clerk_id: "user_empty", username: "empty", one_link_updated_at: "2026-01-01T00:00:00Z", one_link_settings: {} }), null);
+  const profileOnly = collectPublishedOneLinks([{ id: "profile-only", username: "legacy_owner", bio: JSON.stringify({ onelink: {} }), one_link_settings: null, one_link_updated_at: null }]);
+  assert.equal(profileOnly.length, 1);
 });
 
 test("published One Links endpoint is read-only, allowlisted, and deduplicates owners", async () => {
@@ -124,7 +159,7 @@ test("published One Links endpoint is read-only, allowlisted, and deduplicates o
     { id: "2", clerk_id: "user_1", one_link_username: "independent", one_link_settings: { published: true }, one_link_updated_at: "2026-01-01T00:00:00Z" },
     { id: "3", clerk_id: "user_3", one_link_username: "draft", one_link_settings: { published: false }, one_link_updated_at: "2026-01-01T00:00:00Z" },
   ];
-  const supabase = { from() { const builder = { select() { return builder; }, order() { return builder; }, range(from, to) { return Promise.resolve({ data: rows.slice(from, to + 1), error: null }); } }; return builder; } };
+  const supabase = { from() { const state = { head: false }; const builder = { select(_fields, options) { state.head = options?.head === true; return builder; }, order() { return builder; }, range(from, to) { return Promise.resolve({ data: rows.slice(from, to + 1), error: null }); }, then(resolve, reject) { return Promise.resolve({ count: state.head ? rows.length : null, error: null }).then(resolve, reject); } }; return builder; } };
   const res = response();
   await handleListPublishedOneLinks({ method: "GET", headers: { authorization: "Bearer token" } }, res, { authenticate: async () => ({ userId: "user_admin" }), authorize: async () => true, supabase });
   assert.equal(res.out.statusCode, 200);
@@ -135,9 +170,11 @@ test("published One Links endpoint is read-only, allowlisted, and deduplicates o
 
 test("presence exposes canonical Clerk-only aggregate and cleans up channel", () => {
   const source = fs.readFileSync(new URL("../src/contexts/OnlinePresenceContext.tsx", import.meta.url), "utf8");
+  const helperSource = fs.readFileSync(new URL("../shared/presence.js", import.meta.url), "utf8");
   assert.match(source, /onlineClerkUserIds/);
   assert.match(source, /onlineSignedInCount/);
-  assert.match(source, /\^user_\[A-Za-z0-9_\-\]/);
+  assert.match(helperSource, /\^user_\[A-Za-z0-9_\-\]/);
   assert.doesNotMatch(source, /profile_id\) onlineSet/);
   assert.match(source, /removeChannel\(channel\)/);
+  assert.deepEqual([...extractCanonicalClerkIds({ a: [{ clerk_id: "user_abc" }, { clerk_id: "user_abc" }, { profile_id: "user_xyz" }, { clerk_id: "bad" }] })], ["user_abc"]);
 });

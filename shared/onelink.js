@@ -349,6 +349,32 @@ export function normalizeOneLinkSettings(
   };
 }
 
+export function normalizeOneLinkOwnerProfile(profile) {
+  const parsed = parseOneLinkProfileBio(profile?.bio);
+  const initialized = profile?.one_link_updated_at !== null && profile?.one_link_updated_at !== undefined;
+  const present = (value) => value !== null && value !== undefined;
+  const independentUsername = initialized && present(profile?.one_link_username);
+  const independentDisplayName = initialized && present(profile?.one_link_display_name);
+  const independentBiography = initialized && present(profile?.one_link_biography);
+  const independentAvatar = initialized && present(profile?.one_link_avatar_url);
+  const independentSettings = initialized && present(profile?.one_link_settings);
+  return {
+    username: normalizeOneLinkUsername(independentUsername ? profile.one_link_username : profile?.username),
+    displayName: String(independentDisplayName ? profile.one_link_display_name : profile?.full_name || "").trim(),
+    biography: String(independentBiography ? profile.one_link_biography || "" : parsed.biography),
+    imageUrl: normalizeExternalUrl(independentAvatar ? profile.one_link_avatar_url : profile?.profile_pic_url || profile?.image_url) || null,
+    imagePublicId: profile?.one_link_avatar_public_id || null,
+    wallpaperUrl: normalizeExternalUrl(profile?.one_link_wallpaper_url) || null,
+    wallpaperPublicId: profile?.one_link_wallpaper_public_id || null,
+    wallpaperTextMode: normalizeOneLinkTextMode(profile?.one_link_wallpaper_text_mode),
+    messageUsername: normalizeOneLinkUsername(profile?.username) || null,
+    settings: independentSettings
+      ? normalizeOneLinkSettings(profile.one_link_settings, { publicationContext: "independent" })
+      : parsed.settings,
+    publicationSource: independentSettings ? "independent" : "legacy",
+  };
+}
+
 export class OneLinkValidationError extends Error {
   constructor(code, message) {
     super(message);
