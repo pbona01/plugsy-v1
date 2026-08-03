@@ -15,6 +15,7 @@ import {
   uploadOneLinkImage,
 } from "../utils/uploadOneLinkImage";
 import {
+  isVerifiedOneLinkPublicResponse,
   normalizeOneLinkSettings,
   normalizeOneLinkUsername,
 } from "../../shared/onelink.js";
@@ -169,14 +170,20 @@ export default function OneLinkPage() {
   };
 
   const verifyPublicPage = async (username: string) => {
+    const expectedUsername = normalizeOneLinkUsername(username);
+    if (!expectedUsername) return false;
     const response = await fetch(
-      `/api/onelink?action=public&username=${encodeURIComponent(username)}`,
+      `/api/onelink?action=public&username=${encodeURIComponent(expectedUsername)}`,
       { headers: { Accept: "application/json" }, cache: "no-store" },
     );
     const contentType = response.headers.get("content-type") || "";
     if (!contentType.toLowerCase().includes("application/json")) return false;
     const payload = await response.json().catch(() => null);
-    return Boolean(response.ok && payload?.success && payload?.profile);
+    return isVerifiedOneLinkPublicResponse(
+      payload,
+      response.ok,
+      expectedUsername,
+    );
   };
 
   const loadAnalytics = async (): Promise<OneLinkAnalytics> => {

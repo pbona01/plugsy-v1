@@ -215,6 +215,18 @@ export function parseOneLinkProfileBio(rawBio) {
   };
 }
 
+export function isVerifiedOneLinkPublicResponse(
+  payload,
+  responseOk,
+  expectedUsername,
+) {
+  const expected = normalizeOneLinkUsername(expectedUsername);
+  if (!responseOk || !expected || payload?.success !== true) return false;
+  const profile = payload?.profile;
+  if (!isPlainObject(profile)) return false;
+  return normalizeOneLinkUsername(profile.username) === expected;
+}
+
 export function normalizeOneLinkSettings(
   value,
   { publicationContext = "fresh" } = {},
@@ -554,7 +566,17 @@ export function validateOneLinkSavePayload(payload) {
   }
 
   const seenIds = new Set();
-  const seenSocialUrls = new Set();
+  const seenUrls = new Set();
+  const rememberUrl = (url) => {
+    if (!url) return;
+    if (seenUrls.has(url)) {
+      throw new OneLinkValidationError(
+        "ONELINK_URL_DUPLICATE",
+        "Each One Link URL must be different.",
+      );
+    }
+    seenUrls.add(url);
+  };
   const socials = source.socials.map((entry) => {
     if (!isPlainObject(entry)) {
       throw new OneLinkValidationError(
@@ -600,13 +622,7 @@ export function validateOneLinkSavePayload(payload) {
         "Social link visibility is invalid.",
       );
     }
-    if (url && seenSocialUrls.has(url)) {
-      throw new OneLinkValidationError(
-        "ONELINK_URL_DUPLICATE",
-        "Each social link must use a different URL.",
-      );
-    }
-    if (url) seenSocialUrls.add(url);
+    rememberUrl(url);
     return {
       id,
       platform: platform.toLowerCase(),
@@ -667,6 +683,7 @@ export function validateOneLinkSavePayload(payload) {
         "Featured link visibility is invalid.",
       );
     }
+    rememberUrl(url);
     return {
       id,
       title,

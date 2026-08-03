@@ -511,33 +511,43 @@ export async function confirmFailClosedPublicationRollback({
     };
   };
 
-  const attemptedRollbackRevision = createRevision(publishRevision);
-  let rollbackQuery = supabase
-    .from("profiles")
-    .update({
-      one_link_settings: {
-        ...settings,
-        published: false,
-      },
-      one_link_updated_at: attemptedRollbackRevision,
-    })
-    .eq("clerk_id", ownerUserId);
-  rollbackQuery = withRevisionMatch(
-    rollbackQuery,
-    publishRevision,
-  );
-  const { data: rolledBack, error: rollbackError } =
-    await rollbackQuery.select(PROFILE_COLUMNS).maybeSingle();
-  const rollbackResult = classifyOneLinkUpdateResult(
-    rolledBack,
-    rollbackError,
-  );
+  let rollbackResult;
+  try {
+    const attemptedRollbackRevision = createRevision(publishRevision);
+    let rollbackQuery = supabase
+      .from("profiles")
+      .update({
+        one_link_settings: {
+          ...settings,
+          published: false,
+        },
+        one_link_updated_at: attemptedRollbackRevision,
+      })
+      .eq("clerk_id", ownerUserId);
+    rollbackQuery = withRevisionMatch(
+      rollbackQuery,
+      publishRevision,
+    );
+    const { data: rolledBack, error: rollbackError } =
+      await rollbackQuery.select(PROFILE_COLUMNS).maybeSingle();
+    rollbackResult = classifyOneLinkUpdateResult(
+      rolledBack,
+      rollbackError,
+    );
+  } catch {
+    return reportUnconfirmed("rollback_query_threw");
+  }
   if (rollbackResult.kind !== "success") {
     return reportUnconfirmed(rollbackResult.kind);
   }
 
   const rollbackRevision = rollbackResult.revision;
-  const reread = await loadOwner(supabase, ownerUserId);
+  let reread;
+  try {
+    reread = await loadOwner(supabase, ownerUserId);
+  } catch {
+    return reportUnconfirmed("owner_reread_threw");
+  }
   if (reread.failed) {
     return reportUnconfirmed("owner_reread_failed");
   }

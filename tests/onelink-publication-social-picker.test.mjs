@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  isVerifiedOneLinkPublicResponse,
   normalizeExternalUrl,
   normalizeOneLinkSettings,
   parseOneLinkProfileBio,
@@ -114,6 +115,7 @@ function makeFakeSupabase(initialProfile, options = {}) {
             async maybeSingle() {
               const outcome = state.outcomes.shift() || {};
               state.calls.push({ patch: clone(patch), filters: clone(filters) });
+              if (outcome.throw) throw outcome.throw;
               if (outcome.error) return { data: null, error: outcome.error };
               if (outcome.zeroRows) return { data: null, error: null };
               const matches = filters.every(({ operator, column, value }) =>
@@ -331,7 +333,7 @@ test("social URLs normalize safely and duplicate normalized URLs are rejected", 
       enabled: true,
     },
   ];
-  assert.throws(() => validateOneLinkSavePayload(draft), /different URL/i);
+  assert.throws(() => validateOneLinkSavePayload(draft), /URL must be different/i);
 });
 
 test("save preserves stored publication and ignores a malicious publication value", async () => {
@@ -356,6 +358,119 @@ test("save preserves stored publication and ignores a malicious publication valu
     assert.equal(response.body.published, published);
     assert.equal(fake.state.profile.one_link_settings.published, published);
   }
+});
+
+test("public verification requires the exact normalized handle and a valid response", () => {
+  assert.equal(
+    isVerifiedOneLinkPublicResponse(
+      { success: true, profile: { username: "Creator" } },
+      true,
+      "creator",
+    ),
+    true,
+  );
+  assert.equal(
+    isVerifiedOneLinkPublicResponse(
+      { success: true, profile: { username: "other" } },
+      true,
+      "creator",
+    ),
+    false,
+  );
+  assert.equal(
+    isVerifiedOneLinkPublicResponse({ success: true }, true, "creator"),
+    false,
+  );
+  assert.equal(
+    isVerifiedOneLinkPublicResponse(
+      { success: true, profile: [] },
+      true,
+      "creator",
+    ),
+    false,
+  );
+  assert.equal(
+    isVerifiedOneLinkPublicResponse(null, true, "creator"),
+    false,
+  );
+  assert.equal(
+    isVerifiedOneLinkPublicResponse(
+      { success: true, profile: { username: "creator" } },
+      false,
+      "creator",
+    ),
+    false,
+  );
+  assert.equal(
+    isVerifiedOneLinkPublicResponse(
+      { success: true, profile: { username: "creator" } },
+      true,
+      "%%%",
+    ),
+    false,
+  );
+});
+
+test("socials and featured links share normalized URL duplicate protection", () => {
+  const project = (id, url) => ({
+    id,
+    title: "Project",
+    description: "",
+    url,
+    enabled: true,
+  });
+  const social = (id, url) => ({
+    id,
+    platform: "website",
+    url,
+    enabled: true,
+  });
+  const assertDuplicate = (socials, projects) => {
+    const draft = validDraft();
+    draft.settings.socials = socials;
+    draft.settings.projects = projects;
+    assert.throws(
+      () => validateOneLinkSavePayload(draft),
+      (error) =>
+        error?.code === "ONELINK_URL_DUPLICATE" &&
+        /One Link URL must be different/i.test(error.message),
+    );
+  };
+
+  assertDuplicate(
+    [social("social-one", "https://example.com/me"), social("social-two", "https://example.com/me")],
+    [],
+  );
+  assertDuplicate(
+    [],
+    [project("project-one", "https://example.com/me"), project("project-two", "https://example.com/me")],
+  );
+  assertDuplicate(
+    [social("social-one", "https://example.com/me")],
+    [project("project-one", "https://example.com/me")],
+  );
+  assertDuplicate(
+    [social("social-one", "example.com/me")],
+    [project("project-one", "https://example.com/me")],
+  );
+
+  const differentPaths = validDraft();
+  differentPaths.settings.socials = [social("social-one", "https://example.com/me")];
+  differentPaths.settings.projects = [project("project-one", "https://example.com/you")];
+  assert.doesNotThrow(() => validateOneLinkSavePayload(differentPaths));
+
+  const invalidLegacy = validDraft();
+  invalidLegacy.settings.socials = [
+    { ...social("legacy-social", "javascript:alert(1)"), enabled: false, invalid: true },
+  ];
+  invalidLegacy.settings.projects = [
+    { ...project("legacy-project", "not a url"), enabled: false, invalid: true },
+  ];
+  const normalized = validateOneLinkSavePayload(invalidLegacy);
+  assert.equal(normalized.settings.socials[0].enabled, false);
+  assert.equal(normalized.settings.socials[0].invalid, true);
+  assert.equal(normalized.settings.projects[0].enabled, false);
+  assert.equal(normalized.settings.projects[0].invalid, true);
 });
 
 test("database-normalized revision is returned and required by the next mutation", async () => {
@@ -634,6 +749,58 @@ test("rollback database errors, zero rows, and a reread still showing live are u
     ]);
     assert.equal(logs[0][1].rollbackErrorCategory, expectedCategory);
     assert.equal(logs[0][1].attemptedRevision, "publish-revision");
+  }
+});
+
+test("thrown rollback and reread failures stay contained and sanitized", async () => {
+  for (const scenario of ["rollback_query_threw", "owner_reread_threw"]) {
+    const fake = makeFakeSupabase(makeProfile(), {
+      outcomes:
+        scenario === "rollback_query_threw"
+          ? [{}, { throw: new Error("provider token and settings leaked") }]
+          : [{}, {}],
+    });
+    let publicLookups = 0;
+    let ownerLookups = 0;
+    const logs = [];
+    const response = makeResponse();
+    await handleDraftMutation(
+      makeRequest(validDraft({ expectedRevision: fake.state.profile.one_link_updated_at })),
+      response,
+      "publish",
+      mutationDependencies(fake, {
+        findProfileByUsername: async () => {
+          publicLookups += 1;
+          return publicLookups === 1
+            ? { profile: clone(fake.state.profile), failed: false }
+            : { profile: null, failed: false };
+        },
+        findOwnerProfile: async (_supabase, ownerUserId) => {
+          ownerLookups += 1;
+          if (scenario === "owner_reread_threw" && ownerLookups === 3) {
+            throw new Error("private owner reread failure");
+          }
+          return { profile: clone(fake.state.profile), failed: false };
+        },
+        nextRevision: (() => {
+          const revisions = ["publish-revision", "rollback-revision"];
+          return () => revisions.shift();
+        })(),
+        logger: { error: (...args) => logs.push(args) },
+      }),
+    );
+    assert.equal(response.statusCode, 503);
+    assert.equal(
+      response.body.code,
+      "ONELINK_PUBLISH_FAIL_CLOSED_UNCONFIRMED",
+    );
+    assert.notEqual(response.body.liveConfirmed, true);
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0][1].rollbackErrorCategory, scenario);
+    assert.equal(JSON.stringify(logs).includes("provider token"), false);
+    assert.equal(JSON.stringify(logs).includes("private owner"), false);
+    assert.equal(JSON.stringify(response.body).includes("provider token"), false);
+    assert.equal(JSON.stringify(response.body).includes("private owner"), false);
   }
 });
 
