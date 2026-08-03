@@ -151,6 +151,9 @@ export default function Admin() {
     return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(val);
   };
 
+  const formatOverviewRevenue = (value: number | null | undefined) =>
+    value === null || value === undefined ? '—' : `₦${value.toLocaleString()}`;
+
   // Safe status formatting helper
   const formatStatus = (status: any) => {
     if (!status) return 'N/A';
@@ -760,7 +763,7 @@ export default function Admin() {
 
   const dbStats = overviewMetrics
     ? { ...overviewMetrics, combinedRevenue: overviewMetrics.paidVolume, totalRevenue: overviewMetrics.subscriptionPaidVolume, portfolioRevenue: overviewMetrics.portfolioPaidVolume }
-    : { combinedRevenue: '—', totalRevenue: '—', portfolioRevenue: '—' };
+    : { combinedRevenue: null, totalRevenue: null, portfolioRevenue: null };
 
   const loadPublishedOneLinks = useCallback(async () => {
     if (!userId || oneLinksInFlightRef.current) return;
@@ -1471,7 +1474,7 @@ export default function Admin() {
                     {[
                       { icon: UsersIcon, label: 'Registered Users', val: overviewMetrics ? Number(dbStats.registeredUsers).toLocaleString() : '—', color: 'text-blue-500' },
                       { icon: UsersIcon, label: 'Synced Profiles', val: overviewMetrics ? Number(dbStats.syncedProfiles).toLocaleString() : '—', color: 'text-cyan-500' },
-                      { icon: CreditCard, label: 'Volume (Paid)', val: '₦' + (dbStats.combinedRevenue || 0).toLocaleString(), color: 'text-green-500', isRevenue: true },
+                      { icon: CreditCard, label: 'Volume (Paid)', val: formatOverviewRevenue(dbStats.combinedRevenue), color: 'text-green-500', isRevenue: true },
                       { icon: Crown, label: 'Active Subscriptions', val: overviewMetrics ? Number(dbStats.activeSubscriptions).toLocaleString() : '—', color: 'text-brand-accent', tab: 'subscriptions' },
                       { icon: Clock, label: 'Pending Orders', val: overviewMetrics ? Number(dbStats.pendingOrders).toLocaleString() : '—', color: 'text-orange-500', tab: 'pending' },
                       { icon: MessageSquare, label: 'Open Chats', val: overviewMetrics ? Number(dbStats.openSupportChats).toLocaleString() : '—', color: 'text-indigo-500', tab: 'chats' },
@@ -1492,8 +1495,8 @@ export default function Admin() {
                       <p className="text-3xl font-black tracking-tighter text-brand-text">{stat.val}</p>
                       {stat.isRevenue && (
                         <div className="mt-2 text-[10px] font-bold text-brand-text-secondary leading-normal uppercase space-y-0.5">
-                          <div>Subscriptions: ₦{(dbStats.totalRevenue || 0).toLocaleString()}</div>
-                          <div>Portfolios: ₦{(dbStats.portfolioRevenue || 0).toLocaleString()}</div>
+                          <div>Subscriptions: {formatOverviewRevenue(dbStats.totalRevenue)}</div>
+                          <div>Portfolios: {formatOverviewRevenue(dbStats.portfolioRevenue)}</div>
                         </div>
                       )}
                     </button>
@@ -1501,7 +1504,8 @@ export default function Admin() {
                 </div>
                 <div className="flex flex-wrap items-center gap-4 text-xs text-brand-text-secondary">
                   <button onClick={() => void refreshOverview()} disabled={overviewLoading} className="btn-primary h-10 px-4 flex items-center gap-2"><RefreshCw size={14} className={overviewLoading ? 'animate-spin' : ''} /> Refresh</button>
-                  <span>{overviewMetrics?.updatedAt ? `Last updated ${formatDate(overviewMetrics.updatedAt)}` : overviewError || 'Overview unavailable'}</span>
+                  <span>{overviewMetrics?.updatedAt ? `Last updated ${new Date(overviewMetrics.updatedAt).toLocaleString()}` : 'Overview unavailable'}</span>
+                  {overviewError && <span className="text-orange-500">Refresh failed; showing the last confirmed overview data.</span>}
                   <span>Anonymous visitors are not included. Presence {presenceStatus}; updated {presenceUpdatedAt ? new Date(presenceUpdatedAt).toLocaleString() : '—'}.</span>
                 </div>
 

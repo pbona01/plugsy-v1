@@ -352,12 +352,12 @@ export function normalizeOneLinkSettings(
 export function normalizeOneLinkOwnerProfile(profile) {
   const parsed = parseOneLinkProfileBio(profile?.bio);
   const initialized = profile?.one_link_updated_at !== null && profile?.one_link_updated_at !== undefined;
-  const present = (value) => value !== null && value !== undefined;
-  const independentUsername = initialized && present(profile?.one_link_username);
-  const independentDisplayName = initialized && present(profile?.one_link_display_name);
-  const independentBiography = initialized && present(profile?.one_link_biography);
-  const independentAvatar = initialized && present(profile?.one_link_avatar_url);
-  const independentSettings = initialized && present(profile?.one_link_settings);
+  const hasField = (value) => value !== null && value !== undefined;
+  const independentUsername = initialized || hasField(profile?.one_link_username);
+  const independentDisplayName = initialized || hasField(profile?.one_link_display_name);
+  const independentBiography = initialized || hasField(profile?.one_link_biography);
+  const independentAvatar = initialized || hasField(profile?.one_link_avatar_url);
+  const independentSettings = initialized || hasField(profile?.one_link_settings);
   return {
     username: normalizeOneLinkUsername(independentUsername ? profile.one_link_username : profile?.username),
     displayName: String(independentDisplayName ? profile.one_link_display_name : profile?.full_name || "").trim(),

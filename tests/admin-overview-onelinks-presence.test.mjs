@@ -69,10 +69,31 @@ test("overview definitions preserve paid volume, subscriptions, pending deliveri
   assert.equal(metrics.paidVolume, metrics.subscriptionPaidVolume + metrics.portfolioPaidVolume);
 });
 
+test("canonical support chat activity and tie-breakers are authoritative", () => {
+  const base = (id, extra = {}) => ({ id, user_id: "user_support", status: "open", chat_type: null, needs_admin_attention: false, ...extra });
+  const latestMessage = base("message", { last_message_at: "2099-01-03", updated_at: "2020-01-01", created_at: "2020-01-01", needs_admin_attention: true });
+  const latestUpdated = base("updated", { last_message_at: "2020-01-01", updated_at: "2099-01-02", created_at: "2020-01-01" });
+  const latestCreated = base("created", { last_message_at: "2020-01-01", updated_at: "2020-01-01", created_at: "2099-01-01" });
+  const tieA = base("a", { last_message_at: "2020-01-01", updated_at: "2020-01-01", created_at: "2020-01-01" });
+  const tieB = base("b", { last_message_at: "2020-01-01", updated_at: "2020-01-01", created_at: "2020-01-01", needs_admin_attention: true });
+  const result = buildOverviewMetrics({ clerkCount: 1, profiles: [], orders: [], portfolioPurchases: [], chats: [latestMessage, latestUpdated, latestCreated, tieA, tieB, base("dm", { chat_type: "dm" }), base("group", { chat_type: "group" }), base("channel", { chat_type: "channel" })] });
+  assert.equal(result.openSupportChats, 1);
+  assert.equal(result.actionRequiredChats, 1);
+});
+
 test("overview chat query selects canonical persisted support fields", () => {
   const source = fs.readFileSync(new URL("../api-handlers/admin.js", import.meta.url), "utf8");
   assert.match(source, /select\("id,user_id,chat_type,status,needs_admin_attention,last_message_at,updated_at,created_at"\)/);
   assert.doesNotMatch(source, /select\("id,user_id,userId,status,needs_admin_attention,metadata,created_at"\)/);
+});
+
+test("Overview revenue rendering has explicit placeholder, split formatter, and stale warning", () => {
+  const source = fs.readFileSync(new URL("../src/pages/Admin.tsx", import.meta.url), "utf8");
+  assert.match(source, /formatOverviewRevenue/);
+  assert.match(source, /Refresh failed; showing the last confirmed overview data\./);
+  assert.match(source, /new Date\(overviewMetrics\.updatedAt\)\.toLocaleString\(\)/);
+  assert.match(source, /subscriptionPaidVolume/);
+  assert.match(source, /portfolioPaidVolume/);
 });
 
 test("invalid Clerk count fails instead of becoming zero", () => {
@@ -154,10 +175,12 @@ test("published One Link compatibility includes legacy and independent pages onl
   assert.equal(independent.publicationSource, "independent");
   assert.equal(draft, null);
   const settingsOnly = getPublishedOneLinkRecord({ clerk_id: "user_settings", username: "fallback", one_link_updated_at: "2026-01-01T00:00:00Z", one_link_username: null, one_link_settings: { published: true } });
-  assert.equal(settingsOnly.username, "fallback");
+  assert.equal(settingsOnly, null);
   const mixedLegacy = getPublishedOneLinkRecord({ clerk_id: "user_mixed", username: "legacy_name", one_link_username: "new_name", one_link_updated_at: "2026-01-01T00:00:00Z", one_link_settings: null, bio: JSON.stringify({ onelink: { published: true } }) });
-  assert.equal(mixedLegacy.username, "new_name");
-  assert.equal(mixedLegacy.publicationSource, "legacy");
+  assert.equal(mixedLegacy, null);
+  const mixedLegacyWithoutRevision = getPublishedOneLinkRecord({ clerk_id: "user_mixed_2", username: "legacy_name", one_link_username: "new_name", one_link_updated_at: null, one_link_settings: null, bio: JSON.stringify({ onelink: { published: true } }) });
+  assert.equal(mixedLegacyWithoutRevision.username, "new_name");
+  assert.equal(mixedLegacyWithoutRevision.publicationSource, "legacy");
   assert.equal(getPublishedOneLinkRecord({ clerk_id: "user_empty", username: "empty", one_link_updated_at: "2026-01-01T00:00:00Z", one_link_settings: {} }), null);
   const profileOnly = collectPublishedOneLinks([{ id: "profile-only", username: "legacy_owner", bio: JSON.stringify({ onelink: {} }), one_link_settings: null, one_link_updated_at: null }]);
   assert.equal(profileOnly.length, 1);
@@ -191,7 +214,7 @@ test("presence exposes canonical Clerk-only aggregate and cleans up channel", ()
   assert.equal(presenceStatusForChannelEvent('CHANNEL_ERROR'), 'unavailable');
   assert.equal(presenceStatusForChannelEvent('TIMED_OUT'), 'unavailable');
   assert.equal(presenceStatusForChannelEvent('CLOSED'), 'unavailable');
-  assert.equal(presenceStatusForChannelEvent('SUBSCRIBED'), 'confirmed');
+  assert.equal(presenceStatusForChannelEvent('SUBSCRIBED'), 'connecting');
 });
 
 test("owned refresh coordinator cannot let an aborted stale request release a newer guard", async () => {
