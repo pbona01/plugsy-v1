@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js"
 import { Resend } from "resend"
 import { resolveOrCreateSupportChat } from "./_supportChats.js"
+import { deterministicEventUuid, sendOneSignal } from "../api/_oneSignal.js";
 
 const resend = new Resend(process.env.RESEND_API_KEY || "re_mock_key")
 
@@ -77,10 +78,11 @@ export default async function handler(req, res) {
           const expiryDate = new Date(order.subscription_expires_at)
             .toLocaleDateString("en-NG", { day: "numeric", month: "long" })
 
-          // Send push notification
-          await fetch(
+          // Send push notification as a contained secondary effect.
+          await sendOneSignal({ title: `Your ${order.product_name || "subscription"} expires soon`, body: "Your subscription expires soon. Renew now to keep access.", url: "/dashboard", targeting: { include_aliases: { external_id: [order.user_id] } }, requestKey: deterministicEventUuid("expiry-warning", order.id) });
+          if (false) await fetch(
             (process.env.NEXT_PUBLIC_SITE_URL || "https://www.plugsy.ng") +
-            "/api/notifications?action=send",
+            "/api/notifications?action=removed",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -183,10 +185,11 @@ export default async function handler(req, res) {
         console.log("[expiry-notify] expired today:", expiredToday?.length)
 
         for (const order of expiredToday || []) {
-          // Send push notification
-          await fetch(
+          // Send push notification as a contained secondary effect.
+          await sendOneSignal({ title: `Your ${order.product_name || "subscription"} has expired`, body: "Your subscription ended today. Renew now to restore access.", url: "/dashboard", targeting: { include_aliases: { external_id: [order.user_id] } }, requestKey: deterministicEventUuid("expired", order.id) });
+          if (false) await fetch(
             (process.env.NEXT_PUBLIC_SITE_URL || "https://www.plugsy.ng") +
-            "/api/notifications?action=send",
+            "/api/notifications?action=removed",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },

@@ -1,10 +1,19 @@
+import { createHash } from "node:crypto";
+
 const PROVIDER_URL = "https://api.onesignal.com/notifications";
 const DEFAULT_URL = "https://www.plugsy.ng/dashboard";
 const MAX_TITLE_LENGTH = 65;
 const MAX_BODY_LENGTH = 200;
-const MAX_URL_LENGTH = 2048;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const text = (value) => (typeof value === "string" ? value.trim() : "");
+
+export const isUuid = (value) => UUID_PATTERN.test(text(value));
+export const deterministicEventUuid = (namespace, eventId) => {
+  const digest = createHash("sha256").update(`${text(namespace)}:${text(eventId)}`).digest("hex");
+  const variant = ((parseInt(digest.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0");
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-${variant}${digest.slice(18, 20)}-${digest.slice(20, 32)}`;
+};
 
 export const getOneSignalConfiguration = () => {
   const appId = text(process.env.ONESIGNAL_APP_ID);
@@ -49,9 +58,12 @@ export const validateInternalRoute = (value) => {
   return route;
 };
 
-const bounded = (value, fallback, limit) => text(value).slice(0, limit) || fallback;
+const validContent = (value, limit) => {
+  const result = text(value);
+  return result && result.length <= limit && !/[\u0000-\u001F\u007F]/.test(result) ? result : null;
+};
 
-export const buildOneSignalPayload = ({ title, body, url, targeting }) => {
+export const buildOneSignalPayload = ({ title, body, url, targeting, idempotencyKey }) => {
   if (!targeting || typeof targeting !== "object" || Array.isArray(targeting)) {
     throw new Error("ONESIGNAL_TARGETING_REQUIRED");
   }
@@ -60,25 +72,25 @@ export const buildOneSignalPayload = ({ title, body, url, targeting }) => {
   if (methods.length !== 1) throw new Error("ONESIGNAL_TARGETING_INVALID");
   const route = validateInternalRoute(url);
   if (!route) throw new Error("NOTIFICATION_URL_INVALID");
+  const validTitle = validContent(title, MAX_TITLE_LENGTH);
+  const validBody = validContent(body, MAX_BODY_LENGTH);
+  if (!validTitle || !validBody) throw new Error("NOTIFICATION_CONTENT_INVALID");
+  if (idempotencyKey !== undefined && !isUuid(idempotencyKey)) throw new Error("ONESIGNAL_IDEMPOTENCY_INVALID");
   const payload = {
     app_id: getOneSignalConfiguration().appId,
     target_channel: "push",
-    headings: { en: bounded(title, "Plugsy", MAX_TITLE_LENGTH) },
-    contents: { en: bounded(body, "You have a notification", MAX_BODY_LENGTH) },
+    headings: { en: validTitle },
+    contents: { en: validBody },
     url: `https://www.plugsy.ng${route}`,
     ...targeting,
   };
+  if (idempotencyKey) payload.idempotency_key = idempotencyKey;
   if (Array.isArray(payload.include_subscription_ids)) {
     payload.include_subscription_ids = [...new Set(payload.include_subscription_ids.map(text).filter(Boolean))];
     if (payload.include_subscription_ids.length === 0) throw new Error("ONESIGNAL_TARGETING_INVALID");
   }
   if (!payload.headings.en || !payload.contents.en) throw new Error("NOTIFICATION_CONTENT_REQUIRED");
   return payload;
-};
-
-const providerMessage = (data) => {
-  const candidate = data && typeof data === "object" ? data.errors || data.message : "";
-  return text(Array.isArray(candidate) ? candidate.join(" ") : candidate).slice(0, 240);
 };
 
 export const mapOneSignalFailure = (status, network = false) => {
@@ -92,7 +104,7 @@ export async function sendOneSignal({ title, body, url, targeting, requestKey = 
   const config = getOneSignalConfiguration();
   if (!config.configured) return { ok: false, code: "ONESIGNAL_CONFIGURATION_UNAVAILABLE" };
   let payload;
-  try { payload = buildOneSignalPayload({ title, body, url, targeting }); }
+  try { payload = buildOneSignalPayload({ title, body, url, targeting, idempotencyKey: requestKey }); }
   catch (error) { return { ok: false, code: error.message === "NOTIFICATION_URL_INVALID" ? error.message : "ONESIGNAL_REQUEST_REJECTED" }; }
 
   const controller = new AbortController();
@@ -103,19 +115,18 @@ export async function sendOneSignal({ title, body, url, targeting, requestKey = 
       headers: {
         "Content-Type": "application/json",
         Authorization: `Key ${config.appApiKey}`,
-        ...(requestKey ? { "Idempotency-Key": text(requestKey).slice(0, 128) } : {}),
       },
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
     let data = null;
     try { data = await response.json(); } catch { data = null; }
-    if (!response.ok) return { ok: false, code: mapOneSignalFailure(response.status), providerMessage: providerMessage(data) };
+    if (!response.ok) return { ok: false, code: mapOneSignalFailure(response.status) };
     const id = text(data?.id || data?.message_id);
     if (!id) return { ok: false, code: "ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS" };
     return { ok: true, code: "ONESIGNAL_ACCEPTED", messageId: id };
-  } catch (error) {
-    return { ok: false, code: mapOneSignalFailure(0, true), providerMessage: text(error?.message).slice(0, 120) };
+  } catch {
+    return { ok: false, code: mapOneSignalFailure(0, true) };
   } finally { clearTimeout(timeout); }
 }
 

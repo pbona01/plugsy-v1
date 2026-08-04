@@ -170,3 +170,23 @@ export async function requireVerifiedClerkUser(req, res) {
     );
   }
 }
+
+export async function requireVerifiedClerkAdmin(req, res, supabase) {
+  const actor = await requireVerifiedClerkUser(req, res);
+  if (!actor) return null;
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("clerk_id", actor.userId)
+    .maybeSingle();
+  if (error) {
+    res.status(503).json({ success: false, code: "ADMIN_LOOKUP_FAILED", error: "Your admin access could not be verified." });
+    return null;
+  }
+  const role = String(profile?.role || actor.clerkUser?.publicMetadata?.role || actor.clerkUser?.public_metadata?.role || "").toLowerCase();
+  if (role !== "admin") {
+    res.status(403).json({ success: false, code: "ADMIN_REQUIRED", error: "Admin access is required." });
+    return null;
+  }
+  return actor;
+}

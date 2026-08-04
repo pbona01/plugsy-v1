@@ -44,7 +44,7 @@ import rateLimit from "express-rate-limit";
 import { clerkClient, ClerkExpressWithAuth } from "@clerk/clerk-sdk-node";
 import { Resend } from "resend";
 import { createClient } from "@supabase/supabase-js";
-import { sendTelegramAlert } from "../lib/telegram";
+import { sendTelegramAlert } from "./telegram";
 import { google } from "googleapis";
 import multer from "multer";
 import { PassThrough } from "stream";

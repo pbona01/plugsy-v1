@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/clerk-react";
 import { Link } from "react-router-dom";
 
@@ -10,17 +10,19 @@ const messages: Record<string, string> = { ONESIGNAL_ACCEPTED: "Accepted by OneS
 
 export default function AdminBroadcast() {
   const { getToken, userId } = useAuth();
-  const [title, setTitle] = useState(""); const [body, setBody] = useState(""); const [url, setUrl] = useState("/dashboard"); const [segment, setSegment] = useState<"all" | "user" | "admin">("all"); const [sending, setSending] = useState(false); const [result, setResult] = useState(""); const controller = useRef<AbortController | null>(null);
+  const [title, setTitle] = useState(""); const [body, setBody] = useState(""); const [url, setUrl] = useState("/dashboard"); const [segment, setSegment] = useState<"all" | "user" | "admin">("all"); const [sending, setSending] = useState(false); const [result, setResult] = useState(""); const controller = useRef<AbortController | null>(null); const sequence = useRef(0);
+  useEffect(() => () => { sequence.current += 1; controller.current?.abort(); }, []);
   const send = async (test = false) => {
     if (sending || !title.trim() || !body.trim() || !validRoute(url)) { setResult("Title, message, and a valid internal action URL are required."); return; }
     if (!window.confirm(test ? "Send a test notification only to yourself?" : `Send this notification to ${segment === "all" ? "everyone" : `${segment}s`}?`)) return;
-    setSending(true); setResult(""); controller.current?.abort(); const abort = new AbortController(); controller.current = abort;
+    setSending(true); setResult(""); controller.current?.abort(); const requestSequence = ++sequence.current; const abort = new AbortController(); controller.current = abort;
     try {
       const token = await getToken();
       if (!token) { setResult("Sign-in is required."); return; }
       const action = test ? "send-test-to-self" : segment === "all" ? "broadcast-all" : "broadcast-segment";
       const response = await fetch(`/api/notifications?action=${action}`, { method: "POST", signal: abort.signal, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ title: title.trim(), body: body.trim(), url, segment, requestKey: crypto.randomUUID() }) });
       const data = await response.json();
+      if (requestSequence !== sequence.current) return;
       setResult(data.code === "ONESIGNAL_ACCEPTED" ? `${messages[data.code]} (ID: ${data.messageId})` : messages[data.code] || data.error || "Notification could not be accepted.");
       if (data.success) { setTitle(""); setBody(""); }
     } catch (error: any) { if (error?.name !== "AbortError") setResult("Notification request failed."); }

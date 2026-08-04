@@ -1029,7 +1029,7 @@ export function PublicPortfolio({
     try {
       const fp = generateFingerprint();
       if (!previewMode) {
-        await supabase.rpc("vp_add_reaction", {
+        const { data: reactionRecord } = await supabase.rpc("vp_add_reaction", {
           p_item_id: itemId,
           p_portfolio_id: portfolio.id,
           p_reaction_type: reactionType,
@@ -1040,11 +1040,11 @@ export function PublicPortfolio({
           const reactionObj = (
             CATEGORY_REACTIONS[portfolio.category] || []
           ).find((r) => r.type === reactionType);
-          fetch("/api/notifications?action=unavailable", {
+          fetch("/api/notifications?action=notify-portfolio-reaction", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              userId: portfolio.user_id,
+              reactionId: typeof reactionRecord === "object" ? reactionRecord?.id : reactionRecord,
               title: `${reactionObj?.emoji || "✨"} New Reaction`,
               body: `Someone reacted ${reactionObj?.emoji || ""} ${reactionObj?.label || reactionType} to project in your portfolio`,
               url: `/portfolio/${portfolio.id}/edit?tab=analytics`,

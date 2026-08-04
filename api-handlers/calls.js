@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { deterministicEventUuid, sendOneSignal } from "../api/_oneSignal.js";
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -107,9 +108,17 @@ export default async function handler(req, res) {
       });
 
       // Send an URGENT push notification
-      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://www.plugsy.ng";
       if (calleeId) {
-        fetch(siteUrl + "/api/notifications?action=send", {
+        await sendOneSignal({
+          title: "Incoming call",
+          body: "Tap to answer",
+          url: "/chats/" + chatId + "?incoming_call=" + call.id,
+          targeting: { include_aliases: { external_id: [calleeId] } },
+          requestKey: deterministicEventUuid("incoming-call", call.id),
+        });
+      }
+      if (false && calleeId) {
+        fetch("/api/notifications?action=removed", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

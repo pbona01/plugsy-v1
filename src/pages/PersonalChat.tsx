@@ -72,7 +72,7 @@ const CallEventBubble = ({ message }: { message: any }) => (
 
 export default function PersonalChat() {
   const { chatId } = useParams<{ chatId: string }>();
-  const { userId } = useAuth();
+  const { userId, getToken } = useAuth();
   const { user } = useUser();
   const navigate = useNavigate();
   const { isUserOnline } = useOnlinePresence();
@@ -410,47 +410,16 @@ export default function PersonalChat() {
   };
 
 
-  const notifyRecipient = async (
-    recipientUserId: string,
-    senderName: string,
-    messageText: string,
-    chatId: string,
-    messageType: string
-  ) => {
-    console.log("[notify] starting for recipient:", recipientUserId);
-
+  const notifyMessage = async (messageId: string) => {
     try {
-      const preview = messageType === "image" ? "📷 Photo" :
-        messageType === "sticker" ? "😄 Sticker" :
-        (messageText || "").slice(0, 60);
-
-      const res = await fetch("/api/notifications?action=unavailable", {
+      const token = await getToken();
+      if (!token || !messageId) return;
+      await fetch("/api/notifications?action=notify-message", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: recipientUserId,
-          title: "💬 " + senderName,
-          body: preview,
-          url: "/chats/" + chatId,
-          tag: "chat-" + chatId
-        })
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ messageId }),
       });
-
-      const data = await res.json();
-      console.log("[notify] API response:", data);
-
-      if (!data.success) {
-        console.error("[notify] FAILED:", data.error);
-      } else if (data.playerIds === 0) {
-        console.warn("[notify] recipient has NO push subscription saved");
-      } else {
-        console.log("[notify] ✅ sent to", data.playerIds, "device(s)");
-      }
-
-      return data;
-    } catch (e: any) {
-      console.error("[notify] crash:", e.message);
-    }
+    } catch { /* push is a contained secondary effect */ }
   };
 
   const handleMessageHoldStart = (msg: Message, e?: React.MouseEvent | React.TouchEvent) => {
@@ -1536,11 +1505,11 @@ export default function PersonalChat() {
         console.log("[send] calling notification API...");
         
         try {
-          const notifRes = await fetch("/api/notifications?action=unavailable", {
+          const notifRes = await fetch("/api/notifications?action=notify-message", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
             body: JSON.stringify({
-              userId: targetUserId,
+              messageId: inserted.id,
               title: "💬 " + (currentUserName || "Someone"),
               body: content.slice(0, 60) || "Sent a message",
               url: "/chats/" + chatId,
@@ -1651,7 +1620,7 @@ export default function PersonalChat() {
       const targetUserId = otherMember?.clerk_id || otherMemberIdRef.current;
       if (chat?.chat_type === "dm" && targetUserId) {
         sendBroadcastSafely(`user-events-${targetUserId}`, "new_unread");
-        notifyRecipient(targetUserId, currentFullName, content || "", chatId, type);
+        notifyMessage(data.id);
       } else if (chat?.chat_type === "group" || chat?.chat_type === "channel") {
         try {
           const { data: membersList } = await supabase.from("chat_members").select("user_id").eq("chat_id", chatId).neq("user_id", userId);
@@ -1660,7 +1629,7 @@ export default function PersonalChat() {
             membersList.forEach(m => {
               if (m.user_id) {
                 sendBroadcastSafely(`user-events-${m.user_id}`, "new_unread");
-                notifyRecipient(m.user_id, currentFullName + " in " + groupTitle, content || "", chatId, type);
+                notifyMessage(data.id);
               }
             });
           }
@@ -1794,7 +1763,7 @@ export default function PersonalChat() {
       if (chat?.chat_type === "dm" && targetUserId) {
         sendBroadcastSafely(`user-events-${targetUserId}`, "new_message", data);
         sendBroadcastSafely(`user-events-${targetUserId}`, "new_unread");
-        notifyRecipient(targetUserId, currentUserName, "🎤 Voice note", chatId, "voice_note");
+        notifyMessage(data.id);
       }
     }
 

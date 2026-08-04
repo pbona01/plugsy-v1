@@ -61,15 +61,12 @@ export const sendDMNotification = async (
       messageType === "sticker" ? "😄 Sticker" :
       messageText.slice(0, 60);
 
-    const res = await fetch("/api/notifications?action=unavailable", {
+    const res = await fetch("/api/notifications?action=notify-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        userId: otherUserId,
-        title: "💬 " + senderName,
-        body: preview,
-        url: "/chats/" + chatId,
-        tag: "dm-" + chatId
+        messageId: otherUserId,
+        ignored: true,
       })
     });
     const data = await res.json();
@@ -405,9 +402,13 @@ export const chatService = {
       if (payload.senderRole === "user") {
         updatePayload.needs_admin_attention = true;
 
+        /* Legacy recipient-side notification branches are retained only as
+           historical context; the persisted-message server action below is
+           the single authoritative push path. */
+        if (false) {
         if (chatType === "support" || !chatType) {
           // TRIGGER 2 (Reverse): User sends message to Support, notify Admins
-          fetch("/api/notifications?action=unavailable", {
+          fetch("/api/notifications?action=notify-message", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -433,7 +434,7 @@ export const chatService = {
             messageType === "sticker" ? "😄 Sticker" :
             messageText.slice(0, 60);
 
-          const res = await fetch("/api/notifications?action=unavailable", {
+          const res = await fetch("/api/notifications?action=notify-message", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -497,7 +498,7 @@ export const chatService = {
               // Restore realtime broadcast
               sendBroadcastSafely(`user-events-${member.user_id}`, "new_unread");
 
-              fetch("/api/notifications?action=unavailable", {
+              fetch("/api/notifications?action=notify-message", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -511,6 +512,7 @@ export const chatService = {
             });
           });
         }
+        }
       } else if (payload.senderRole === "admin") {
         // Trigger push notification to user
         if (chatType === "support" || !chatType) {
@@ -522,7 +524,7 @@ export const chatService = {
             // Restore realtime broadcast
             sendBroadcastSafely(`user-events-${targetUserId}`, "new_unread");
 
-            fetch("/api/notifications?action=unavailable", {
+            fetch("/api/notifications?action=notify-message", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -543,7 +545,7 @@ export const chatService = {
                 // Restore realtime broadcast
                 sendBroadcastSafely(`user-events-${m.user_id}`, "new_unread");
 
-                fetch("/api/notifications?action=unavailable", {
+                fetch("/api/notifications?action=notify-message", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
@@ -582,6 +584,19 @@ export const chatService = {
           .update(updatePayload)
           .eq("id", canonicalChatId);
         if (summaryError) throw summaryError;
+      }
+
+      try {
+        const token = getToken ? await getToken().catch(() => "") : serverAuthToken;
+        if (token && createdMsgId) {
+          await fetch("/api/notifications?action=notify-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ messageId: createdMsgId }),
+          });
+        }
+      } catch {
+        console.error("[chat-notification] push failed safely");
       }
 
       // If user is sending a message (not an attachment), and not an admin/system message

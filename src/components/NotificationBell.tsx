@@ -8,9 +8,11 @@ export default function NotificationBell() {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [blocked, setBlocked] = useState(false);
+  const [sdkState, setSdkState] = useState("loading");
 
   const refresh = async () => {
     if (!user) return;
+    setSdkState(getOneSignalState());
     if (await isSubscribed()) { setVisible(false); return; }
     setBlocked(typeof Notification !== "undefined" && Notification.permission === "denied");
     setVisible(!localStorage.getItem("notif_dismissed_onesignal"));
@@ -32,9 +34,9 @@ export default function NotificationBell() {
   };
   if (!user || !visible) return null;
   return <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", width: "calc(100% - 32px)", maxWidth: 360, background: "#111", border: "1px solid #333", borderRadius: 16, padding: 16, zIndex: 9999 }}>
-    <strong style={{ color: "white" }}>{blocked ? "Alerts are blocked" : "Stay in the Loop"}</strong>
-    <p style={{ color: "#aaa", fontSize: 12 }}>{blocked ? "Change your browser/site notification setting, then return here." : "Enable reliable alerts for important Plugsy activity."}</p>
-    <button onClick={enable} disabled={loading || blocked} style={{ width: "100%", padding: 10, background: blocked ? "#444" : "#ef4444", color: "white", border: 0, borderRadius: 10 }}>{loading ? "Enabling..." : blocked ? "Alerts Blocked" : "Enable Alerts"}</button>
+    <strong style={{ color: "white" }}>{blocked ? "Alerts are blocked" : sdkState === "loading" ? "Initializing alerts" : sdkState === "failed" ? "Repair Alerts" : "Stay in the Loop"}</strong>
+    <p style={{ color: "#aaa", fontSize: 12 }}>{blocked ? "Change your browser/site notification setting, then return here." : sdkState === "loading" ? "Preparing secure browser notifications." : "Enable reliable alerts for important Plugsy activity."}</p>
+    <button onClick={enable} disabled={loading || blocked || sdkState === "loading"} style={{ width: "100%", padding: 10, background: blocked ? "#444" : "#ef4444", color: "white", border: 0, borderRadius: 10 }}>{loading ? "Enabling..." : blocked ? "Alerts Blocked" : sdkState === "failed" ? "Repair Alerts" : "Enable Alerts"}</button>
     <button onClick={() => { setVisible(false); localStorage.setItem("notif_dismissed_onesignal", "true"); }} style={{ width: "100%", marginTop: 8, padding: 8, background: "transparent", color: "#888", border: 0 }}>Later</button>
   </div>;
 }

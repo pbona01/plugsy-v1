@@ -623,6 +623,10 @@ export default function Dashboard() {
                           if (!user) return;
                           toast.loading("Repairing connection...", { id: "repair-notif" });
                           try {
+                            const repaired = await requestOneSignalPermission(user.id);
+                            if (!repaired) throw new Error("No active push subscription was confirmed");
+                            toast.success("Notifications repaired successfully!", { id: "repair-notif" });
+                            return;
                             const OneSignal = (window as any).OneSignal;
                             if (!OneSignal) throw new Error("OneSignal SDK not loaded");
 
@@ -659,11 +663,11 @@ export default function Dashboard() {
                             toast.success("Notifications repaired successfully!", { id: "repair-notif" });
                             
                             // Send test
-                            fetch("/api/notifications?action=unavailable", {
+                            fetch("/api/notifications?action=send-test-to-self", {
                               method: "POST",
-                              headers: { "Content-Type": "application/json" },
+                              headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
                               body: JSON.stringify({
-                                userId: user.id,
+                                requestKey: crypto.randomUUID(),
                                 title: "🔄 Connection Repaired",
                                 body: "Your notification link is now healthy.",
                                 url: "/dashboard"
