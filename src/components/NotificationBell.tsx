@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth, useUser } from "@clerk/clerk-react";
 import toast from "react-hot-toast";
 import { isSubscribed, requestNotificationPermission, getOneSignalState, initOneSignal } from "@/utils/onesignal";
@@ -10,18 +10,23 @@ export default function NotificationBell() {
   const [loading, setLoading] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [sdkState, setSdkState] = useState("loading");
+  const [registrationWarning, setRegistrationWarning] = useState(false);
+  const generation = useRef(0);
+  const disposed = useRef(false);
 
   const refresh = async () => {
     if (!user) return;
-    const generation = user.id;
+    const currentGeneration = ++generation.current;
     const resolved = await initOneSignal();
-    if (!user || generation !== user.id) return;
+    if (disposed.current || currentGeneration !== generation.current) return;
     setSdkState(resolved);
-    if (await isSubscribed()) { setVisible(false); return; }
+    if (resolved === "unsupported") { setVisible(true); return; }
+    if (await isSubscribed()) { if (!registrationWarning) setVisible(false); return; }
+    if (disposed.current || currentGeneration !== generation.current) return;
     setBlocked(typeof Notification !== "undefined" && Notification.permission === "denied");
     setVisible(!localStorage.getItem("notif_dismissed_onesignal"));
   };
-  useEffect(() => { refresh(); const handler = () => refresh(); window.addEventListener("onesignal_subscribed_state_changed", handler); return () => window.removeEventListener("onesignal_subscribed_state_changed", handler); }, [user?.id]);
+  useEffect(() => { disposed.current = false; generation.current += 1; refresh(); const handler = () => refresh(); window.addEventListener("onesignal_subscribed_state_changed", handler); return () => { disposed.current = true; generation.current += 1; window.removeEventListener("onesignal_subscribed_state_changed", handler); }; }, [user?.id]);
 
   const enable = async () => {
     if (!user || loading) return;
@@ -31,16 +36,17 @@ export default function NotificationBell() {
     setLoading(true);
     const result = await requestNotificationPermission(user.id, await getToken());
     setLoading(false);
-    if (result.active) { setVisible(false); toast.success(result.registered ? "Notifications enabled." : "Notifications active; account registration needs repair."); }
+    if (result.active) { setRegistrationWarning(!result.registered); setVisible(!result.registered); toast.success(result.registered ? "Notifications enabled." : "Notifications active; account registration needs repair."); }
     else if (typeof Notification !== "undefined" && Notification.permission === "denied") { setBlocked(true); toast.error("Notifications are blocked. Change the browser site setting to enable them."); }
+    else if (getOneSignalState() === "unsupported") toast.error("This browser or device does not support web push alerts.");
     else if (getOneSignalState() === "failed") toast.error("Alerts could not be initialized. Please try again later.");
     else toast.error("No active push subscription was confirmed. Try Repair Alerts.");
   };
   if (!user || !visible) return null;
   return <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", width: "calc(100% - 32px)", maxWidth: 360, background: "#111", border: "1px solid #333", borderRadius: 16, padding: 16, zIndex: 9999 }}>
-    <strong style={{ color: "white" }}>{blocked ? "Alerts are blocked" : sdkState === "loading" ? "Initializing alerts" : sdkState === "failed" ? "Repair Alerts" : "Stay in the Loop"}</strong>
-    <p style={{ color: "#aaa", fontSize: 12 }}>{blocked ? "Change your browser/site notification setting, then return here." : sdkState === "loading" ? "Preparing secure browser notifications." : "Enable reliable alerts for important Plugsy activity."}</p>
-    <button onClick={enable} disabled={loading || blocked || sdkState === "loading"} style={{ width: "100%", padding: 10, background: blocked ? "#444" : "#ef4444", color: "white", border: 0, borderRadius: 10 }}>{loading ? "Enabling..." : blocked ? "Alerts Blocked" : sdkState === "failed" ? "Repair Alerts" : "Enable Alerts"}</button>
+    <strong style={{ color: "white" }}>{sdkState === "unsupported" ? "Alerts unavailable" : blocked ? "Alerts are blocked" : registrationWarning ? "Alerts need repair" : sdkState === "loading" ? "Initializing alerts" : sdkState === "failed" ? "Repair Alerts" : "Stay in the Loop"}</strong>
+    <p style={{ color: "#aaa", fontSize: 12 }}>{sdkState === "unsupported" ? "This browser or device cannot receive web push alerts." : blocked ? "Change your browser/site notification setting, then return here." : registrationWarning ? "Push is active, but secure account registration did not finish." : sdkState === "loading" ? "Preparing secure browser notifications." : "Enable reliable alerts for important Plugsy activity."}</p>
+    <button onClick={enable} disabled={loading || blocked || sdkState === "loading" || sdkState === "unsupported"} style={{ width: "100%", padding: 10, background: blocked || sdkState === "unsupported" ? "#444" : "#ef4444", color: "white", border: 0, borderRadius: 10 }}>{loading ? "Enabling..." : blocked ? "Alerts Blocked" : sdkState === "unsupported" ? "Unavailable" : sdkState === "failed" || registrationWarning ? "Repair Alerts" : "Enable Alerts"}</button>
     <button onClick={() => { setVisible(false); localStorage.setItem("notif_dismissed_onesignal", "true"); }} style={{ width: "100%", marginTop: 8, padding: 8, background: "transparent", color: "#888", border: 0 }}>Later</button>
   </div>;
 }

@@ -1490,48 +1490,6 @@ export default function PersonalChat() {
       }
     }
 
-    // ============ NOTIFICATION TRIGGER ============
-    console.log("[send] checking chatType for notification:", chatType);
-
-    if (chatType === "dm") {
-      console.log("[send] this is a DM, otherMemberId is:", targetUserId);
-      
-      if (!targetUserId) {
-        console.error("[send] ⚠️ otherMemberId is NULL/undefined!");
-        console.error("[send] This means the other chat member was");
-        console.error("[send] never resolved when the chat loaded.");
-        console.error("[send] Notification CANNOT be sent without it.");
-      } else {
-        console.log("[send] calling notification API...");
-        
-        try {
-          const notifRes = await fetch("/api/notifications?action=notify-message", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
-            body: JSON.stringify({
-              messageId: inserted.id,
-              title: "💬 " + (currentUserName || "Someone"),
-              body: content.slice(0, 60) || "Sent a message",
-              url: "/chats/" + chatId,
-              tag: "chat-" + chatId
-            })
-          });
-          
-          console.log("[send] notif API status:", notifRes.status);
-          const notifData = notifRes.status === 200 || notifRes.status === 201 ? await notifRes.json() : { playerIds: 0 };
-          console.log("[send] notif API response:", JSON.stringify(notifData));
-          
-          if (notifData.playerIds === 0) {
-            console.warn("[send] ⚠️ Recipient has ZERO push subscriptions saved");
-          }
-        } catch (e: any) {
-          console.error("[send] ❌ notification fetch crashed:", e.message);
-        }
-      }
-    } else {
-      console.log("[send] chatType is not 'dm', it is:", chatType);
-      console.log("[send] skipping DM notification logic");
-    }
   };
 
   const handleSendMessage = async (

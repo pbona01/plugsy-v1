@@ -3,7 +3,7 @@ import { clerkClient } from "@clerk/clerk-sdk-node";
 import { randomUUID } from "node:crypto";
 import { requireVerifiedClerkAdmin, requireVerifiedClerkUser } from "./_clerkAuth.js";
 import { deterministicEventUuid, safeConfigurationStatus, sendOneSignal } from "./_oneSignal.js";
-import { canonicalClerkId, resolveCanonicalClerkId } from "./_recipient.js";
+import { canonicalizeChatMembers, classifyVerifiedAudience, resolveCanonicalClerkId } from "./_recipient.js";
 
 const actionOf = (req) => {
   const parsed = new URL(req.originalUrl || req.url || "/", `http://${req.headers?.host || "localhost"}`);
@@ -33,7 +33,6 @@ const safeOutcome = (res, result) => {
   if (result.ok) return res.status(200).json({ success: true, code: result.code, messageId: result.messageId });
   return res.status(result.code === "ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS" ? 200 : 502).json({ success: false, code: result.code, error: messages[result.code] || "Notification could not be accepted." });
 };
-const actorId = (value) => /^user_[A-Za-z0-9_-]{3,}$/.test(String(value || "").trim()) ? String(value).trim() : "";
 const recentEnough = (value) => { const time = Date.parse(value || ""); return Number.isFinite(time) && Date.now() - time >= 0 && Date.now() - time <= 10 * 60 * 1000; };
 const messageText = (message) => {
   if (message.message_type === "image" || message.attachment_type === "image") return "Sent an image";
@@ -46,19 +45,45 @@ async function requireAdmin(req, res, supabase) {
   return requireVerifiedClerkAdmin(req, res, supabase);
 }
 
+const AUDIENCE_LIMIT = 20000;
 async function verifiedSegmentRecipients(supabase, segment) {
-  const { data, error } = await supabase.from("push_subscriptions").select("user_id").not("onesignal_player_id", "is", null);
-  if (error) return { error: true, ids: [] };
-  const candidates = [...new Set(await Promise.all((data || []).map((row) => resolveCanonicalClerkId(supabase, row.user_id))))].filter(Boolean);
-  const ids = [];
-  for (const id of candidates) {
-    const { data: profile } = await supabase.from("profiles").select("role").eq("clerk_id", id).maybeSingle();
-    let clerkAdmin = false;
-    try { const user = await clerkClient.users.getUser(id); clerkAdmin = String(user?.publicMetadata?.role || user?.public_metadata?.role || "").toLowerCase() === "admin"; } catch { /* profile verification remains authoritative when Clerk lookup is unavailable */ }
-    const admin = String(profile?.role || "").toLowerCase() === "admin" || clerkAdmin;
-    if ((segment === "admin" && admin) || (segment === "user" && !admin)) ids.push(id);
+  const pageSize = 500;
+  const rows = [];
+  for (let page = 0; ; page += 1) {
+    const { data, error } = await supabase.from("push_subscriptions").select("user_id").not("onesignal_player_id", "is", null).range(page * pageSize, page * pageSize + pageSize - 1);
+    if (error) return { error: true, code: "RECIPIENT_LOOKUP_FAILED", ids: [] };
+    rows.push(...(data || []));
+    if (!data || data.length < pageSize) break;
   }
-  return { error: false, ids: [...new Set(ids)].slice(0, 2000) };
+  const candidates = [...new Set((await canonicalizeChatMembers(supabase, rows)).filter(Boolean))];
+  if (candidates.length > AUDIENCE_LIMIT) return { error: true, code: "AUDIENCE_LIMIT_EXCEEDED", ids: [] };
+  const profiles = new Map();
+  for (let offset = 0; offset < candidates.length; offset += 500) {
+    const batch = candidates.slice(offset, offset + 500);
+    const { data, error } = await supabase.from("profiles").select("clerk_id,role").in("clerk_id", batch);
+    if (error) return { error: true, code: "RECIPIENT_LOOKUP_FAILED", ids: [] };
+    for (const profile of data || []) profiles.set(profile.clerk_id, String(profile.role || "").toLowerCase() === "admin");
+  }
+  const clerkAdmins = new Map();
+  try {
+    for (let offset = 0; ; offset += 100) {
+      const users = await clerkClient.users.getUserList({ limit: 100, offset });
+      for (const user of users || []) clerkAdmins.set(user.id, String(user.publicMetadata?.role || user.public_metadata?.role || "").toLowerCase() === "admin");
+      if (!users || users.length < 100) break;
+    }
+  } catch {
+    return { error: true, code: "CLERK_AUDIENCE_LOOKUP_FAILED", ids: [] };
+  }
+  const classified = classifyVerifiedAudience(candidates, new Set([...profiles].filter(([, admin]) => admin).map(([id]) => id)), new Set([...clerkAdmins].filter(([, admin]) => admin).map(([id]) => id)), AUDIENCE_LIMIT);
+  if (classified.error) return { error: true, code: classified.code, ids: [] };
+  const ids = segment === "admin" ? classified.admin : classified.user;
+  return { error: false, code: "OK", ids };
+}
+
+export async function collectVerifiedAudience(supabase) {
+  const [admins, users] = await Promise.all([verifiedSegmentRecipients(supabase, "admin"), verifiedSegmentRecipients(supabase, "user")]);
+  if (admins.error || users.error) return { error: true, code: admins.code || users.code, admin: [], user: [] };
+  return { error: false, admin: admins.ids, user: users.ids };
 }
 
 async function notifyMessage(req, res, supabase) {
@@ -76,7 +101,7 @@ async function notifyMessage(req, res, supabase) {
   const { data: actorProfile } = await supabase.from("profiles").select("role").eq("clerk_id", actor.userId).maybeSingle();
   const { data: memberships, error: memberError } = await supabase.from("chat_members").select("user_id").eq("chat_id", chat.id);
   if (memberError) return fail(res, 503, "CHAT_MEMBERS_UNAVAILABLE", "Chat recipients are temporarily unavailable.");
-  const memberIds = [...new Set((memberships || []).map((row) => actorId(row.user_id)).filter(Boolean))];
+  const memberIds = await canonicalizeChatMembers(supabase, memberships || []);
   if (chat.chat_type === "support" || !chat.chat_type) {
     if (message.sender_role === "user") {
       const owner = await resolveCanonicalClerkId(supabase, chat.user_id);
@@ -95,7 +120,8 @@ async function notifyMessage(req, res, supabase) {
     return safeOutcome(res, result);
   }
   if (!memberIds.includes(actor.userId)) return fail(res, 403, "CHAT_MEMBERSHIP_REQUIRED", "Chat membership is required.");
-  const recipients = memberIds.filter((id) => id !== actor.userId).slice(0, 2000);
+  const recipients = memberIds.filter((id) => id !== actor.userId);
+  if (recipients.length > 20000) return fail(res, 413, "AUDIENCE_LIMIT_EXCEEDED", "This chat has too many notification recipients.");
   if (recipients.length === 0) return fail(res, 200, "ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS", "No eligible subscribers were found.");
   const result = await sendOneSignal({ title: chat.chat_type === "channel" ? "New announcement" : `New message from ${String(message.sender_name || "a Plugsy member").slice(0, 60)}`, body: messageText(message), url: `/chats/${chat.id}`, targeting: { include_aliases: { external_id: recipients } }, requestKey: deterministicEventUuid("message", message.id) });
   return safeOutcome(res, result);
@@ -106,7 +132,7 @@ export default async function handler(req, res) {
   const action = actionOf(req);
   const body = bodyOf(req);
   const supabase = serviceClient();
-  if (!supabase && ["register-subscription", "notify-message", "status", "get-subscriber-counts", "broadcast-all", "broadcast-segment"].includes(action)) return fail(res, 503, "NOTIFICATION_SERVICE_UNAVAILABLE", "Notification service is temporarily unavailable.");
+  if (!supabase && ["register-subscription", "unregister-subscription", "notify-message", "status", "get-subscriber-counts", "broadcast-all", "broadcast-segment"].includes(action)) return fail(res, 503, "NOTIFICATION_SERVICE_UNAVAILABLE", "Notification service is temporarily unavailable.");
 
   if (action === "register-subscription") {
     if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
@@ -114,8 +140,15 @@ export default async function handler(req, res) {
     const subscriptionId = String(body.subscriptionId || "").trim();
     if (!subscriptionId || subscriptionId.length > 256) return fail(res, 400, "SUBSCRIPTION_INVALID", "Subscription details are invalid.");
     const { data: profile } = await supabase.from("profiles").select("role").eq("clerk_id", actor.userId).maybeSingle();
-    const { error: saveError } = await supabase.from("push_subscriptions").upsert({ user_id: actor.userId, user_role: profile?.role || "user", onesignal_player_id: subscriptionId, subscription: { id: subscriptionId }, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+    const { error: saveError } = await supabase.from("push_subscriptions").upsert({ user_id: actor.userId, user_role: profile?.role || "user", onesignal_player_id: subscriptionId, subscription: { id: subscriptionId, playerId: subscriptionId }, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
     if (saveError) return fail(res, 503, "SUBSCRIPTION_SAVE_FAILED", "Your notification subscription could not be saved.");
+    return res.status(200).json({ success: true });
+  }
+  if (action === "unregister-subscription") {
+    if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
+    const actor = await requireVerifiedClerkUser(req, res); if (!actor) return;
+    const { error } = await supabase.from("push_subscriptions").update({ onesignal_player_id: null, subscription: null, updated_at: new Date().toISOString() }).eq("user_id", actor.userId);
+    if (error) return fail(res, 503, "SUBSCRIPTION_SAVE_FAILED", "Your notification subscription could not be updated.");
     return res.status(200).json({ success: true });
   }
   if (action === "notify-message") return notifyMessage(req, res, supabase);
@@ -133,10 +166,9 @@ export default async function handler(req, res) {
   if (action === "get-subscriber-counts") {
     if (req.method !== "GET") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
     if (!await requireAdmin(req, res, supabase)) return;
-    const { data, error: countError } = await supabase.from("push_subscriptions").select("user_role,onesignal_player_id");
-    if (countError) return fail(res, 503, "SUBSCRIBER_COUNT_UNAVAILABLE", "Subscriber counts are temporarily unavailable.");
-    const rows = (data || []).filter((row) => row.onesignal_player_id);
-    return res.status(200).json({ success: true, counts: { all: rows.length, user: rows.filter((row) => row.user_role === "user").length, admin: rows.filter((row) => row.user_role === "admin").length } });
+    const audience = await collectVerifiedAudience(supabase);
+    if (audience.error) return fail(res, 503, "SUBSCRIBER_COUNT_UNAVAILABLE", "Subscriber counts are temporarily unavailable.");
+    return res.status(200).json({ success: true, counts: { all: audience.user.length + audience.admin.length, user: audience.user.length, admin: audience.admin.length } });
   }
   if (!["broadcast-all", "broadcast-segment", "send-test-to-self"].includes(action)) return fail(res, 404, "NOTIFICATION_ACTION_UNAVAILABLE", "Notification action is unavailable.");
   if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");

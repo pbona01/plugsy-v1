@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { buildOneSignalPayload, deterministicEventUuid, getOneSignalConfiguration, sendOneSignal } from "../api/_oneSignal.js";
+import { canonicalClerkId, classifyCallRecipients, classifyVerifiedAudience, mapBounded } from "../api/_recipient.js";
+import { createNotificationOperationCoordinator, notificationDraftKey } from "../src/utils/notificationOperation.js";
 
 const originalFetch = global.fetch;
 const originalEnv = { ...process.env };
@@ -101,4 +103,98 @@ test("service worker remains badge-only", async () => {
   assert.doesNotMatch(worker, /showNotification/);
   const vite = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
   assert.match(vite, /OneSignalSDK\.sw\.js/); assert.match(vite, /onesignal-badge-sw\.js/);
+});
+
+test("canonical membership helpers resolve and deduplicate historical IDs", async () => {
+  assert.equal(canonicalClerkId("user_abc"), "user_abc");
+  assert.equal(canonicalClerkId("profile-uuid"), "");
+  const queries = [];
+  const supabase = { from: () => ({ select: () => ({ eq: (_field, value) => ({ maybeSingle: async () => { queries.push(value); return { data: { clerk_id: value === "profile-1" ? "user_profile" : null } }; } }) }) }) };
+  const { canonicalizeChatMembers } = await import("../api/_recipient.js");
+  const ids = await canonicalizeChatMembers(supabase, [{ user_id: "user_direct" }, { user_id: "profile-1" }, { user_id: "profile-1" }, { user_id: "unknown" }]);
+  assert.deepEqual(ids.sort(), ["user_direct", "user_profile"].sort());
+  assert.equal(queries.length, 2);
+});
+
+test("bounded canonical mapping and recipient exclusion are executable", async () => {
+  let inFlight = 0; let peak = 0;
+  const values = await mapBounded([1, 2, 3, 4, 5], async (value) => { inFlight++; peak = Math.max(peak, inFlight); await new Promise((resolve) => setTimeout(resolve, 1)); inFlight--; return value * 2; }, 2);
+  assert.deepEqual(values, [2, 4, 6, 8, 10]); assert.ok(peak <= 2);
+  assert.deepEqual(classifyCallRecipients("dm", ["user_actor", "user_other", "user_other"], "user_actor"), ["user_other"]);
+  assert.deepEqual(classifyCallRecipients("dm", ["user_actor", "user_one", "user_two"], "user_actor"), []);
+  assert.deepEqual(classifyCallRecipients("group", ["user_actor", "user_one", "user_one"], "user_actor"), ["user_one"]);
+});
+
+test("verified audience classification uses profile OR Clerk admin authority and enforces the provider limit", () => {
+  const audience = classifyVerifiedAudience(["user_aaa", "user_bbb", "user_bbb", "user_ccc"], new Set(["user_aaa"]), new Set(["user_bbb"]));
+  assert.deepEqual(audience.admin.sort(), ["user_aaa", "user_bbb"]); assert.deepEqual(audience.user, ["user_ccc"]);
+  assert.equal(classifyVerifiedAudience(Array.from({ length: 20001 }, (_, i) => `user_${String(i).padStart(3, "0")}`)).code, "AUDIENCE_LIMIT_EXCEEDED");
+});
+
+test("broadcast draft operation retains ambiguous UUID and replaces it only on draft change", () => {
+  const keys = ["11111111-1111-5111-8111-111111111111", "22222222-2222-5222-8222-222222222222"];
+  const coordinator = createNotificationOperationCoordinator(() => keys.shift());
+  const draft = { title: "a", body: "b", url: "/dashboard", target: "all", mode: "broadcast" };
+  const first = coordinator.begin(draft); assert.equal(first, coordinator.ambiguous()); assert.equal(coordinator.begin(draft), first);
+  coordinator.accepted(); const second = coordinator.begin(draft); assert.notEqual(second, first);
+  assert.notEqual(notificationDraftKey(draft), notificationDraftKey({ ...draft, body: "changed" }));
+});
+
+test("message and client source paths contain only actor-scoped message IDs", async () => {
+  const chat = await readFile(new URL("../src/services/chatService.ts", import.meta.url), "utf8");
+  const personal = await readFile(new URL("../src/pages/PersonalChat.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(chat, /if \(false\)|playerIds|userId:.*\n.*notify-message/);
+  assert.match(chat, /body: JSON\.stringify\(\{ messageId: createdMsgId \}\)/);
+  assert.doesNotMatch(personal, /playerIds/);
+});
+
+test("unresolved canonical identities are excluded rather than substituted", () => {
+  const result = classifyCallRecipients("group", ["user_valid", "profile_uuid", "user_valid"], "user_actor");
+  assert.deepEqual(result, ["user_valid"]);
+});
+
+test("legacy missing chat type remains support-compatible in source", async () => {
+  const calls = await readFile(new URL("../api-handlers/calls.js", import.meta.url), "utf8");
+  assert.match(calls, /isSupportChat/);
+  assert.match(await readFile(new URL("../api/_recipient.js", import.meta.url), "utf8"), /dm.*group.*channel/);
+});
+
+test("DM recipient classification rejects stale extra membership", () => {
+  assert.deepEqual(classifyCallRecipients("dm", ["user_actor", "user_one", "user_two"], "user_actor"), []);
+});
+
+test("group and channel recipients exclude the sender", () => {
+  assert.deepEqual(classifyCallRecipients("group", ["user_actor", "user_one", "user_two"], "user_actor"), ["user_one", "user_two"]);
+  assert.deepEqual(classifyCallRecipients("channel", ["user_actor", "user_one"], "user_actor"), ["user_one"]);
+});
+
+test("profile and Clerk admin authorities are independently additive", () => {
+  const result = classifyVerifiedAudience(["user_aaa", "user_bbb", "user_ccc"], new Set(["user_aaa"]), new Set(["user_bbb"]));
+  assert.equal(result.admin.includes("user_aaa"), true); assert.equal(result.admin.includes("user_bbb"), true); assert.equal(result.user.includes("user_ccc"), true);
+});
+
+test("audience deduplication is complete beyond the old 2,000 boundary", () => {
+  const ids = Array.from({ length: 3000 }, (_, i) => `user_${String(i).padStart(4, "0")}`);
+  const result = classifyVerifiedAudience(ids);
+  assert.equal(result.user.length, 3000);
+});
+
+test("subscription actions are actor scoped and preserve compatible JSON fields", async () => {
+  const api = await readFile(new URL("../api/notifications.js", import.meta.url), "utf8");
+  assert.match(api, /unregister-subscription/); assert.match(api, /eq\("user_id", actor\.userId\)/); assert.match(api, /playerId: subscriptionId/);
+});
+
+test("NotificationBell owns refresh generation and disposed state", async () => {
+  const bell = await readFile(new URL("../src/components/NotificationBell.tsx", import.meta.url), "utf8");
+  assert.match(bell, /useRef/); assert.match(bell, /disposed/); assert.match(bell, /generation/); assert.match(bell, /await initOneSignal/);
+});
+
+test("only the serialized identity coordinator performs SDK login", async () => {
+  const onesignal = await readFile(new URL("../src/utils/onesignal.ts", import.meta.url), "utf8");
+  assert.equal((onesignal.match(/OneSignal\.login\(/g) || []).length, 1); assert.match(onesignal, /serializedLogin/); assert.match(onesignal, /identityGeneration/);
+});
+
+test("broadcast operation does not overlap and keeps ambiguous ownership", async () => {
+  const broadcast = await readFile(new URL("../src/pages/AdminBroadcast.tsx", import.meta.url), "utf8");
+  assert.match(broadcast, /if \(sending/); assert.match(broadcast, /AbortController/); assert.match(broadcast, /operation\.current\.begin/); assert.match(broadcast, /requestKey/);
 });

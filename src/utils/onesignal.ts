@@ -8,6 +8,8 @@ let initialization: Promise<OneSignalState> | null = null;
 let identityQueue: Promise<void> = Promise.resolve();
 let identityGeneration = 0;
 let desiredIdentity: { id: string; role: string } | null = null;
+let linkedIdentity = "";
+let currentActorToken: (() => Promise<string | null>) | null = null;
 const appId = String(import.meta.env.VITE_ONESIGNAL_APP_ID || "").trim();
 const supported = () => typeof window !== "undefined" && "serviceWorker" in navigator && "Notification" in window;
 const pushSubscription = () => window.OneSignal?.User?.PushSubscription;
@@ -34,7 +36,10 @@ export const initOneSignal = (): Promise<OneSignalState> => {
           if (!OneSignal.initialized) await OneSignal.init({ appId, notifyButton: { enable: false }, allowLocalhostAsSecureOrigin: true, serviceWorkerParam: { scope: "/" }, serviceWorkerPath: "sw.js" });
           window.clearTimeout(timeout);
           if (settled) return;
-          pushSubscription()?.addEventListener?.("change", () => window.dispatchEvent(new CustomEvent("onesignal_subscribed_state_changed", { detail: { subscribed: Boolean(activeSubscription()) } })));
+          pushSubscription()?.addEventListener?.("change", () => {
+            window.dispatchEvent(new CustomEvent("onesignal_subscribed_state_changed", { detail: { subscribed: Boolean(activeSubscription()) } }));
+            void reconcileSubscription();
+          });
           finish("initialized");
         } catch (error) {
           window.clearTimeout(timeout);
@@ -62,11 +67,44 @@ export const syncSubscriptionToDatabase = async (userId: string) => {
   } catch { return false; }
 };
 
+export const unregisterSubscription = async (userId: string, token?: string) => {
+  if (!userId) return false;
+  try {
+    const authToken = token || await clerkToken();
+    const response = await fetch("/api/notifications?action=unregister-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) }, body: "{}" });
+    return response.ok;
+  } catch { return false; }
+};
+
+async function reconcileSubscription() {
+  if (!desiredIdentity || !currentActorToken) return;
+  const token = await currentActorToken();
+  if (activeSubscription()) await syncSubscriptionToDatabase(desiredIdentity.id);
+  else await unregisterSubscription(desiredIdentity.id, token || undefined);
+}
+
+const serializedLogin = (userId: string, role: string, token?: string) => {
+  const generation = ++identityGeneration;
+  desiredIdentity = { id: userId, role: role || "user" };
+  currentActorToken = token ? async () => token : clerkToken;
+  identityQueue = identityQueue.then(async () => {
+    if (generation !== identityGeneration || !desiredIdentity || desiredIdentity.id !== userId) return;
+    if ((await initOneSignal()) !== "initialized" || generation !== identityGeneration) return;
+    if (linkedIdentity && linkedIdentity !== userId) await window.OneSignal.logout?.();
+    if (generation !== identityGeneration) return;
+    await window.OneSignal.login(userId);
+    if (generation === identityGeneration) linkedIdentity = userId;
+  }).catch(() => undefined);
+  return { generation, operation: identityQueue };
+};
+
 export type NotificationEnableResult = { active: boolean; registered: boolean; code: string };
 export const requestNotificationPermission = async (userId?: string, token?: string): Promise<NotificationEnableResult> => {
   if ((await initOneSignal()) !== "initialized" || !supported()) return { active: false, registered: false, code: "SDK_UNAVAILABLE" };
   try {
-    if (userId) await window.OneSignal.login(userId);
+    const requestedGeneration = userId ? serializedLogin(userId, "user", token) : null;
+    if (requestedGeneration) await requestedGeneration.operation;
+    if (userId && (!desiredIdentity || desiredIdentity.id !== userId || requestedGeneration?.generation !== identityGeneration)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
     if (window.OneSignal.Notifications.permission !== true) await window.OneSignal.Notifications.requestPermission();
     if (window.OneSignal.Notifications.permission !== true) return { active: false, registered: false, code: "PERMISSION_BLOCKED" };
     await pushSubscription()?.optIn?.();
@@ -86,26 +124,20 @@ export const requestNotificationPermission = async (userId?: string, token?: str
 export const repairPushSubscription = async (userId: string, token?: string) => requestNotificationPermission(userId, token);
 
 export const silentlyLinkOneSignalUser = async (userId: string, userRole: string) => {
-  const generation = ++identityGeneration;
-  desiredIdentity = { id: userId, role: userRole || "user" };
-  identityQueue = identityQueue.then(async () => {
-    if (generation !== identityGeneration || !desiredIdentity || desiredIdentity.id !== userId) return;
-    if ((await initOneSignal()) !== "initialized" || generation !== identityGeneration) return;
-    await window.OneSignal.login(userId);
-    if (generation !== identityGeneration) return;
-    if (generation === identityGeneration) await syncSubscriptionToDatabase(userId);
-  }).catch(() => undefined);
-  await identityQueue;
-  return generation === identityGeneration && desiredIdentity?.id === userId;
+  const queued = serializedLogin(userId, userRole);
+  await queued.operation;
+  if (queued.generation === identityGeneration && desiredIdentity?.id === userId) await reconcileSubscription();
+  return queued.generation === identityGeneration && desiredIdentity?.id === userId;
 };
 
 export const logoutOneSignalUser = async () => {
   const generation = ++identityGeneration;
   desiredIdentity = null;
+  currentActorToken = null;
   identityQueue = identityQueue.then(async () => {
     if (generation !== identityGeneration) return;
     if (state === "initialized") await window.OneSignal?.logout?.();
-    if (generation === identityGeneration) window.localStorage.removeItem("onesignal_subscribed");
+    if (generation === identityGeneration) { linkedIdentity = ""; window.localStorage.removeItem("onesignal_subscribed"); }
   }).catch(() => undefined);
   await identityQueue;
 };

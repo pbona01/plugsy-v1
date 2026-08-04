@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { requireVerifiedClerkUser } from "../api/_clerkAuth.js";
-import { resolveCanonicalClerkId } from "../api/_recipient.js";
+import { classifyCallRecipients, isSupportChat, resolveCanonicalClerkId } from "../api/_recipient.js";
 import { deterministicEventUuid, sendOneSignal } from "../api/_oneSignal.js";
 
 const supabase = createClient(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -20,7 +20,9 @@ async function authorizedChat(actor, chatId) {
   const owner = await resolveCanonicalClerkId(supabase, chat.user_id);
   const ids = [...new Set([...(await members(chat.id)), owner].filter(Boolean))];
   const { data: profile } = await supabase.from("profiles").select("role").eq("clerk_id", actor.userId).maybeSingle();
-  const isSupportAdmin = chat.chat_type === "support" && String(profile?.role || "").toLowerCase() === "admin";
+  const isSupport = isSupportChat(chat);
+  const clerkAdmin = String(actor.clerkUser?.publicMetadata?.role || actor.clerkUser?.public_metadata?.role || "").toLowerCase() === "admin";
+  const isSupportAdmin = isSupport && (String(profile?.role || "").toLowerCase() === "admin" || clerkAdmin);
   return ids.includes(actor.userId) || isSupportAdmin ? { chat, ids } : null;
 }
 
@@ -35,8 +37,8 @@ export default async function handler(req, res) {
     const chatId = String(body.chatId || "").trim();
     const authChat = chatId ? await authorizedChat(actor, chatId) : null;
     if (!authChat) return fail(res, 403, "CHAT_MEMBERSHIP_REQUIRED");
-    const recipients = authChat.ids.filter((id) => id !== actor.userId);
-    if (!recipients.length || (authChat.chat.chat_type === "direct" && recipients.length !== 1)) return fail(res, 409, "CALL_RECIPIENT_INVALID");
+    const recipients = classifyCallRecipients(authChat.chat.chat_type, authChat.ids, actor.userId);
+    if (!recipients.length || (authChat.chat.chat_type === "dm" && recipients.length !== 1)) return fail(res, 409, "CALL_RECIPIENT_INVALID");
     const callType = body.callType === "voice" ? "voice" : "video";
     const { data: profile } = await supabase.from("profiles").select("full_name,profile_pic_url,image_url").eq("clerk_id", actor.userId).maybeSingle();
     const hostName = profile?.full_name || actor.fullName || "Plugsy User";

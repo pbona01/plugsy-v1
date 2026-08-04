@@ -88,7 +88,8 @@ async function sendLocalPush(userId: string, title: string, body: string, url: s
 async function sendLocalPushToAdmins(title: string, body: string, url: string = "/admin", tag: string = "admin-notif") {
   try {
     const { data: profiles } = await supabase.from("profiles").select("clerk_id").eq("role", "admin");
-    const recipients = [...new Set((await Promise.all((profiles || []).map((profile) => resolveCanonicalClerkId(supabase, profile.clerk_id)))).filter(Boolean))].slice(0, 2000);
+    const recipients = [...new Set((await Promise.all((profiles || []).map((profile) => resolveCanonicalClerkId(supabase, profile.clerk_id)))).filter(Boolean))];
+    if (recipients.length > 20000) return;
     if (recipients.length) await sendOneSignal({ title, body, url, targeting: { include_aliases: { external_id: recipients } } });
   } catch (e) {
     console.error("[push] admin notification failed safely");
