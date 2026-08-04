@@ -3,13 +3,14 @@ import {
   getPlayerId,
   requestNotificationPermission,
   isSubscribed,
-  silentlyLinkOneSignalUser
+  silentlyLinkOneSignalUser,
+  type TokenProvider
 } from "../utils/onesignal";
 
 export { isSubscribed as checkOneSignalSubscribed, silentlyLinkOneSignalUser };
 export const initOneSignal = originalInit;
 export const getOneSignalPlayerId = getPlayerId;
 
-export const requestOneSignalPermission = async (userId?: string, token?: string) => {
-  return requestNotificationPermission(userId, token);
+export const requestOneSignalPermission = async (userId?: string, tokenProvider?: TokenProvider) => {
+  return requestNotificationPermission(userId, tokenProvider);
 };

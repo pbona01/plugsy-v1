@@ -168,12 +168,12 @@ export default function App() {
         .eq("clerk_id", user.id)
         .single();
 
-      await silentlyLinkOneSignalUser(user.id, profile?.role || "user");
+      await silentlyLinkOneSignalUser(user.id, profile?.role || "user", getToken);
     };
 
     void link();
     return () => { void logoutOneSignalUser(); };
-  }, [user?.id]);
+  }, [user?.id, getToken]);
 
 
   useEffect(() => {

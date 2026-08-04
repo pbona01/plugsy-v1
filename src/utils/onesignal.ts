@@ -3,6 +3,7 @@ declare global {
 }
 
 export type OneSignalState = "unsupported" | "loading" | "initialized" | "failed";
+export type TokenProvider = () => Promise<string | null>;
 let state: OneSignalState = typeof window === "undefined" ? "unsupported" : "loading";
 let initialization: Promise<OneSignalState> | null = null;
 let identityQueue: Promise<void> = Promise.resolve();
@@ -68,10 +69,10 @@ export const syncSubscriptionToDatabase = async (userId: string, explicitToken?:
   } catch { return false; }
 };
 
-export const unregisterSubscription = async (userId: string, token?: string) => {
+export const unregisterSubscription = async (userId: string, tokenProvider: TokenProvider = clerkToken) => {
   if (!userId) return false;
   try {
-    const authToken = token || await clerkToken();
+    const authToken = await tokenProvider();
     const response = await fetch("/api/notifications?action=unregister-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) }, body: "{}" });
     return response.ok;
   } catch { return false; }
@@ -82,23 +83,29 @@ async function reconcileSubscription() {
   const identity = desiredIdentity;
   const tokenProvider = currentActorToken;
   if (!identity || !tokenProvider) return;
-  const token = await tokenProvider();
-  if (!isCurrentIdentity(generation, identity.id)) return;
-  const current = activeSubscription();
-  if (current) {
-    await syncSubscriptionToDatabase(identity.id, token);
-  } else {
-    await unregisterSubscription(identity.id, token || undefined);
-  }
+  identityQueue = identityQueue.then(async () => {
+    const token = await tokenProvider();
+    if (!isCurrentIdentity(generation, identity.id) || linkedIdentity !== identity.id) return;
+    const current = activeSubscription();
+    if (current) await syncSubscriptionToDatabase(identity.id, token);
+    else await unregisterSubscription(identity.id, tokenProvider);
+  }).catch(() => undefined);
+  await identityQueue;
 }
 
-const serializedLogin = (userId: string, role: string, token?: string) => {
+const serializedLogin = (userId: string, role: string, tokenProvider: TokenProvider = clerkToken) => {
   const generation = ++identityGeneration;
+  const previousIdentity = desiredIdentity;
+  const previousTokenProvider = currentActorToken;
   desiredIdentity = { id: userId, role: role || "user" };
-  currentActorToken = token ? async () => token : clerkToken;
+  currentActorToken = tokenProvider;
   identityQueue = identityQueue.then(async () => {
     if (generation !== identityGeneration || !desiredIdentity || desiredIdentity.id !== userId) return;
     if ((await initOneSignal()) !== "initialized" || generation !== identityGeneration) return;
+    if (previousIdentity && previousIdentity.id !== userId && previousTokenProvider) {
+      await unregisterSubscription(previousIdentity.id, previousTokenProvider);
+    }
+    if (generation !== identityGeneration) return;
     if (linkedIdentity && linkedIdentity !== userId) await window.OneSignal.logout?.();
     if (generation !== identityGeneration) return;
     await window.OneSignal.login(userId);
@@ -108,12 +115,25 @@ const serializedLogin = (userId: string, role: string, token?: string) => {
 };
 
 export type NotificationEnableResult = { active: boolean; registered: boolean; code: string };
-export const requestNotificationPermission = async (userId?: string, token?: string): Promise<NotificationEnableResult> => {
+const queueRegisterSubscription = async (generation: number, userId: string, tokenProvider: TokenProvider, subscriptionId: string) => {
+  let registered = false;
+  identityQueue = identityQueue.then(async () => {
+    const token = await tokenProvider();
+    if (!isCurrentIdentity(generation, userId) || linkedIdentity !== userId || activeSubscription()?.id !== subscriptionId) return;
+    const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ subscriptionId }) });
+    if (!isCurrentIdentity(generation, userId) || linkedIdentity !== userId || activeSubscription()?.id !== subscriptionId) return;
+    registered = response.ok;
+  }).catch(() => undefined);
+  await identityQueue;
+  return { registered, stale: !isCurrentIdentity(generation, userId) || linkedIdentity !== userId };
+};
+
+export const requestNotificationPermission = async (userId?: string, tokenProvider: TokenProvider = clerkToken): Promise<NotificationEnableResult> => {
   const initialGeneration = identityGeneration;
   if ((await initOneSignal()) !== "initialized" || !supported()) return { active: false, registered: false, code: "SDK_UNAVAILABLE" };
   if (!isCurrentIdentity(initialGeneration)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
   try {
-    const requestedGeneration = userId ? serializedLogin(userId, "user", token) : null;
+    const requestedGeneration = userId ? serializedLogin(userId, "user", tokenProvider) : null;
     const generation = requestedGeneration?.generation ?? initialGeneration;
     if (requestedGeneration) await requestedGeneration.operation;
     if (!isCurrentIdentity(generation, userId) || (userId && linkedIdentity !== userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
@@ -130,10 +150,11 @@ export const requestNotificationPermission = async (userId?: string, token?: str
     if (!subscription) return { active: false, registered: false, code: "SUBSCRIPTION_MISSING" };
     if (!isCurrentIdentity(generation, userId) || (userId && linkedIdentity !== userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
     let registered = true;
-    if (userId && token) {
-      const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ subscriptionId: subscription.id }) });
-      registered = response.ok;
-    } else if (userId) registered = await syncSubscriptionToDatabase(userId, token);
+    if (userId) {
+      const queued = await queueRegisterSubscription(generation, userId, tokenProvider, subscription.id);
+      if (queued.stale) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
+      registered = queued.registered;
+    }
     if (!isCurrentIdentity(generation, userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
     window.localStorage.setItem("onesignal_subscribed", "true");
     if (!isCurrentIdentity(generation, userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
@@ -142,10 +163,10 @@ export const requestNotificationPermission = async (userId?: string, token?: str
   } catch { return { active: false, registered: false, code: "ENABLE_FAILED" }; }
 };
 
-export const repairPushSubscription = async (userId: string, token?: string) => requestNotificationPermission(userId, token);
+export const repairPushSubscription = async (userId: string, tokenProvider: TokenProvider = clerkToken) => requestNotificationPermission(userId, tokenProvider);
 
-export const silentlyLinkOneSignalUser = async (userId: string, userRole: string) => {
-  const queued = serializedLogin(userId, userRole);
+export const silentlyLinkOneSignalUser = async (userId: string, userRole: string, tokenProvider: TokenProvider = clerkToken) => {
+  const queued = serializedLogin(userId, userRole, tokenProvider);
   await queued.operation;
   if (queued.generation === identityGeneration && desiredIdentity?.id === userId) await reconcileSubscription();
   return queued.generation === identityGeneration && desiredIdentity?.id === userId;
@@ -153,9 +174,14 @@ export const silentlyLinkOneSignalUser = async (userId: string, userRole: string
 
 export const logoutOneSignalUser = async () => {
   const generation = ++identityGeneration;
+  const previousIdentity = desiredIdentity;
+  const previousTokenProvider = currentActorToken;
   desiredIdentity = null;
   currentActorToken = null;
   identityQueue = identityQueue.then(async () => {
+    if (previousIdentity && previousTokenProvider) {
+      await unregisterSubscription(previousIdentity.id, previousTokenProvider);
+    }
     if (generation !== identityGeneration) return;
     if (state === "initialized") await window.OneSignal?.logout?.();
     if (generation === identityGeneration) { linkedIdentity = ""; window.localStorage.removeItem("onesignal_subscribed"); }

@@ -1150,14 +1150,21 @@ export default function PersonalChat() {
             // Find who started the call
             const { data: latestCall } = await supabase
               .from("calls")
-              .select("host_id")
+              .select("id,chat_id,host_id,host_name,host_avatar,chat_name,room_url,room_name,call_type,status")
               .eq("chat_id", chatId)
               .eq("status", "active")
               .order("started_at", { ascending: false })
               .limit(1)
               .maybeSingle();
 
-            if (latestCall && latestCall.host_id !== userId) {
+            if (!latestCall?.room_url || !latestCall.room_name) {
+              setActiveCallRoom(null);
+              setIncomingCall(false);
+              setIncomingCallRoomUrl(null);
+              return;
+            }
+            recoverActiveCall(latestCall);
+            if (latestCall.host_id !== userId) {
               // Fetch host name
               const { data: hostProfile } = await supabase
                 .from("profiles")
@@ -1207,14 +1214,21 @@ export default function PersonalChat() {
         // Find who started the call
         const { data: latestCall } = await supabase
           .from("calls")
-          .select("host_id")
+          .select("id,chat_id,host_id,host_name,host_avatar,chat_name,room_url,room_name,call_type,status")
           .eq("chat_id", chatId)
           .eq("status", "active")
           .order("started_at", { ascending: false })
           .limit(1)
           .maybeSingle();
 
-        if (latestCall && latestCall.host_id !== userId) {
+        if (!latestCall?.room_url || !latestCall.room_name) {
+          setActiveCallRoom(null);
+          setIncomingCall(false);
+          setIncomingCallRoomUrl(null);
+        } else {
+          recoverActiveCall(latestCall);
+        }
+        if (latestCall?.room_url && latestCall.room_name && latestCall.host_id !== userId) {
           // Fetch host name
           const { data: hostProfile } = await supabase
             .from("profiles")
@@ -1225,7 +1239,7 @@ export default function PersonalChat() {
           setCallHostName(hostProfile?.full_name || hostProfile?.username || "Someone");
           setIncomingCall(true);
           setIncomingCallRoomUrl(chatData.active_call_room);
-        } else {
+        } else if (latestCall?.room_url && latestCall.room_name) {
           setActiveCallRoom(chatData.active_call_room);
         }
       }
@@ -1809,7 +1823,7 @@ export default function PersonalChat() {
     }
   };
 
-  const { startCall: globalStartCall, endActiveCall } = useCall();
+  const { startCall: globalStartCall, endActiveCall, recoverActiveCall } = useCall();
 
   // Call features via server API
   const startCall = async (callType: "voice" | "video" = "voice") => {
@@ -1823,8 +1837,9 @@ export default function PersonalChat() {
     isEndingCallRef.current = true;
     const loadToast = toast.loading("Ending call...");
     try {
-      await endActiveCall();
+      const result = await endActiveCall();
       toast.dismiss(loadToast);
+      if (!result.ok) throw new Error(result.code);
       setActiveCallRoom(null);
       setIncomingCall(false);
       toast.success("Call ended successfully");

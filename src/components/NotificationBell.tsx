@@ -35,14 +35,19 @@ export default function NotificationBell() {
     if (isIOS && !standalone) { toast.error("Add Plugsy to your Home Screen before enabling alerts on iOS."); return; }
     const requestGeneration = generation.current;
     setLoading(true);
-    const result = await requestNotificationPermission(user.id, await getToken());
-    if (disposed.current || requestGeneration !== generation.current || !user) return;
-    setLoading(false);
-    if (result.active) { setRegistrationWarning(!result.registered); setVisible(!result.registered); toast.success(result.registered ? "Notifications enabled." : "Notifications active; account registration needs repair."); }
-    else if (typeof Notification !== "undefined" && Notification.permission === "denied") { setBlocked(true); toast.error("Notifications are blocked. Change the browser site setting to enable them."); }
-    else if (getOneSignalState() === "unsupported") toast.error("This browser or device does not support web push alerts.");
-    else if (getOneSignalState() === "failed") toast.error("Alerts could not be initialized. Please try again later.");
-    else toast.error("No active push subscription was confirmed. Try Repair Alerts.");
+    try {
+      const result = await requestNotificationPermission(user.id, getToken);
+      if (disposed.current || requestGeneration !== generation.current || !user) return;
+      if (result.active) { setRegistrationWarning(!result.registered); setVisible(!result.registered); toast.success(result.registered ? "Notifications enabled." : "Notifications active; account registration needs repair."); }
+      else if (typeof Notification !== "undefined" && Notification.permission === "denied") { setBlocked(true); toast.error("Notifications are blocked. Change the browser site setting to enable them."); }
+      else if (getOneSignalState() === "unsupported") toast.error("This browser or device does not support web push alerts.");
+      else if (getOneSignalState() === "failed") toast.error("Alerts could not be initialized. Please try again later.");
+      else toast.error(result.code === "AUTH_REQUIRED" ? "Your session expired. Sign in again to enable alerts." : "No active push subscription was confirmed. Try Repair Alerts.");
+    } catch {
+      if (!disposed.current && requestGeneration === generation.current) toast.error("Your session could not be verified. Sign in again to enable alerts.");
+    } finally {
+      if (!disposed.current && requestGeneration === generation.current) setLoading(false);
+    }
   };
   if (!user || !visible) return null;
   return <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", width: "calc(100% - 32px)", maxWidth: 360, background: "#111", border: "1px solid #333", borderRadius: 16, padding: 16, zIndex: 9999 }}>

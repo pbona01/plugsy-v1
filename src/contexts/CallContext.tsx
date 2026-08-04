@@ -5,8 +5,9 @@ import { useAuth, useUser } from "@clerk/clerk-react"
 import IncomingCallScreen from "@/components/calls/IncomingCallScreen"
 import OutgoingCallScreen from "@/components/calls/OutgoingCallScreen"
 import ActiveCallScreen from "@/components/calls/ActiveCallScreen"
+import { endPersistedCall } from "@/utils/callLifecycle"
 
-interface CallState {
+export interface CallState {
   id: string
   chatId: string
   hostId: string
@@ -22,6 +23,8 @@ interface CallState {
   currentUserId?: string | null
 }
 
+export interface CallActionResult { ok: boolean; code: string }
+
 interface CallContextValue {
   incomingCall: CallState | null
   outgoingCall: CallState | null
@@ -29,8 +32,9 @@ interface CallContextValue {
   startCall: (chatId: string, calleeId: string | null, chatName: string, callType: "voice" | "video") => Promise<void>
   acceptCall: () => Promise<void>
   declineCall: () => Promise<void>
-  cancelOutgoingCall: () => Promise<void>
-  endActiveCall: () => Promise<void>
+  cancelOutgoingCall: () => Promise<CallActionResult>
+  endActiveCall: () => Promise<CallActionResult>
+  recoverActiveCall: (call: any) => void
 }
 
 const CallContext = createContext<CallContextValue | null>(null)
@@ -54,6 +58,23 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
   const seenCallIdsRef = useRef<Set<string>>(new Set())
   const currentUserIdRef = useRef<string | null>(null)
   const startingCallRef = useRef(false)
+
+  const recoverActiveCall = (call: any) => {
+    if (!call?.id || !call.chat_id || !call.room_url || !call.room_name) return
+    setActiveCall({
+      id: call.id,
+      chatId: call.chat_id,
+      hostId: call.host_id,
+      hostName: call.host_name || "Someone",
+      hostAvatar: call.host_avatar || null,
+      chatName: call.chat_name || null,
+      roomUrl: call.room_url,
+      roomName: call.room_name,
+      callType: call.call_type === "voice" ? "voice" : "video",
+      status: call.status || "active",
+      currentUserId: user?.id || null,
+    })
+  }
 
   useEffect(() => {
     currentUserIdRef.current = user?.id || null
@@ -317,43 +338,33 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     setIncomingCall(null)
   }
 
-  const cancelOutgoingCall = async () => {
-    if (!outgoingCall) return
+  const cancelOutgoingCall = async (): Promise<CallActionResult> => {
+    if (!outgoingCall) return { ok: false, code: "CALL_NOT_ACTIVE" }
     console.log("[call] cancelling outgoing:", outgoingCall.id)
 
     ringtonePlayer.stop()
 
-    const token = await getToken()
-    if (!token) return
-    await fetch("/api/calls?action=end-call", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ callId: outgoingCall.id })
-    })
-
+    const result = await endPersistedCall(outgoingCall, { getToken, fetchImpl: fetch })
+    if (!result.ok) return result
     setOutgoingCall(null)
+    return { ok: true, code: "OK" }
   }
 
-  const endActiveCall = async () => {
-    if (!activeCall) return
+  const endActiveCall = async (): Promise<CallActionResult> => {
+    if (!activeCall) return { ok: false, code: "CALL_NOT_ACTIVE" }
     console.log("[call] ending active call:", activeCall.id)
 
-    const token = await getToken()
-    if (!token) return
-    await fetch("/api/calls?action=end-call", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ callId: activeCall.id })
-    })
-
+    const result = await endPersistedCall(activeCall, { getToken, fetchImpl: fetch })
+    if (!result.ok) return result
     setActiveCall(null)
+    return { ok: true, code: "OK" }
   }
 
   return (
     <CallContext.Provider value={{
       incomingCall, outgoingCall, activeCall,
       startCall, acceptCall, declineCall,
-      cancelOutgoingCall, endActiveCall
+      cancelOutgoingCall, endActiveCall, recoverActiveCall
     }}>
       {children}
       {incomingCall && <IncomingCallScreen call={incomingCall} />}

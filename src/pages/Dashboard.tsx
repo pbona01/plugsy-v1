@@ -623,7 +623,7 @@ export default function Dashboard() {
                           if (!user) return;
                           toast.loading("Repairing connection...", { id: "repair-notif" });
                           try {
-                            const repaired = await requestOneSignalPermission(user.id, await getToken());
+                            const repaired = await requestOneSignalPermission(user.id, getToken);
                             if (!repaired.active) throw new Error(repaired.code);
                             toast.success(repaired.registered ? "Notifications repaired successfully!" : "Alerts are active; registration needs repair.", { id: "repair-notif" });
                           } catch (err: any) {

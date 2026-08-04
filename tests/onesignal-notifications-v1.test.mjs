@@ -5,6 +5,7 @@ import { buildOneSignalPayload, deterministicEventUuid, getOneSignalConfiguratio
 import { canonicalClerkId, classifyCallRecipients, classifyVerifiedAudience, mapBounded } from "../api/_recipient.js";
 import { createNotificationOperationCoordinator, notificationDraftKey } from "../src/utils/notificationOperation.js";
 import { notifyPersistedMessage } from "../src/utils/messageNotification.js";
+import { endPersistedCall } from "../src/utils/callLifecycle.js";
 
 const originalFetch = global.fetch;
 const originalEnv = { ...process.env };
@@ -235,9 +236,11 @@ test("group and channel realtime loops do not contain push requests", async () =
 
 test("all call endpoint requests are authenticated and use persisted call IDs", async () => {
   const context = await readFile(new URL("../src/contexts/CallContext.tsx", import.meta.url), "utf8");
-  assert.equal((context.match(/\/api\/calls\?action=end-call/g) || []).length, 2);
-  assert.equal((context.match(/body: JSON\.stringify\(\{ callId:/g) || []).length, 2);
-  assert.equal((context.match(/Authorization: `Bearer \$\{token\}`/g) || []).length, 3);
+  const helper = await readFile(new URL("../src/utils/callLifecycle.js", import.meta.url), "utf8");
+  assert.equal((context.match(/endPersistedCall\(/g) || []).length, 2);
+  assert.equal((helper.match(/\/api\/calls\?action=end-call/g) || []).length, 1);
+  assert.equal((helper.match(/body: JSON\.stringify\(\{ callId:/g) || []).length, 1);
+  assert.match(helper, /Authorization: `Bearer \$\{token\}`/);
   const page = await readFile(new URL("../src/pages/PersonalChat.tsx", import.meta.url), "utf8");
   assert.equal((page.match(/\/api\/calls\?action=end-call/g) || []).length, 0);
 });
@@ -263,4 +266,42 @@ test("NotificationBell guards enable completion and resets actor warnings", asyn
   assert.match(bell, /const requestGeneration = generation\.current/);
   assert.match(bell, /requestGeneration !== generation\.current/);
   assert.match(bell, /setRegistrationWarning\(false\)/);
+});
+
+test("call lifecycle preserves state on missing call, missing auth, and server failure", async () => {
+  let calls = 0;
+  assert.deepEqual(await endPersistedCall(null, { getToken: async () => "token", fetchImpl: async () => { calls += 1; } }), { ok: false, code: "CALL_NOT_ACTIVE" });
+  assert.deepEqual(await endPersistedCall({ id: "call-1" }, { getToken: async () => null, fetchImpl: async () => { calls += 1; } }), { ok: false, code: "AUTH_REQUIRED" });
+  const rejected = await endPersistedCall({ id: "call-1" }, { getToken: async () => "token", fetchImpl: async () => new Response(JSON.stringify({ success: false, code: "CALL_PARTICIPATION_REQUIRED" }), { status: 403 }) });
+  assert.deepEqual(rejected, { ok: false, code: "CALL_PARTICIPATION_REQUIRED" }); assert.equal(calls, 0);
+});
+
+test("call lifecycle sends only the persisted call ID and confirms success", async () => {
+  let request;
+  const result = await endPersistedCall({ id: "call-2" }, { getToken: async () => "fresh-token", fetchImpl: async (url, options) => { request = { url, options }; return new Response(JSON.stringify({ success: true }), { status: 200 }); } });
+  assert.deepEqual(result, { ok: true, code: "OK" });
+  assert.equal(request.url, "/api/calls?action=end-call"); assert.equal(request.options.headers.Authorization, "Bearer fresh-token");
+  assert.deepEqual(JSON.parse(request.options.body), { callId: "call-2" });
+});
+
+test("PersonalChat recovers persisted active calls and never ends from a room URL", async () => {
+  const context = await readFile(new URL("../src/contexts/CallContext.tsx", import.meta.url), "utf8");
+  const page = await readFile(new URL("../src/pages/PersonalChat.tsx", import.meta.url), "utf8");
+  assert.match(context, /recoverActiveCall/); assert.match(context, /setActiveCall\(\{/);
+  assert.match(page, /\.select\("id,chat_id,host_id,host_name,host_avatar,chat_name,room_url,room_name,call_type,status"\)/);
+  assert.doesNotMatch(page, /body: JSON\.stringify\(\{ chatId \}\)/);
+});
+
+test("identity APIs retain token providers and queued actor-scoped cleanup", async () => {
+  const onesignal = await readFile(new URL("../src/utils/onesignal.ts", import.meta.url), "utf8");
+  assert.match(onesignal, /export type TokenProvider/); assert.match(onesignal, /serializedLogin = \(userId: string, role: string, tokenProvider: TokenProvider/);
+  assert.match(onesignal, /requestNotificationPermission = async \(userId\?: string, tokenProvider: TokenProvider/);
+  assert.match(onesignal, /previousTokenProvider/); assert.match(onesignal, /unregisterSubscription\(previousIdentity\.id, previousTokenProvider\)/);
+  assert.match(onesignal, /identityQueue = identityQueue\.then/);
+});
+
+test("NotificationBell finally releases loading and ignores stale actor completion", async () => {
+  const bell = await readFile(new URL("../src/components/NotificationBell.tsx", import.meta.url), "utf8");
+  assert.match(bell, /try \{/); assert.match(bell, /finally \{/); assert.match(bell, /setLoading\(false\)/);
+  assert.match(bell, /disposed\.current \|\| requestGeneration !== generation\.current/);
 });
