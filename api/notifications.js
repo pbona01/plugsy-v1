@@ -3,7 +3,7 @@ import { clerkClient } from "@clerk/clerk-sdk-node";
 import { randomUUID } from "node:crypto";
 import { requireVerifiedClerkAdmin, requireVerifiedClerkUser } from "./_clerkAuth.js";
 import { deterministicEventUuid, safeConfigurationStatus, sendOneSignal } from "./_oneSignal.js";
-import { canonicalizeChatMembers, classifyVerifiedAudience, resolveCanonicalClerkId } from "./_recipient.js";
+import { canonicalizeChatMembers, classifyVerifiedAudience, isSupportChat, resolveCanonicalClerkId } from "./_recipient.js";
 
 const actionOf = (req) => {
   const parsed = new URL(req.originalUrl || req.url || "/", `http://${req.headers?.host || "localhost"}`);
@@ -102,7 +102,7 @@ async function notifyMessage(req, res, supabase) {
   const { data: memberships, error: memberError } = await supabase.from("chat_members").select("user_id").eq("chat_id", chat.id);
   if (memberError) return fail(res, 503, "CHAT_MEMBERS_UNAVAILABLE", "Chat recipients are temporarily unavailable.");
   const memberIds = await canonicalizeChatMembers(supabase, memberships || []);
-  if (chat.chat_type === "support" || !chat.chat_type) {
+  if (isSupportChat(chat)) {
     if (message.sender_role === "user") {
       const owner = await resolveCanonicalClerkId(supabase, chat.user_id);
       if (owner !== actor.userId) return fail(res, 403, "CHAT_MEMBERSHIP_REQUIRED", "Chat membership is required.");
@@ -121,6 +121,9 @@ async function notifyMessage(req, res, supabase) {
   }
   if (!memberIds.includes(actor.userId)) return fail(res, 403, "CHAT_MEMBERSHIP_REQUIRED", "Chat membership is required.");
   const recipients = memberIds.filter((id) => id !== actor.userId);
+  if (String(chat.chat_type || "").toLowerCase() === "dm" && recipients.length !== 1) {
+    return fail(res, 409, "DM_RECIPIENT_INVALID", "This direct message recipient set is invalid.");
+  }
   if (recipients.length > 20000) return fail(res, 413, "AUDIENCE_LIMIT_EXCEEDED", "This chat has too many notification recipients.");
   if (recipients.length === 0) return fail(res, 200, "ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS", "No eligible subscribers were found.");
   const result = await sendOneSignal({ title: chat.chat_type === "channel" ? "New announcement" : `New message from ${String(message.sender_name || "a Plugsy member").slice(0, 60)}`, body: messageText(message), url: `/chats/${chat.id}`, targeting: { include_aliases: { external_id: recipients } }, requestKey: deterministicEventUuid("message", message.id) });

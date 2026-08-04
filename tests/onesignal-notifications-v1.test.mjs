@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { buildOneSignalPayload, deterministicEventUuid, getOneSignalConfiguration, sendOneSignal } from "../api/_oneSignal.js";
 import { canonicalClerkId, classifyCallRecipients, classifyVerifiedAudience, mapBounded } from "../api/_recipient.js";
 import { createNotificationOperationCoordinator, notificationDraftKey } from "../src/utils/notificationOperation.js";
+import { notifyPersistedMessage } from "../src/utils/messageNotification.js";
 
 const originalFetch = global.fetch;
 const originalEnv = { ...process.env };
@@ -197,4 +198,69 @@ test("only the serialized identity coordinator performs SDK login", async () => 
 test("broadcast operation does not overlap and keeps ambiguous ownership", async () => {
   const broadcast = await readFile(new URL("../src/pages/AdminBroadcast.tsx", import.meta.url), "utf8");
   assert.match(broadcast, /if \(sending/); assert.match(broadcast, /AbortController/); assert.match(broadcast, /operation\.current\.begin/); assert.match(broadcast, /requestKey/);
+});
+
+test("persisted message notification sends exactly one actor-scoped request", async () => {
+  const requests = [];
+  const ok = await notifyPersistedMessage("message-1", {
+    getToken: async () => "clerk-token",
+    fetchImpl: async (url, options) => { requests.push({ url, options }); return new Response("{}", { status: 200 }); },
+  });
+  assert.equal(ok, true); assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "/api/notifications?action=notify-message");
+  assert.deepEqual(JSON.parse(requests[0].options.body), { messageId: "message-1" });
+  assert.equal(requests[0].options.headers.Authorization, "Bearer clerk-token");
+});
+
+test("failed message push is contained and missing token does not dispatch", async () => {
+  let calls = 0;
+  const result = await notifyPersistedMessage("message-2", { getToken: async () => null, fetchImpl: async () => { calls += 1; } });
+  assert.equal(result, false); assert.equal(calls, 0);
+  const failed = await notifyPersistedMessage("message-3", { getToken: async () => "token", fetchImpl: async () => { throw new Error("timeout"); } });
+  assert.equal(failed, false);
+});
+
+test("PersonalChat has one notify call in each persisted text, attachment, and voice path", async () => {
+  const page = await readFile(new URL("../src/pages/PersonalChat.tsx", import.meta.url), "utf8");
+  assert.equal((page.match(/await notifyMessage\(/g) || []).length, 3);
+  assert.match(page, /const sendMessage = async/); assert.match(page, /const handleVoiceNoteSend = async/);
+  assert.match(page, /if \(data\) await notifyMessage\(data\.id\)/);
+});
+
+test("group and channel realtime loops do not contain push requests", async () => {
+  const page = await readFile(new URL("../src/pages/PersonalChat.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(page, /membersList\.forEach\(m => \{[\s\S]{0,120}notifyMessage\(data\.id\)/);
+  assert.match(page, /if \(data\) await notifyMessage\(data\.id\)/);
+});
+
+test("all call endpoint requests are authenticated and use persisted call IDs", async () => {
+  const context = await readFile(new URL("../src/contexts/CallContext.tsx", import.meta.url), "utf8");
+  assert.equal((context.match(/\/api\/calls\?action=end-call/g) || []).length, 2);
+  assert.equal((context.match(/body: JSON\.stringify\(\{ callId:/g) || []).length, 2);
+  assert.equal((context.match(/Authorization: `Bearer \$\{token\}`/g) || []).length, 3);
+  const page = await readFile(new URL("../src/pages/PersonalChat.tsx", import.meta.url), "utf8");
+  assert.equal((page.match(/\/api\/calls\?action=end-call/g) || []).length, 0);
+});
+
+test("exact DM recipient validation is executable", () => {
+  assert.deepEqual(classifyCallRecipients("dm", ["user_actor", "user_other"], "user_actor"), ["user_other"]);
+  assert.deepEqual(classifyCallRecipients("dm", ["user_actor"], "user_actor"), []);
+  assert.deepEqual(classifyCallRecipients("dm", ["user_actor", "user_a", "user_b"], "user_actor"), []);
+  assert.deepEqual(classifyCallRecipients("group", ["user_actor", "user_abc", "user_abc"], "user_actor"), ["user_abc"]);
+});
+
+test("identity reconciliation captures generation and fresh token boundaries", async () => {
+  const onesignal = await readFile(new URL("../src/utils/onesignal.ts", import.meta.url), "utf8");
+  assert.match(onesignal, /const generation = identityGeneration/);
+  assert.match(onesignal, /const tokenProvider = currentActorToken/);
+  assert.match(onesignal, /const token = await tokenProvider\(\)/);
+  assert.match(onesignal, /isCurrentIdentity\(generation, identity\.id\)/);
+  assert.match(onesignal, /IDENTITY_CHANGED/);
+});
+
+test("NotificationBell guards enable completion and resets actor warnings", async () => {
+  const bell = await readFile(new URL("../src/components/NotificationBell.tsx", import.meta.url), "utf8");
+  assert.match(bell, /const requestGeneration = generation\.current/);
+  assert.match(bell, /requestGeneration !== generation\.current/);
+  assert.match(bell, /setRegistrationWarning\(false\)/);
 });

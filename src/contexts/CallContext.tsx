@@ -252,9 +252,11 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
         calleeAvatar = calleeProfile?.profile_pic_url || null
       }
 
+      const token = await getToken()
+      if (!token) return
       const res = await fetch("/api/calls?action=create-room", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ chatId, callType })
       })
       const data = await res.json()
@@ -321,9 +323,11 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
     ringtonePlayer.stop()
 
+    const token = await getToken()
+    if (!token) return
     await fetch("/api/calls?action=end-call", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ callId: outgoingCall.id })
     })
 
@@ -334,9 +338,11 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     if (!activeCall) return
     console.log("[call] ending active call:", activeCall.id)
 
+    const token = await getToken()
+    if (!token) return
     await fetch("/api/calls?action=end-call", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ callId: activeCall.id })
     })
 

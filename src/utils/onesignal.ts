@@ -20,6 +20,7 @@ const activeSubscription = () => {
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const getOneSignalState = () => state;
+export const isCurrentIdentity = (generation: number, userId?: string) => generation === identityGeneration && (!userId || desiredIdentity?.id === userId);
 
 export const initOneSignal = (): Promise<OneSignalState> => {
   if (!supported() || !appId) { state = "unsupported"; return Promise.resolve(state); }
@@ -57,11 +58,11 @@ export const isSubscribed = async () => Boolean((await initOneSignal()) === "ini
 export const getPlayerId = async (): Promise<string | null> => { await initOneSignal(); return activeSubscription()?.id || null; };
 const clerkToken = async () => window.Clerk?.session?.getToken ? window.Clerk.session.getToken() : null;
 
-export const syncSubscriptionToDatabase = async (userId: string) => {
+export const syncSubscriptionToDatabase = async (userId: string, explicitToken?: string | null) => {
   const current = activeSubscription();
   if (!current || !userId) return false;
   try {
-    const token = await clerkToken();
+    const token = explicitToken === undefined ? await clerkToken() : explicitToken;
     const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ subscriptionId: current.id }) });
     return response.ok;
   } catch { return false; }
@@ -77,10 +78,18 @@ export const unregisterSubscription = async (userId: string, token?: string) => 
 };
 
 async function reconcileSubscription() {
-  if (!desiredIdentity || !currentActorToken) return;
-  const token = await currentActorToken();
-  if (activeSubscription()) await syncSubscriptionToDatabase(desiredIdentity.id);
-  else await unregisterSubscription(desiredIdentity.id, token || undefined);
+  const generation = identityGeneration;
+  const identity = desiredIdentity;
+  const tokenProvider = currentActorToken;
+  if (!identity || !tokenProvider) return;
+  const token = await tokenProvider();
+  if (!isCurrentIdentity(generation, identity.id)) return;
+  const current = activeSubscription();
+  if (current) {
+    await syncSubscriptionToDatabase(identity.id, token);
+  } else {
+    await unregisterSubscription(identity.id, token || undefined);
+  }
 }
 
 const serializedLogin = (userId: string, role: string, token?: string) => {
@@ -100,22 +109,34 @@ const serializedLogin = (userId: string, role: string, token?: string) => {
 
 export type NotificationEnableResult = { active: boolean; registered: boolean; code: string };
 export const requestNotificationPermission = async (userId?: string, token?: string): Promise<NotificationEnableResult> => {
+  const initialGeneration = identityGeneration;
   if ((await initOneSignal()) !== "initialized" || !supported()) return { active: false, registered: false, code: "SDK_UNAVAILABLE" };
+  if (!isCurrentIdentity(initialGeneration)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
   try {
     const requestedGeneration = userId ? serializedLogin(userId, "user", token) : null;
+    const generation = requestedGeneration?.generation ?? initialGeneration;
     if (requestedGeneration) await requestedGeneration.operation;
-    if (userId && (!desiredIdentity || desiredIdentity.id !== userId || requestedGeneration?.generation !== identityGeneration)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
+    if (!isCurrentIdentity(generation, userId) || (userId && linkedIdentity !== userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
     if (window.OneSignal.Notifications.permission !== true) await window.OneSignal.Notifications.requestPermission();
+    if (!isCurrentIdentity(generation, userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
     if (window.OneSignal.Notifications.permission !== true) return { active: false, registered: false, code: "PERMISSION_BLOCKED" };
     await pushSubscription()?.optIn?.();
-    for (let index = 0; index < 24 && !activeSubscription(); index += 1) await delay(250);
-    if (!activeSubscription()) return { active: false, registered: false, code: "SUBSCRIPTION_MISSING" };
+    if (!isCurrentIdentity(generation, userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
+    for (let index = 0; index < 24 && !activeSubscription(); index += 1) {
+      await delay(250);
+      if (!isCurrentIdentity(generation, userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
+    }
+    const subscription = activeSubscription();
+    if (!subscription) return { active: false, registered: false, code: "SUBSCRIPTION_MISSING" };
+    if (!isCurrentIdentity(generation, userId) || (userId && linkedIdentity !== userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
     let registered = true;
     if (userId && token) {
-      const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ subscriptionId: activeSubscription()?.id }) });
+      const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ subscriptionId: subscription.id }) });
       registered = response.ok;
-    } else if (userId) registered = await syncSubscriptionToDatabase(userId);
+    } else if (userId) registered = await syncSubscriptionToDatabase(userId, token);
+    if (!isCurrentIdentity(generation, userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
     window.localStorage.setItem("onesignal_subscribed", "true");
+    if (!isCurrentIdentity(generation, userId)) return { active: false, registered: false, code: "IDENTITY_CHANGED" };
     window.dispatchEvent(new CustomEvent("onesignal_subscribed_state_changed", { detail: { subscribed: true } }));
     return { active: true, registered, code: registered ? "ACTIVE" : "REGISTRATION_WARNING" };
   } catch { return { active: false, registered: false, code: "ENABLE_FAILED" }; }

@@ -22,6 +22,7 @@ import { sendBroadcastSafely } from "../services/chatService";
 import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import plugsyLogo from "../assets/images/plugsy_icon.svg";
 import { useProfile } from "../hooks/useProfile";
+import { notifyPersistedMessage } from "../utils/messageNotification";
 
 // Fixed set of default emojis for stickers
 const DEFAULT_STICKERS = ["🔥", "😂", "❤️", "👍", "🙌", "🎉", "✨", "💯", "🚀", "💡", "🎨", "🤩", "👑", "🍕", "👾"];
@@ -411,15 +412,7 @@ export default function PersonalChat() {
 
 
   const notifyMessage = async (messageId: string) => {
-    try {
-      const token = await getToken();
-      if (!token || !messageId) return;
-      await fetch("/api/notifications?action=notify-message", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ messageId }),
-      });
-    } catch { /* push is a contained secondary effect */ }
+    await notifyPersistedMessage(messageId, { getToken, fetchImpl: fetch });
   };
 
   const handleMessageHoldStart = (msg: Message, e?: React.MouseEvent | React.TouchEvent) => {
@@ -1488,6 +1481,7 @@ export default function PersonalChat() {
       if (chatType === "dm" && targetUserId) {
         sendBroadcastSafely(`user-events-${targetUserId}`, "new_message", inserted);
       }
+      await notifyMessage(inserted.id);
     }
 
   };
@@ -1578,16 +1572,13 @@ export default function PersonalChat() {
       const targetUserId = otherMember?.clerk_id || otherMemberIdRef.current;
       if (chat?.chat_type === "dm" && targetUserId) {
         sendBroadcastSafely(`user-events-${targetUserId}`, "new_unread");
-        notifyMessage(data.id);
       } else if (chat?.chat_type === "group" || chat?.chat_type === "channel") {
         try {
           const { data: membersList } = await supabase.from("chat_members").select("user_id").eq("chat_id", chatId).neq("user_id", userId);
           if (membersList) {
-            const groupTitle = chat?.name ? chat.name : "Group Chat";
             membersList.forEach(m => {
               if (m.user_id) {
                 sendBroadcastSafely(`user-events-${m.user_id}`, "new_unread");
-                notifyMessage(data.id);
               }
             });
           }
@@ -1595,6 +1586,8 @@ export default function PersonalChat() {
           console.error("Group broadcast error:", e);
         }
       }
+
+      if (data) await notifyMessage(data.id);
 
       // Fetch current chat to get existing unread_count
       const { data: currentChat } = await supabase
@@ -1721,9 +1714,15 @@ export default function PersonalChat() {
       if (chat?.chat_type === "dm" && targetUserId) {
         sendBroadcastSafely(`user-events-${targetUserId}`, "new_message", data);
         sendBroadcastSafely(`user-events-${targetUserId}`, "new_unread");
-        notifyMessage(data.id);
+      } else if (chat?.chat_type === "group" || chat?.chat_type === "channel") {
+        const { data: membersList } = await supabase.from("chat_members").select("user_id").eq("chat_id", chatId).neq("user_id", userId);
+        (membersList || []).forEach((member) => {
+          if (member.user_id) sendBroadcastSafely(`user-events-${member.user_id}`, "new_unread");
+        });
       }
     }
+
+    if (data) await notifyMessage(data.id);
 
     // Fetch current chat to get existing unread_count
     const { data: currentChat } = await supabase
@@ -1810,7 +1809,7 @@ export default function PersonalChat() {
     }
   };
 
-  const { startCall: globalStartCall } = useCall();
+  const { startCall: globalStartCall, endActiveCall } = useCall();
 
   // Call features via server API
   const startCall = async (callType: "voice" | "video" = "voice") => {
@@ -1824,19 +1823,8 @@ export default function PersonalChat() {
     isEndingCallRef.current = true;
     const loadToast = toast.loading("Ending call...");
     try {
-      const res = await fetch(`/api/calls?action=end-call`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatId }),
-      });
-
-      const data = await res.json();
+      await endActiveCall();
       toast.dismiss(loadToast);
-
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Failed to end call room");
-      }
-
       setActiveCallRoom(null);
       setIncomingCall(false);
       toast.success("Call ended successfully");

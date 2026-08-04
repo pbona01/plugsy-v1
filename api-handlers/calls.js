@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { requireVerifiedClerkUser } from "../api/_clerkAuth.js";
-import { classifyCallRecipients, isSupportChat, resolveCanonicalClerkId } from "../api/_recipient.js";
+import { canonicalizeChatMembers, classifyCallRecipients, isSupportChat, resolveCanonicalClerkId } from "../api/_recipient.js";
 import { deterministicEventUuid, sendOneSignal } from "../api/_oneSignal.js";
 
 const supabase = createClient(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -11,8 +11,7 @@ const fail = (res, status, code) => res.status(status).json({ success: false, co
 async function members(chatId) {
   const { data, error } = await supabase.from("chat_members").select("user_id").eq("chat_id", chatId);
   if (error) throw new Error("CHAT_MEMBERS_UNAVAILABLE");
-  const ids = await Promise.all((data || []).map((row) => resolveCanonicalClerkId(supabase, row.user_id)));
-  return [...new Set(ids.filter(Boolean))];
+  return canonicalizeChatMembers(supabase, data || []);
 }
 async function authorizedChat(actor, chatId) {
   const { data: chat } = await supabase.from("chats").select("id,user_id,chat_type,name").eq("id", chatId).maybeSingle();
