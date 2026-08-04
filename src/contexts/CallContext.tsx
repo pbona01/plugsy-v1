@@ -6,6 +6,7 @@ import IncomingCallScreen from "@/components/calls/IncomingCallScreen"
 import OutgoingCallScreen from "@/components/calls/OutgoingCallScreen"
 import ActiveCallScreen from "@/components/calls/ActiveCallScreen"
 import { endPersistedCall } from "@/utils/callLifecycle"
+import { createActiveCallReconciler } from "@/utils/activeCallReconciliation"
 
 export interface CallState {
   id: string
@@ -35,6 +36,7 @@ interface CallContextValue {
   cancelOutgoingCall: () => Promise<CallActionResult>
   endActiveCall: () => Promise<CallActionResult>
   recoverActiveCall: (call: any) => void
+  clearRecoveredActiveCall: (chatId: string) => void
 }
 
 const CallContext = createContext<CallContextValue | null>(null)
@@ -75,9 +77,36 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
       currentUserId: user?.id || null,
     })
   }
+  const clearRecoveredActiveCall = (chatId: string) => {
+    setActiveCall((current) => current?.chatId === chatId ? null : current)
+  }
+
+  useEffect(() => {
+    const reconciler = createActiveCallReconciler({
+      readStatus: async (callId) => {
+        const { data, error } = await supabase.from("calls").select("status").eq("id", callId).maybeSingle()
+        if (error) throw error
+        return data?.status
+      },
+      onEnded: (callId) => setActiveCall((current) => {
+        if (current?.id !== callId) return current
+        ringtonePlayer.stop()
+        return null
+      }),
+    })
+    if (activeCall?.id) return reconciler.start(activeCall.id)
+    return reconciler.stop
+  }, [activeCall?.id, user?.id])
 
   useEffect(() => {
     currentUserIdRef.current = user?.id || null
+  }, [user?.id])
+
+  useEffect(() => {
+    ringtonePlayer.stop()
+    setIncomingCall(null)
+    setOutgoingCall(null)
+    setActiveCall(null)
   }, [user?.id])
 
   // ===== DEEP LINK HANDLING =====
@@ -364,7 +393,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     <CallContext.Provider value={{
       incomingCall, outgoingCall, activeCall,
       startCall, acceptCall, declineCall,
-      cancelOutgoingCall, endActiveCall, recoverActiveCall
+      cancelOutgoingCall, endActiveCall, recoverActiveCall, clearRecoveredActiveCall
     }}>
       {children}
       {incomingCall && <IncomingCallScreen call={incomingCall} />}

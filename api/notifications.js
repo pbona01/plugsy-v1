@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { requireVerifiedClerkAdmin, requireVerifiedClerkUser } from "./_clerkAuth.js";
 import { deterministicEventUuid, safeConfigurationStatus, sendOneSignal } from "./_oneSignal.js";
 import { canonicalizeChatMembers, classifyVerifiedAudience, isSupportChat, resolveCanonicalClerkId } from "./_recipient.js";
+import { subscriptionActorCode } from "./_subscriptionAuth.js";
 
 const actionOf = (req) => {
   const parsed = new URL(req.originalUrl || req.url || "/", `http://${req.headers?.host || "localhost"}`);
@@ -140,6 +141,7 @@ export default async function handler(req, res) {
   if (action === "register-subscription") {
     if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
     const actor = await requireVerifiedClerkUser(req, res); if (!actor) return;
+    if (subscriptionActorCode(body.expectedUserId, actor.userId) !== "OK") return fail(res, 409, "SUBSCRIPTION_ACTOR_CHANGED", "Subscription ownership changed.");
     const subscriptionId = String(body.subscriptionId || "").trim();
     if (!subscriptionId || subscriptionId.length > 256) return fail(res, 400, "SUBSCRIPTION_INVALID", "Subscription details are invalid.");
     const { data: profile } = await supabase.from("profiles").select("role").eq("clerk_id", actor.userId).maybeSingle();
@@ -150,6 +152,7 @@ export default async function handler(req, res) {
   if (action === "unregister-subscription") {
     if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
     const actor = await requireVerifiedClerkUser(req, res); if (!actor) return;
+    if (subscriptionActorCode(body.expectedUserId, actor.userId) !== "OK") return fail(res, 409, "SUBSCRIPTION_ACTOR_CHANGED", "Subscription ownership changed.");
     const { error } = await supabase.from("push_subscriptions").update({ onesignal_player_id: null, subscription: null, updated_at: new Date().toISOString() }).eq("user_id", actor.userId);
     if (error) return fail(res, 503, "SUBSCRIPTION_SAVE_FAILED", "Your notification subscription could not be updated.");
     return res.status(200).json({ success: true });

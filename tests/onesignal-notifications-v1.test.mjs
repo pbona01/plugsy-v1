@@ -6,6 +6,8 @@ import { canonicalClerkId, classifyCallRecipients, classifyVerifiedAudience, map
 import { createNotificationOperationCoordinator, notificationDraftKey } from "../src/utils/notificationOperation.js";
 import { notifyPersistedMessage } from "../src/utils/messageNotification.js";
 import { endPersistedCall } from "../src/utils/callLifecycle.js";
+import { createActiveCallReconciler } from "../src/utils/activeCallReconciliation.js";
+import { subscriptionActorCode } from "../api/_subscriptionAuth.js";
 
 const originalFetch = global.fetch;
 const originalEnv = { ...process.env };
@@ -304,4 +306,44 @@ test("NotificationBell finally releases loading and ignores stale actor completi
   const bell = await readFile(new URL("../src/components/NotificationBell.tsx", import.meta.url), "utf8");
   assert.match(bell, /try \{/); assert.match(bell, /finally \{/); assert.match(bell, /setLoading\(false\)/);
   assert.match(bell, /disposed\.current \|\| requestGeneration !== generation\.current/);
+});
+
+test("subscription mutations bind the expected actor before any row mutation", () => {
+  assert.equal(subscriptionActorCode("user_actor", "user_actor"), "OK");
+  assert.equal(subscriptionActorCode("user_other", "user_actor"), "SUBSCRIPTION_ACTOR_CHANGED");
+  assert.equal(subscriptionActorCode("", "user_actor"), "SUBSCRIPTION_ACTOR_CHANGED");
+  assert.equal(subscriptionActorCode("profile-uuid", "user_actor"), "SUBSCRIPTION_ACTOR_CHANGED");
+  const api = readFile(new URL("../api/notifications.js", import.meta.url), "utf8");
+  return api.then((source) => { assert.match(source, /subscriptionActorCode\(body\.expectedUserId, actor\.userId\)/g); return readFile(new URL("../src/utils/onesignal.ts", import.meta.url), "utf8"); }).then((onesignal) => assert.match(onesignal, /expectedUserId: userId/));
+});
+
+test("active-call reconciliation clears only the current call after a remote terminal status", async () => {
+  let timerCallback; let cleared = 0; const ended = [];
+  const reconciler = createActiveCallReconciler({
+    readStatus: async (id) => id === "call-a" ? "ended" : "active",
+    onEnded: (id) => ended.push(id),
+    setIntervalImpl: (callback) => { timerCallback = callback; return 1; },
+    clearIntervalImpl: () => { cleared += 1; },
+  });
+  reconciler.start("call-a"); await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(ended, ["call-a"]);
+  reconciler.start("call-b"); await timerCallback(); assert.deepEqual(ended, ["call-a"]);
+  reconciler.stop(); assert.equal(cleared, 2);
+});
+
+test("active-call reconciliation preserves state on read failure and cleans up", async () => {
+  let cleared = 0; let timerCallback; const ended = [];
+  const reconciler = createActiveCallReconciler({
+    readStatus: async () => { throw new Error("temporary"); }, onEnded: (id) => ended.push(id),
+    setIntervalImpl: (callback) => { timerCallback = callback; return 2; }, clearIntervalImpl: () => { cleared += 1; },
+  });
+  const stop = reconciler.start("call-c"); await new Promise((resolve) => setImmediate(resolve)); await timerCallback();
+  assert.deepEqual(ended, []); stop(); assert.equal(cleared, 1);
+});
+
+test("structured call lifecycle contains token and malformed-response failures", async () => {
+  const tokenFailure = await endPersistedCall({ id: "call-x" }, { getToken: async () => { throw new Error("expired"); } });
+  assert.equal(tokenFailure.ok, false); assert.match(tokenFailure.code, /AUTH_REQUIRED|CALL_END_FAILED/);
+  const malformed = await endPersistedCall({ id: "call-y" }, { getToken: async () => "token", fetchImpl: async () => ({ ok: true, json: async () => { throw new Error("bad json"); } }) });
+  assert.deepEqual(malformed, { ok: false, code: "CALL_END_FAILED" });
 });

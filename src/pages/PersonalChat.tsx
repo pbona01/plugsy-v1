@@ -1158,6 +1158,7 @@ export default function PersonalChat() {
               .maybeSingle();
 
             if (!latestCall?.room_url || !latestCall.room_name) {
+              clearRecoveredActiveCall(chatId);
               setActiveCallRoom(null);
               setIncomingCall(false);
               setIncomingCallRoomUrl(null);
@@ -1222,6 +1223,7 @@ export default function PersonalChat() {
           .maybeSingle();
 
         if (!latestCall?.room_url || !latestCall.room_name) {
+          clearRecoveredActiveCall(chatId);
           setActiveCallRoom(null);
           setIncomingCall(false);
           setIncomingCallRoomUrl(null);
@@ -1823,7 +1825,7 @@ export default function PersonalChat() {
     }
   };
 
-  const { startCall: globalStartCall, endActiveCall, recoverActiveCall } = useCall();
+  const { startCall: globalStartCall, endActiveCall, recoverActiveCall, clearRecoveredActiveCall } = useCall();
 
   // Call features via server API
   const startCall = async (callType: "voice" | "video" = "voice") => {

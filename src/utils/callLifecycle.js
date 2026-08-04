@@ -1,9 +1,9 @@
 /** @param {{id?: string}|null|undefined} call @param {{getToken: () => Promise<string|null>, fetchImpl?: typeof fetch}} options */
 export async function endPersistedCall(call, { getToken, fetchImpl = fetch }) {
   if (!call?.id) return { ok: false, code: "CALL_NOT_ACTIVE" };
-  const token = await getToken();
-  if (!token) return { ok: false, code: "AUTH_REQUIRED" };
   try {
+    const token = await getToken();
+    if (!token) return { ok: false, code: "AUTH_REQUIRED" };
     const response = await fetchImpl("/api/calls?action=end-call", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },

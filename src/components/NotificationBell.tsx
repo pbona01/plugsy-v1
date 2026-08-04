@@ -26,7 +26,7 @@ export default function NotificationBell() {
     setBlocked(typeof Notification !== "undefined" && Notification.permission === "denied");
     setVisible(!localStorage.getItem("notif_dismissed_onesignal"));
   };
-  useEffect(() => { disposed.current = false; generation.current += 1; setRegistrationWarning(false); setBlocked(false); refresh(); const handler = () => refresh(); window.addEventListener("onesignal_subscribed_state_changed", handler); return () => { disposed.current = true; generation.current += 1; window.removeEventListener("onesignal_subscribed_state_changed", handler); }; }, [user?.id]);
+  useEffect(() => { disposed.current = false; generation.current += 1; setLoading(false); setRegistrationWarning(false); setBlocked(false); setSdkState("loading"); setVisible(false); refresh(); const handler = () => refresh(); window.addEventListener("onesignal_subscribed_state_changed", handler); return () => { disposed.current = true; generation.current += 1; window.removeEventListener("onesignal_subscribed_state_changed", handler); }; }, [user?.id]);
 
   const enable = async () => {
     if (!user || loading) return;

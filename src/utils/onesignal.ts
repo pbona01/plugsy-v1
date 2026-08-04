@@ -64,7 +64,7 @@ export const syncSubscriptionToDatabase = async (userId: string, explicitToken?:
   if (!current || !userId) return false;
   try {
     const token = explicitToken === undefined ? await clerkToken() : explicitToken;
-    const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ subscriptionId: current.id }) });
+    const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ expectedUserId: userId, subscriptionId: current.id }) });
     return response.ok;
   } catch { return false; }
 };
@@ -73,7 +73,7 @@ export const unregisterSubscription = async (userId: string, tokenProvider: Toke
   if (!userId) return false;
   try {
     const authToken = await tokenProvider();
-    const response = await fetch("/api/notifications?action=unregister-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) }, body: "{}" });
+    const response = await fetch("/api/notifications?action=unregister-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) }, body: JSON.stringify({ expectedUserId: userId }) });
     return response.ok;
   } catch { return false; }
 };
@@ -120,7 +120,7 @@ const queueRegisterSubscription = async (generation: number, userId: string, tok
   identityQueue = identityQueue.then(async () => {
     const token = await tokenProvider();
     if (!isCurrentIdentity(generation, userId) || linkedIdentity !== userId || activeSubscription()?.id !== subscriptionId) return;
-    const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ subscriptionId }) });
+    const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ expectedUserId: userId, subscriptionId }) });
     if (!isCurrentIdentity(generation, userId) || linkedIdentity !== userId || activeSubscription()?.id !== subscriptionId) return;
     registered = response.ok;
   }).catch(() => undefined);
