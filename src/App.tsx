@@ -63,7 +63,7 @@ import SplashScreen from "./components/SplashScreen";
 import LoadingSplash from "./components/LoadingSplash";
 import RealtimeNotifications from "./components/RealtimeNotifications";
 import { Toaster } from "react-hot-toast";
-import { initOneSignal, clearAppBadge, silentlyLinkOneSignalUser } from "./utils/onesignal";
+import { initOneSignal, clearAppBadge, silentlyLinkOneSignalUser, logoutOneSignalUser } from "./utils/onesignal";
 
 const EditPortfolioGuard = () => {
   const { id } = useParams()
@@ -152,22 +152,15 @@ export default function App() {
   const isUserAdmin = isAdmin(user);
 
   useEffect(() => {
-    initOneSignal();
+    void initOneSignal();
   }, []);
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id) { void logoutOneSignalUser(); return; }
 
     const link = async () => {
-      let attempts = 0;
-      while (!window.OneSignal && attempts < 20) {
-        await new Promise(r => setTimeout(r, 300));
-        attempts++;
-      }
-      if (!window.OneSignal) {
-        console.error("[onesignal] SDK never loaded after 6s");
-        return;
-      }
+      await initOneSignal();
+      if (!window.OneSignal) return;
 
       const { data: profile } = await supabase
         .from("profiles")
@@ -178,7 +171,8 @@ export default function App() {
       await silentlyLinkOneSignalUser(user.id, profile?.role || "user");
     };
 
-    link();
+    void link();
+    return () => { void logoutOneSignalUser(); };
   }, [user?.id]);
 
 

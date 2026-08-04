@@ -61,7 +61,7 @@ export const sendDMNotification = async (
       messageType === "sticker" ? "😄 Sticker" :
       messageText.slice(0, 60);
 
-    const res = await fetch("/api/notifications?action=send", {
+    const res = await fetch("/api/notifications?action=unavailable", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -407,7 +407,7 @@ export const chatService = {
 
         if (chatType === "support" || !chatType) {
           // TRIGGER 2 (Reverse): User sends message to Support, notify Admins
-          fetch("/api/notifications?action=notify-admins", {
+          fetch("/api/notifications?action=unavailable", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -433,7 +433,7 @@ export const chatService = {
             messageType === "sticker" ? "😄 Sticker" :
             messageText.slice(0, 60);
 
-          const res = await fetch("/api/notifications?action=send", {
+          const res = await fetch("/api/notifications?action=unavailable", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -497,7 +497,7 @@ export const chatService = {
               // Restore realtime broadcast
               sendBroadcastSafely(`user-events-${member.user_id}`, "new_unread");
 
-              fetch("/api/notifications?action=send", {
+              fetch("/api/notifications?action=unavailable", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -522,7 +522,7 @@ export const chatService = {
             // Restore realtime broadcast
             sendBroadcastSafely(`user-events-${targetUserId}`, "new_unread");
 
-            fetch("/api/notifications?action=send", {
+            fetch("/api/notifications?action=unavailable", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -543,7 +543,7 @@ export const chatService = {
                 // Restore realtime broadcast
                 sendBroadcastSafely(`user-events-${m.user_id}`, "new_unread");
 
-                fetch("/api/notifications?action=send", {
+                fetch("/api/notifications?action=unavailable", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({

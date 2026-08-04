@@ -1040,7 +1040,7 @@ export function PublicPortfolio({
           const reactionObj = (
             CATEGORY_REACTIONS[portfolio.category] || []
           ).find((r) => r.type === reactionType);
-          fetch("/api/notifications", {
+          fetch("/api/notifications?action=unavailable", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

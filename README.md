@@ -30,8 +30,18 @@ Make sure you have Node.js (v18+) and npm installed.
    - `PAYSTACK_SECRET_KEY`: Paystack secret key to verify payments.
    - `TELEGRAM_BOT_TOKEN`: Token for your Telegram bot to receive notifications.
    - `TELEGRAM_CHAT_ID`: Chat ID where the bot should send notifications.
-   - `ONESIGNAL_APP_ID`: OneSignal Application Identifier.
-   - `ONESIGNAL_REST_KEY`: OneSignal REST API Secret Key.
+   - `ONESIGNAL_APP_ID`: OneSignal Application Identifier (public app ID).
+   - `ONESIGNAL_APP_API_KEY`: OneSignal App API Key (server-only secret).
+   - `VITE_ONESIGNAL_APP_ID`: matching public browser App ID.
+
+### OneSignal environment
+
+Use only these variable names: `ONESIGNAL_APP_ID`, `ONESIGNAL_APP_API_KEY`, and
+`VITE_ONESIGNAL_APP_ID`. The App ID is public; the App API Key is secret and
+server-only. Store the raw key without adding `Key` or `Basic`; a Key ID is not
+the App API Key. Add the variables to Production and Preview and redeploy after
+changing Vercel variables. Keep `ONESIGNAL_REST_API_KEY` only as a temporary
+fallback during migration, then remove it after production verification.
 
 3. **Running the Application**:
    To start the development server:

@@ -1,211 +1,30 @@
-import React, { useState } from "react"
-import { Megaphone, ArrowLeft } from "lucide-react"
-import { Link } from "react-router-dom"
+import React, { useRef, useState } from "react";
+import { useAuth } from "@clerk/clerk-react";
+import { Link } from "react-router-dom";
 
-const AdminBroadcast = () => {
-  const [title, setTitle] = useState("")
-  const [body, setBody] = useState("")
-  const [url, setUrl] = useState("/dashboard")
-  const [segment, setSegment] = useState<"all" | "user" | "admin">("all")
-  const [sending, setSending] = useState(false)
-  const [result, setResult] = useState<string | null>(null)
+const validRoute = (value: string) => {
+  if (!value || value.length > 512 || !value.startsWith("/") || value.startsWith("//") || value.includes("\\") || /[\u0000-\u001F\u007F]/.test(value) || /^(?:javascript|data|https?):/i.test(value) || value.includes("@")) return false;
+  try { return new URL(value, "https://www.plugsy.ng").origin === "https://www.plugsy.ng"; } catch { return false; }
+};
+const messages: Record<string, string> = { ONESIGNAL_ACCEPTED: "Accepted by OneSignal", ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS: "No eligible subscribers", ONESIGNAL_CONFIGURATION_UNAVAILABLE: "OneSignal configuration unavailable", ONESIGNAL_AUTH_FAILED: "OneSignal authentication failed", ONESIGNAL_TEMPORARILY_UNAVAILABLE: "Provider temporarily unavailable", ONESIGNAL_REQUEST_REJECTED: "Request rejected" };
 
-  const handleSend = async () => {
-    if (!title.trim() || !body.trim()) {
-      setResult("❌ Title and message are required")
-      return
-    }
-
-    const confirmed = window.confirm(
-      "Send this notification to " +
-      (segment === "all" ? "everyone" : segment + "s") +
-      "?"
-    )
-    if (!confirmed) return
-
-    setSending(true)
-    setResult(null)
-
+export default function AdminBroadcast() {
+  const { getToken, userId } = useAuth();
+  const [title, setTitle] = useState(""); const [body, setBody] = useState(""); const [url, setUrl] = useState("/dashboard"); const [segment, setSegment] = useState<"all" | "user" | "admin">("all"); const [sending, setSending] = useState(false); const [result, setResult] = useState(""); const controller = useRef<AbortController | null>(null);
+  const send = async (test = false) => {
+    if (sending || !title.trim() || !body.trim() || !validRoute(url)) { setResult("Title, message, and a valid internal action URL are required."); return; }
+    if (!window.confirm(test ? "Send a test notification only to yourself?" : `Send this notification to ${segment === "all" ? "everyone" : `${segment}s`}?`)) return;
+    setSending(true); setResult(""); controller.current?.abort(); const abort = new AbortController(); controller.current = abort;
     try {
-      const action = segment === "all" ? "broadcast-all" : "broadcast-segment"
-      const res = await fetch("/api/notifications?action=" + action, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, body, url, tag: "admin-broadcast", segment })
-      })
-      const data = await res.json()
-
-      if (data.success) {
-        setResult("✅ Notification triggered successfully via OneSignal")
-        setTitle("")
-        setBody("")
-      } else {
-        setResult("❌ " + (data.error || "Failed to send"))
-      }
-    } catch (e: any) {
-      setResult("❌ " + e.message)
-    } finally {
-      setSending(false)
-    }
-  }
-
-  return (
-    <div style={{ padding: "40px 24px", minHeight: "100vh", background: "#050505" }}>
-      <div style={{ maxWidth: "560px", margin: "0 auto" }}>
-        <Link 
-          to="/admin" 
-          style={{ 
-            display: "inline-flex", 
-            alignItems: "center", 
-            gap: "8px", 
-            color: "#888", 
-            textDecoration: "none", 
-            fontSize: "13px", 
-            marginBottom: "32px",
-            fontWeight: 500
-          }}
-        >
-          <ArrowLeft size={16} /> Back to Admin
-        </Link>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
-          <div style={{ background: "rgba(239,68,68,0.1)", padding: "10px", borderRadius: "12px" }}>
-            <Megaphone size={24} color="#EF4444" />
-          </div>
-          <h2 style={{ color: "white", fontSize: "24px", fontWeight: 800, margin: 0 }}>
-            Broadcast Notification
-          </h2>
-        </div>
-        <p style={{ color: "#888", fontSize: "14px", marginBottom: "32px" }}>
-          Send an instant push notification via OneSignal segments.
-        </p>
-
-        <div style={{ background: "#0d0d0d", border: "1px solid #1a1a1a", borderRadius: "24px", padding: "24px" }}>
-          <div style={{ marginBottom: "20px" }}>
-            <label style={{ color: "#555", fontSize: "11px", fontWeight: 700,
-              textTransform: "uppercase", display: "block", marginBottom: "8px", letterSpacing: "0.05em" }}>
-              Target Audience
-            </label>
-            <div style={{ display: "flex", gap: "8px" }}>
-              {[
-                { key: "all", label: "Everyone" },
-                { key: "user", label: "Users Only" },
-                { key: "admin", label: "Admins Only" }
-              ].map(opt => (
-                <button
-                  key={opt.key}
-                  onClick={() => setSegment(opt.key as any)}
-                  style={{
-                    flex: 1,
-                    padding: "12px 8px",
-                    background: segment === opt.key ? "rgba(239,68,68,0.1)" : "#111",
-                    border: segment === opt.key ? "1px solid #EF4444" : "1px solid #222",
-                    borderRadius: "12px",
-                    color: segment === opt.key ? "white" : "#888",
-                    fontSize: "12px",
-                    cursor: "pointer",
-                    transition: "all 0.2s"
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            <p style={{ fontSize: "11px", color: "#444", marginTop: "8px", fontStyle: "italic" }}>
-              Note: "Users Only" and "Admins Only" rely on the user_role tag. "Everyone" targets all subscribers.
-            </p>
-          </div>
-
-          <div style={{ marginBottom: "20px" }}>
-            <label style={{ color: "#555", fontSize: "11px", fontWeight: 700,
-              textTransform: "uppercase", display: "block", marginBottom: "8px", letterSpacing: "0.05em" }}>
-              Push Title
-            </label>
-            <input
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="e.g. New feature just dropped!"
-              maxLength={65}
-              style={{
-                width: "100%", background: "#111", border: "1px solid #222",
-                borderRadius: "12px", color: "white", padding: "12px 16px",
-                fontSize: "14px", outline: "none"
-              }}
-            />
-          </div>
-
-          <div style={{ marginBottom: "20px" }}>
-            <label style={{ color: "#555", fontSize: "11px", fontWeight: 700,
-              textTransform: "uppercase", display: "block", marginBottom: "8px", letterSpacing: "0.05em" }}>
-              Push Message
-            </label>
-            <textarea
-              value={body}
-              onChange={e => setBody(e.target.value)}
-              placeholder="What do you want to tell them?"
-              maxLength={200}
-              rows={4}
-              style={{
-                width: "100%", background: "#111", border: "1px solid #222",
-                borderRadius: "12px", color: "white", padding: "12px 16px",
-                fontSize: "14px", resize: "none", outline: "none"
-              }}
-            />
-            <p style={{ textAlign: "right", fontSize: "11px", color: "#444", marginTop: "4px" }}>
-              {body.length}/200
-            </p>
-          </div>
-
-          <div style={{ marginBottom: "24px" }}>
-            <label style={{ color: "#555", fontSize: "11px", fontWeight: 700,
-              textTransform: "uppercase", display: "block", marginBottom: "8px", letterSpacing: "0.05em" }}>
-              Action URL (Optional)
-            </label>
-            <input
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              placeholder="/dashboard"
-              style={{
-                width: "100%", background: "#111", border: "1px solid #222",
-                borderRadius: "12px", color: "white", padding: "12px 16px",
-                fontSize: "14px", outline: "none"
-              }}
-            />
-          </div>
-
-          <button
-            onClick={handleSend}
-            disabled={sending}
-            style={{
-              width: "100%", background: "#EF4444", color: "white",
-              border: "none", borderRadius: "14px", padding: "16px",
-              fontSize: "14px", fontWeight: 800, cursor: "pointer",
-              opacity: sending ? 0.6 : 1,
-              transition: "transform 0.1s active",
-              boxShadow: "0 4px 12px rgba(239,68,68,0.2)"
-            }}
-          >
-            {sending ? "Sending..." : "Send Broadcast Now"}
-          </button>
-
-          {result && (
-            <div style={{
-              marginTop: "20px", 
-              padding: "12px", 
-              borderRadius: "12px", 
-              fontSize: "13px", 
-              textAlign: "center",
-              background: result.startsWith("✅") ? "rgba(74,222,128,0.1)" : "rgba(248,113,113,0.1)",
-              color: result.startsWith("✅") ? "#4ade80" : "#f87171",
-              border: result.startsWith("✅") ? "1px solid rgba(74,222,128,0.2)" : "1px solid rgba(248,113,113,0.2)"
-            }}>
-              {result}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
+      const token = await getToken();
+      if (!token) { setResult("Sign-in is required."); return; }
+      const action = test ? "send-test-to-self" : segment === "all" ? "broadcast-all" : "broadcast-segment";
+      const response = await fetch(`/api/notifications?action=${action}`, { method: "POST", signal: abort.signal, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ title: title.trim(), body: body.trim(), url, segment, requestKey: crypto.randomUUID() }) });
+      const data = await response.json();
+      setResult(data.code === "ONESIGNAL_ACCEPTED" ? `${messages[data.code]} (ID: ${data.messageId})` : messages[data.code] || data.error || "Notification could not be accepted.");
+      if (data.success) { setTitle(""); setBody(""); }
+    } catch (error: any) { if (error?.name !== "AbortError") setResult("Notification request failed."); }
+    finally { if (controller.current?.signal === abort.signal) { controller.current = null; setSending(false); } }
+  };
+  return <main style={{ padding: 40, maxWidth: 600, margin: "auto", color: "white" }}><Link to="/admin">← Back to Admin</Link><h1>Broadcast Notification</h1><p>Send authenticated OneSignal web push notifications.</p><label>Target <select value={segment} onChange={e => setSegment(e.target.value as any)}><option value="all">Everyone</option><option value="user">Users Only</option><option value="admin">Admins Only</option></select></label><br /><label>Title<input value={title} maxLength={65} onChange={e => setTitle(e.target.value)} /></label><br /><label>Message<textarea value={body} maxLength={200} onChange={e => setBody(e.target.value)} /></label><br /><label>Action URL<input value={url} onChange={e => setUrl(e.target.value)} /></label><br /><button disabled={sending} onClick={() => send(false)}>{sending ? "Sending..." : "Send Broadcast"}</button><button disabled={sending || !userId} onClick={() => send(true)}>Send Test to Myself</button>{result && <p role="status">{result}</p>}</main>;
 }
-
-export default AdminBroadcast

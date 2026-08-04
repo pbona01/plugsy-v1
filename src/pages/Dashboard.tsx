@@ -659,7 +659,7 @@ export default function Dashboard() {
                             toast.success("Notifications repaired successfully!", { id: "repair-notif" });
                             
                             // Send test
-                            fetch("/api/notifications?action=send", {
+                            fetch("/api/notifications?action=unavailable", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
                               body: JSON.stringify({

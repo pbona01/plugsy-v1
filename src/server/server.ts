@@ -50,6 +50,7 @@ import multer from "multer";
 import { PassThrough } from "stream";
 import { requireVerifiedClerkUser } from "../../api/_clerkAuth.js";
 import { syncVerifiedClerkProfile } from "../../api/_profileSync.js";
+import { sendOneSignal } from "../../api/_oneSignal.js";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -74,75 +75,19 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   );
 }
 
-async function sendOneSignal(playerIds: string[], title: string, body: string, url: string = "/dashboard", tag: string = "plugsy") {
-  const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || process.env.VITE_ONESIGNAL_APP_ID || "d2a9e7fc-deb3-455d-ba8b-2a6c767d5547";
-  const ONESIGNAL_REST_KEY = process.env.ONESIGNAL_REST_API_KEY || process.env.ONESIGNAL_REST_KEY;
-
-  if (!playerIds || playerIds.length === 0) {
-    console.log("[onesignal] no player IDs to send to");
-    return;
-  }
-  if (!ONESIGNAL_APP_ID || !ONESIGNAL_REST_KEY) {
-    console.error("[onesignal] missing app id or rest key");
-    return;
-  }
-
-  const payload = {
-    app_id: ONESIGNAL_APP_ID,
-    include_player_ids: playerIds,
-    headings: { en: title || "Plugsy" },
-    contents: { en: body || "You have a new notification" },
-    url: "https://www.plugsy.ng" + url,
-    web_push_topic: tag,
-    chrome_web_icon: "https://res.cloudinary.com/doit6oaze/image/upload/v1783666216/icon-192_gxuh39.png",
-    firefox_icon: "https://res.cloudinary.com/doit6oaze/image/upload/v1783666216/icon-192_gxuh39.png",
-    priority: 10
-  };
-
-  try {
-    const response = await fetch("https://onesignal.com/api/v1/notifications", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Basic " + ONESIGNAL_REST_KEY
-      },
-      body: JSON.stringify(payload)
-    });
-    const data = await response.json();
-    console.log("[onesignal] response:", data);
-    return data;
-  } catch (e) {
-    console.error("[onesignal] error sending:", e);
-  }
-}
-
 async function sendLocalPush(userId: string, title: string, body: string, url: string = "/dashboard", tag: string = "plugsy") {
   try {
-    const { data } = await supabase
-      .from("push_subscriptions")
-      .select("onesignal_player_id")
-      .eq("user_id", userId)
-      .not("onesignal_player_id", "is", null);
-
-    const playerIds = (data || []).map(r => r.onesignal_player_id).filter(Boolean) as string[];
-    await sendOneSignal(playerIds, title, body, url, tag);
+    await sendOneSignal({ title, body, url, targeting: { include_aliases: { external_id: [userId] } } });
   } catch (e) {
-    console.error("[PUSH DBG] Error in sendLocalPush:", e);
+    console.error("[push] transactional notification failed safely");
   }
 }
 
 async function sendLocalPushToAdmins(title: string, body: string, url: string = "/admin", tag: string = "admin-notif") {
   try {
-    const { data } = await supabase
-      .from("push_subscriptions")
-      .select("onesignal_player_id")
-      .eq("user_role", "admin")
-      .not("onesignal_player_id", "is", null);
-
-    const playerIds = (data || []).map(r => r.onesignal_player_id).filter(Boolean) as string[];
-    await sendOneSignal(playerIds, title, body, url, tag);
+    await sendOneSignal({ title, body, url, targeting: { filters: [{ field: "tag", key: "user_role", relation: "=", value: "admin" }] } });
   } catch (e) {
-    console.error("[PUSH DBG] Error in sendLocalPushToAdmins:", e);
+    console.error("[push] admin notification failed safely");
   }
 }
 

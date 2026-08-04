@@ -424,7 +424,7 @@ export default function PersonalChat() {
         messageType === "sticker" ? "😄 Sticker" :
         (messageText || "").slice(0, 60);
 
-      const res = await fetch("/api/notifications?action=send", {
+      const res = await fetch("/api/notifications?action=unavailable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1536,7 +1536,7 @@ export default function PersonalChat() {
         console.log("[send] calling notification API...");
         
         try {
-          const notifRes = await fetch("/api/notifications?action=send", {
+          const notifRes = await fetch("/api/notifications?action=unavailable", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
