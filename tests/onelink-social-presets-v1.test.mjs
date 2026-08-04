@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { buildOneLinkSocialUrl, findDuplicateOneLinkSocialPlatforms, findDuplicateOneLinkSocialUrls, getOneLinkSocialPreset, normalizeOneLinkSocialInput, parseOneLinkSocialUrl, supportsOneLinkSocialHandle } from "../shared/onelinkSocialPresets.js";
+import { applyManualOneLinkSocialEnablement, buildOneLinkSocialUrl, findDuplicateOneLinkSocialPlatforms, findDuplicateOneLinkSocialUrls, getNextOneLinkSocialPickerIndex, getOneLinkSocialPreset, normalizeOneLinkSocialInput, parseOneLinkSocialUrl, resolveOneLinkSocialEnablement, supportsOneLinkSocialHandle } from "../shared/onelinkSocialPresets.js";
 import { normalizeExternalUrl } from "../shared/onelink.js";
 
 const built = (platform, input) => buildOneLinkSocialUrl(platform, input).url;
@@ -97,4 +97,36 @@ test("preset metadata has labels for every handle platform", () => { for (const 
 test("duplicate platform and normalized destination helpers detect conflicts", () => {
   assert.deepEqual([...findDuplicateOneLinkSocialPlatforms([{ platform: "instagram" }, { platform: "instagram" }, { platform: "github" }])], ["instagram"]);
   assert.deepEqual([...findDuplicateOneLinkSocialUrls([{ url: "https://instagram.com/alice" }, { url: " https://instagram.com/alice " }, { url: "https://github.com/alice" }])], ["https://instagram.com/alice"]);
+});
+
+test("first-valid enablement applies only to eligible new entries", () => {
+  assert.deepEqual(resolveOneLinkSocialEnablement({ currentEnabled: false, autoEnableEligible: true, valid: true }), { enabled: true, autoEnableEligible: false });
+  assert.deepEqual(resolveOneLinkSocialEnablement({ currentEnabled: false, autoEnableEligible: false, valid: true }), { enabled: false, autoEnableEligible: false });
+  assert.deepEqual(resolveOneLinkSocialEnablement({ currentEnabled: true, autoEnableEligible: false, valid: false }), { enabled: false, autoEnableEligible: false });
+  assert.deepEqual(applyManualOneLinkSocialEnablement(true), { enabled: true, autoEnableEligible: false });
+  assert.deepEqual(applyManualOneLinkSocialEnablement(false), { enabled: false, autoEnableEligible: false });
+});
+
+test("picker navigation skips disabled options, wraps, and honors Home/End", () => {
+  const enabled = [0, 3, 5];
+  assert.equal(getNextOneLinkSocialPickerIndex(0, "next", enabled, 6), 3);
+  assert.equal(getNextOneLinkSocialPickerIndex(0, "previous", enabled, 6), 5);
+  assert.equal(getNextOneLinkSocialPickerIndex(0, "first", enabled, 6), 0);
+  assert.equal(getNextOneLinkSocialPickerIndex(0, "last", enabled, 6), 5);
+  assert.equal(getNextOneLinkSocialPickerIndex(3, "next", enabled, 6), 5);
+  assert.equal(getNextOneLinkSocialPickerIndex(5, "next", enabled, 6), 0);
+});
+
+test("editor exposes truthful modes, labels, warnings, and transient state only", async () => {
+  const editor = await readFile(new URL("../src/components/OneLinkEditor.tsx", import.meta.url), "utf8");
+  assert.match(editor, /Username \/ Handle/); assert.match(editor, /Full URL/);
+  assert.match(editor, /aria-pressed=/); assert.match(editor, /socialSaveBlocked/);
+  assert.match(editor, /Complete or remove invalid social links/); assert.match(editor, /Remove duplicate destinations/);
+  assert.match(editor, /autoEnableEligible/); assert.match(editor, /disabled=\{addedByOther\}/);
+  assert.doesNotMatch(editor, /settings\.socials\.map\([^)]*autoEnableEligible/);
+});
+
+test("notification-related files remain outside the feature diff", async () => {
+  const editor = await readFile(new URL("../src/components/OneLinkEditor.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(editor, /OneSignal|api\/notifications|notify-message/);
 });

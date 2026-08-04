@@ -110,3 +110,30 @@ export function findDuplicateOneLinkSocialPlatforms(socials) {
   }
   return new Set([...counts].filter(([, count]) => count > 1).map(([platform]) => platform));
 }
+
+/** @param {number} currentIndex @param {"next"|"previous"|"first"|"last"} direction @param {number[]} enabledIndices @param {number} total */
+export function getNextOneLinkSocialPickerIndex(currentIndex, direction, enabledIndices, total) {
+  const enabled = [...new Set((enabledIndices || []).filter((index) => Number.isInteger(index) && index >= 0 && index < total))].sort((a, b) => a - b);
+  if (!enabled.length) return -1;
+  if (direction === "first") return enabled[0];
+  if (direction === "last") return enabled[enabled.length - 1];
+  const position = enabled.indexOf(currentIndex);
+  if (position < 0) return direction === "next" ? enabled[0] : enabled[enabled.length - 1];
+  return enabled[(position + (direction === "next" ? 1 : -1) + enabled.length) % enabled.length];
+}
+
+/**
+ * Apply the first-valid enablement rule without persisting editor-only state.
+ * @param {{currentEnabled?: boolean, autoEnableEligible?: boolean, valid: boolean}} state
+ * @returns {{enabled: boolean, autoEnableEligible: boolean}}
+ */
+export function resolveOneLinkSocialEnablement({ currentEnabled = false, autoEnableEligible = false, valid }) {
+  if (!valid) return { enabled: false, autoEnableEligible };
+  if (autoEnableEligible) return { enabled: true, autoEnableEligible: false };
+  return { enabled: Boolean(currentEnabled), autoEnableEligible: false };
+}
+
+/** @param {boolean} checked @returns {{enabled: boolean, autoEnableEligible: boolean}} */
+export function applyManualOneLinkSocialEnablement(checked) {
+  return { enabled: Boolean(checked), autoEnableEligible: false };
+}

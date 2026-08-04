@@ -73,8 +73,11 @@ import {
 import {
   buildOneLinkSocialUrl,
   findDuplicateOneLinkSocialUrls,
+  getNextOneLinkSocialPickerIndex,
   getOneLinkSocialPreset,
   parseOneLinkSocialUrl,
+  resolveOneLinkSocialEnablement,
+  applyManualOneLinkSocialEnablement,
   supportsOneLinkSocialHandle,
 } from "../../shared/onelinkSocialPresets.js";
 
@@ -109,7 +112,7 @@ interface OneLinkEditorProps {
 }
 
 type SocialInputMode = "preset" | "url";
-type SocialEditorState = Record<string, { mode: SocialInputMode; input: string }>;
+type SocialEditorState = Record<string, { mode: SocialInputMode; input: string; autoEnableEligible: boolean }>;
 
 type SectionId =
   | "page"
@@ -169,7 +172,7 @@ const safeErrorMessage = (error: unknown) =>
 const createSocialEditorState = (socials: OneLinkSocial[]): SocialEditorState =>
   Object.fromEntries(socials.map((social) => {
     const parsed = parseOneLinkSocialUrl(social.platform, social.url);
-    return [social.id, { mode: parsed !== null ? "preset" : "url", input: parsed ?? social.url }];
+    return [social.id, { mode: parsed !== null ? "preset" : "url", input: parsed ?? social.url, autoEnableEligible: false }];
   }));
 
 export default function OneLinkEditor({
@@ -275,7 +278,8 @@ export default function OneLinkEditor({
     };
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
-    window.requestAnimationFrame(() => socialOptionRefs.current[0]?.focus());
+    const enabled = ONE_LINK_PLATFORMS.map((platform, index) => draft.settings.socials.some((social) => social.platform === platform.id) ? -1 : index).filter((index) => index >= 0);
+    window.requestAnimationFrame(() => socialOptionRefs.current[getNextOneLinkSocialPickerIndex(0, "first", enabled, ONE_LINK_PLATFORMS.length)]?.focus());
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
@@ -602,30 +606,32 @@ export default function OneLinkEditor({
   };
 
   const updateSocialPreset = (id: string, input: string) => {
-    setSocialEditorState((current) => ({ ...current, [id]: { mode: "preset", input } }));
+    const editorState = socialEditorState[id] || { mode: "preset" as const, input: "", autoEnableEligible: false };
     const social = draft.settings.socials.find((entry) => entry.id === id);
     if (!social) return;
     const built = buildOneLinkSocialUrl(social.platform, input);
-    updateSocial(id, built.valid
-      ? { url: built.url, invalid: false, ...(social.invalid ? { enabled: true } : {}) }
-      : { url: "", invalid: true, enabled: false });
+    const enablement = resolveOneLinkSocialEnablement({ currentEnabled: social.enabled, autoEnableEligible: editorState.autoEnableEligible, valid: built.valid });
+    setSocialEditorState((current) => ({ ...current, [id]: { mode: "preset", input, autoEnableEligible: enablement.autoEnableEligible } }));
+    updateSocial(id, { url: built.valid ? built.url : "", invalid: !built.valid, enabled: enablement.enabled });
   };
 
   const updateSocialUrl = (id: string, input: string) => {
-    setSocialEditorState((current) => ({ ...current, [id]: { mode: "url", input } }));
+    const editorState = socialEditorState[id] || { mode: "url" as const, input: "", autoEnableEligible: false };
     const valid = Boolean(normalizeExternalUrl(input));
-    updateSocial(id, { url: input, invalid: !valid, ...(valid ? {} : { enabled: false }) });
+    const enablement = resolveOneLinkSocialEnablement({ currentEnabled: draft.settings.socials.find((social) => social.id === id)?.enabled, autoEnableEligible: editorState.autoEnableEligible, valid });
+    setSocialEditorState((current) => ({ ...current, [id]: { mode: "url", input, autoEnableEligible: enablement.autoEnableEligible } }));
+    updateSocial(id, { url: input, invalid: !valid, enabled: enablement.enabled });
   };
 
   const changeSocialMode = (id: string, mode: SocialInputMode) => {
     const social = draft.settings.socials.find((entry) => entry.id === id);
     if (!social) return;
-    setSocialEditorState((current) => ({ ...current, [id]: { mode, input: mode === "url" ? social.url : (parseOneLinkSocialUrl(social.platform, social.url) || "") } }));
+    setSocialEditorState((current) => ({ ...current, [id]: { mode, input: mode === "url" ? social.url : (parseOneLinkSocialUrl(social.platform, social.url) || ""), autoEnableEligible: current[id]?.autoEnableEligible || false } }));
   };
 
   const selectExistingSocialPlatform = (id: string, platform: string) => {
     if (draft.settings.socials.some((social) => social.id !== id && social.platform === platform)) return;
-    setSocialEditorState((current) => ({ ...current, [id]: { mode: supportsOneLinkSocialHandle(platform) ? "preset" : "url", input: "" } }));
+    setSocialEditorState((current) => ({ ...current, [id]: { mode: supportsOneLinkSocialHandle(platform) ? "preset" : "url", input: "", autoEnableEligible: true } }));
     updateSocial(id, { platform, url: "", invalid: true, enabled: false });
   };
 
@@ -639,7 +645,7 @@ export default function OneLinkEditor({
         { id, platform, url: "", enabled: false, invalid: true },
       ],
     }));
-    setSocialEditorState((current) => ({ ...current, [id]: { mode: supportsOneLinkSocialHandle(platform) ? "preset" : "url", input: "" } }));
+    setSocialEditorState((current) => ({ ...current, [id]: { mode: supportsOneLinkSocialHandle(platform) ? "preset" : "url", input: "", autoEnableEligible: true } }));
     setSocialPickerOpen(false);
     window.requestAnimationFrame(() => socialUrlRefs.current.get(id)?.focus());
   };
@@ -648,22 +654,12 @@ export default function OneLinkEditor({
     event: React.KeyboardEvent<HTMLButtonElement>,
     index: number,
   ) => {
-    let nextIndex = index;
-    if (event.key === "ArrowDown" || event.key === "ArrowRight") {
-      nextIndex = (index + 1) % ONE_LINK_PLATFORMS.length;
-    } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
-      nextIndex =
-        (index - 1 + ONE_LINK_PLATFORMS.length) %
-        ONE_LINK_PLATFORMS.length;
-    } else if (event.key === "Home") {
-      nextIndex = 0;
-    } else if (event.key === "End") {
-      nextIndex = ONE_LINK_PLATFORMS.length - 1;
-    } else {
-      return;
-    }
+    const enabled = ONE_LINK_PLATFORMS.map((platform, optionIndex) => draft.settings.socials.some((social) => social.platform === platform.id) ? -1 : optionIndex).filter((optionIndex) => optionIndex >= 0);
+    const direction: "next" | "previous" | "first" | "last" | null = event.key === "ArrowDown" || event.key === "ArrowRight" ? "next" : event.key === "ArrowUp" || event.key === "ArrowLeft" ? "previous" : event.key === "Home" ? "first" : event.key === "End" ? "last" : null;
+    if (!direction) return;
+    const nextIndex = getNextOneLinkSocialPickerIndex(index, direction, enabled, ONE_LINK_PLATFORMS.length);
     event.preventDefault();
-    socialOptionRefs.current[nextIndex]?.focus();
+    if (nextIndex >= 0) socialOptionRefs.current[nextIndex]?.focus();
   };
 
   const updateProject = (
@@ -1107,11 +1103,11 @@ export default function OneLinkEditor({
                               type="checkbox"
                               checked={social.enabled}
                               disabled={social.invalid}
-                              onChange={(event) =>
-                                updateSocial(social.id, {
-                                  enabled: event.target.checked,
-                                })
-                              }
+                              onChange={(event) => {
+                                const enablement = applyManualOneLinkSocialEnablement(event.target.checked);
+                                setSocialEditorState((current) => ({ ...current, [social.id]: { ...(current[social.id] || { mode: "url", input: social.url }), autoEnableEligible: false } }));
+                                updateSocial(social.id, { enabled: enablement.enabled });
+                              }}
                               className="h-4 w-4 accent-red-500"
                             />
                             Enabled
@@ -1165,11 +1161,14 @@ export default function OneLinkEditor({
                                 {getOneLinkPlatformLabel(social.platform)} (legacy)
                               </option>
                             )}
-                            {ONE_LINK_PLATFORMS.map((platform) => (
-                              <option key={platform.id} value={platform.id}>
-                                {platform.label}
-                              </option>
-                            ))}
+                            {ONE_LINK_PLATFORMS.map((platform) => {
+                              const addedByOther = draft.settings.socials.some((entry) => entry.id !== social.id && entry.platform === platform.id);
+                              return (
+                                <option key={platform.id} value={platform.id} disabled={addedByOther}>
+                                  {platform.label}{addedByOther ? " (Added)" : ""}
+                                </option>
+                              );
+                            })}
                           </select>
                         </div>
                         {social.invalid && (
@@ -1181,7 +1180,7 @@ export default function OneLinkEditor({
                           <div className="flex gap-2" role="group" aria-label="Social link input mode">
                             {(["preset", "url"] as const).map((mode) => (
                               <button key={mode} type="button" onClick={() => changeSocialMode(social.id, mode)} aria-pressed={(socialEditorState[social.id]?.mode || "url") === mode} className="rounded-lg border border-white/10 px-2.5 py-1.5 text-[10px] font-bold text-white/70 focus-visible:ring-2 focus-visible:ring-red-400">
-                                {mode === "preset" ? "Username / Handle" : "Use username instead"}
+                                {mode === "preset" ? (social.platform === "whatsapp" ? "Phone number" : "Username / Handle") : "Full URL"}
                               </button>
                             ))}
                           </div>
@@ -1200,12 +1199,12 @@ export default function OneLinkEditor({
                             else socialUrlRefs.current.delete(social.id);
                           }}
                           id={`social-input-${social.id}`}
-                          type={socialEditorState[social.id]?.mode === "preset" && social.platform === "whatsapp" ? "tel" : "text"}
+                          type={socialEditorState[social.id]?.mode === "preset" && social.platform === "whatsapp" ? "tel" : socialEditorState[social.id]?.mode === "url" ? "url" : "text"}
                           value={socialEditorState[social.id]?.input ?? social.url}
                           onChange={(event) => socialEditorState[social.id]?.mode === "preset" ? updateSocialPreset(social.id, event.target.value) : updateSocialUrl(social.id, event.target.value)}
                           maxLength={socialEditorState[social.id]?.mode === "preset" ? 64 : ONE_LINK_LIMITS.url}
-                          aria-label={getOneLinkSocialPreset(social.platform)?.label || `${social.platform} URL`}
-                          aria-describedby={social.invalid ? `social-error-${social.id}` : `social-preview-${social.id}`}
+                          aria-label={socialEditorState[social.id]?.mode === "preset" ? (social.platform === "whatsapp" ? "WhatsApp number" : getOneLinkSocialPreset(social.platform)?.label || `${social.platform} username`) : `${social.platform} URL`}
+                          aria-describedby={[social.invalid ? `social-error-${social.id}` : "", social.url && !social.invalid ? `social-preview-${social.id}` : "", duplicateSocialUrls.has(normalizeExternalUrl(social.url) || "") ? `social-duplicate-${social.id}` : "", socialEditorState[social.id]?.mode === "preset" && social.url && !parseOneLinkSocialUrl(social.platform, social.url) ? `social-preserved-${social.id}` : ""].filter(Boolean).join(" ") || undefined}
                           aria-invalid={social.invalid}
                           placeholder={socialEditorState[social.id]?.mode === "preset" ? (social.platform === "whatsapp" ? "+234 801 234 5678" : "username") : "https://example.com/you"}
                           className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none focus:border-white/30"
@@ -1213,11 +1212,17 @@ export default function OneLinkEditor({
                         {socialEditorState[social.id]?.mode === "preset" && (
                           <button type="button" onClick={() => changeSocialMode(social.id, "url")} className="text-left text-[11px] font-bold text-blue-300 underline focus-visible:ring-2 focus-visible:ring-blue-300">Paste full URL instead</button>
                         )}
+                        {socialEditorState[social.id]?.mode === "url" && supportsOneLinkSocialHandle(social.platform) && (
+                          <button type="button" onClick={() => changeSocialMode(social.id, "preset")} className="text-left text-[11px] font-bold text-blue-300 underline focus-visible:ring-2 focus-visible:ring-blue-300">Use username instead</button>
+                        )}
+                        {socialEditorState[social.id]?.mode === "preset" && social.url && !parseOneLinkSocialUrl(social.platform, social.url) && (
+                          <p id={`social-preserved-${social.id}`} className="text-[11px] text-blue-200/70">Your existing URL remains preserved until a valid username replaces it.</p>
+                        )}
                         {social.url && !social.invalid && (
                           <p id={`social-preview-${social.id}`} className="min-w-0 truncate text-[11px] text-white/55" title={social.url}>Generated link: {social.url.replace(/^https?:\/\//, "")}</p>
                         )}
                         {duplicateSocialUrls.has(normalizeExternalUrl(social.url) || "") && (
-                          <p role="alert" className="text-xs text-amber-300">This destination is duplicated by another social link.</p>
+                          <p id={`social-duplicate-${social.id}`} role="alert" className="text-xs text-amber-300">This destination is duplicated by another social link.</p>
                         )}
                       </div>
                     ))}
@@ -1577,6 +1582,12 @@ export default function OneLinkEditor({
           )}
         </div>
 
+        {socialSaveBlocked && (
+          <div role="alert" id="social-save-validation" className="border-t border-amber-300/20 bg-amber-300/5 px-4 py-2 text-xs text-amber-100/90">
+            {draft.settings.socials.some((social) => social.invalid) && <p id="social-invalid-guidance">Complete or remove invalid social links.</p>}
+            {duplicateSocialUrls.size > 0 && <p id="social-duplicate-guidance">Remove duplicate destinations.</p>}
+          </div>
+        )}
         <div className="sticky bottom-0 grid grid-cols-2 gap-3 border-t border-white/10 bg-[#0d0d11]/95 p-4 backdrop-blur">
           <button
             type="button"
