@@ -49,51 +49,6 @@ export const sendBroadcastSafely = async (channelName: string, eventName: string
   });
 };
 
-export const sendDMNotification = async (
-  otherUserId: string,
-  senderName: string,
-  messageText: string,
-  chatId: string,
-  messageType: string
-) => {
-  try {
-    const preview = messageType === "image" ? "📷 Photo" :
-      messageType === "sticker" ? "😄 Sticker" :
-      messageText.slice(0, 60);
-
-    const res = await fetch("/api/notifications?action=notify-message", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messageId: otherUserId,
-        ignored: true,
-      })
-    });
-    const data = await res.json();
-    console.log("[dm-notif] result:", data);
-
-    if (data.playerIds === 0) {
-      console.log("[dm-notif] no push sub for:", otherUserId,
-        "— badge only fallback");
-      // Increment unread count as fallback
-      const { data: chat } = await supabase
-        .from("chats")
-        .select("unread_count")
-        .eq("id", chatId)
-        .single();
-
-      await supabase
-        .from("chats")
-        .update({ 
-          unread_count: (chat?.unread_count || 0) + 1 
-        })
-        .eq("id", chatId);
-    }
-  } catch (e) {
-    console.error("[dm-notif] error:", e);
-  }
-};
-
 export interface ChatMessage {
   id?: string;
   chatId: string;

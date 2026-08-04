@@ -1029,28 +1029,14 @@ export function PublicPortfolio({
     try {
       const fp = generateFingerprint();
       if (!previewMode) {
-        const { data: reactionRecord } = await supabase.rpc("vp_add_reaction", {
+        await supabase.rpc("vp_add_reaction", {
           p_item_id: itemId,
           p_portfolio_id: portfolio.id,
           p_reaction_type: reactionType,
           p_fingerprint: fp,
         });
 
-        if (!isSelected) {
-          const reactionObj = (
-            CATEGORY_REACTIONS[portfolio.category] || []
-          ).find((r) => r.type === reactionType);
-          fetch("/api/notifications?action=notify-portfolio-reaction", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              reactionId: typeof reactionRecord === "object" ? reactionRecord?.id : reactionRecord,
-              title: `${reactionObj?.emoji || "✨"} New Reaction`,
-              body: `Someone reacted ${reactionObj?.emoji || ""} ${reactionObj?.label || reactionType} to project in your portfolio`,
-              url: `/portfolio/${portfolio.id}/edit?tab=analytics`,
-            }),
-          }).catch((err) => console.error("Notification silent fail:", err));
-        }
+        // External portfolio-reaction push is intentionally deferred until the persisted reaction-event contract is verified.
       }
     } catch (err) {
       console.error("Reaction failed:", err);

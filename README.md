@@ -43,6 +43,10 @@ the App API Key. Add the variables to Production and Preview and redeploy after
 changing Vercel variables. Keep `ONESIGNAL_REST_API_KEY` only as a temporary
 fallback during migration, then remove it after production verification.
 
+The scheduled `/api/bookings?action=notify-expiring` path also requires the
+server-only variable `CRON_SECRET`. Store it in Vercel Production and Preview
+without placing its value in source control.
+
 3. **Running the Application**:
    To start the development server:
    ```bash

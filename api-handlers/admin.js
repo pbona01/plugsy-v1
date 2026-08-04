@@ -10,6 +10,7 @@ import { requireVerifiedClerkUser } from "../api/_clerkAuth.js";
 import { clerkClient } from "@clerk/clerk-sdk-node";
 import { reconcileWalletFunding } from "../api/_walletFundingWebhook.js";
 import { deterministicEventUuid, sendOneSignal } from "../api/_oneSignal.js";
+import { resolveCanonicalClerkId } from "../api/_recipient.js";
 import {
   AdminOverviewFailure,
   buildOverviewMetrics,
@@ -639,37 +640,11 @@ async function handleSendLoginEmail(req, res) {
 
     // STEP 5: OneSignal push notification (isolated)
     try {
-      console.log("[send-login] sending push notification...")
-      await sendOneSignal({
-        title: "Your login is ready",
-        body: "Your login details are ready. Check your Plugsy messages.",
-        url: "/dashboard/messages",
-        targeting: { include_aliases: { external_id: [order.user_id] } },
-        requestKey: deterministicEventUuid("login-ready", order.id),
-      });
-      return res.status(200).json({ success: true, message: "Login sent" });
-      const pushRes = await fetch("data:text/plain,removed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: order.user_id,
-          title: "🔑 Your login is ready!",
-          body: "Your " + (order.product_name || "CapCut Pro") + 
-            " login has been sent. Check your messages.",
-          url: "/dashboard/messages",
-          tag: "login-sent-" + orderId
-        })
-      })
-      const pushData = await pushRes.json()
-      console.log("[send-login] push response status:", pushRes.status)
-      
-      if (pushData.playerIds === 0) {
-        console.warn("[send-login] ⚠️ user has no push subscription")
-      } else {
-        console.log("[send-login] ✅ push sent")
-      }
+      const recipient = await resolveCanonicalClerkId(supabase, order.user_id, order.user_email);
+      if (recipient) await sendOneSignal({ title: "Your login is ready", body: "Your login details are ready. Check your Plugsy messages.", url: "/dashboard/messages", targeting: { include_aliases: { external_id: [recipient] } }, requestKey: deterministicEventUuid("login-ready", order.id) });
+      else console.warn("[send-login] push skipped", { code: "RECIPIENT_UNRESOLVED" });
     } catch {
-      console.error("[send-login] push delivery crashed", { orderId })
+      console.warn("[send-login] push delivery failed", { code: "PUSH_SECONDARY_EFFECT_FAILED" })
     }
 
     console.log("[send-login] ============ ALL STEPS COMPLETE ============")

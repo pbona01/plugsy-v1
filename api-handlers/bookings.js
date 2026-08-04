@@ -1,7 +1,9 @@
 import { createClient } from "@supabase/supabase-js"
 import { Resend } from "resend"
+import { timingSafeEqual } from "node:crypto"
 import { resolveOrCreateSupportChat } from "./_supportChats.js"
 import { deterministicEventUuid, sendOneSignal } from "../api/_oneSignal.js";
+import { resolveCanonicalClerkId } from "../api/_recipient.js";
 
 const resend = new Resend(process.env.RESEND_API_KEY || "re_mock_key")
 
@@ -21,12 +23,16 @@ async function insertSupportTimelineMessage(supabase, order, messageData) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*")
-  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type")
-  if (req.method === "OPTIONS") return res.status(200).end()
-
-  if (req.method !== "POST" && req.method !== "GET") return res.status(405).end()
+  res.setHeader("Cache-Control", "no-store")
+  const urlObj = new URL(req.originalUrl || req.url || "/", `http://${req.headers?.host || 'localhost'}`);
+  const action = req.query?.action || urlObj.searchParams.get("action");
+  if (action === "notify-expiring") {
+    const expected = String(process.env.CRON_SECRET || "");
+    const supplied = String(req.headers?.authorization || "");
+    const actual = supplied.startsWith("Bearer ") ? supplied.slice(7) : "";
+    const valid = expected && actual && expected.length === actual.length && timingSafeEqual(Buffer.from(expected), Buffer.from(actual));
+    if (req.method !== "GET" || !valid) return res.status(expected ? 401 : 503).json({ success: false, code: expected ? "CRON_UNAUTHORIZED" : "CRON_NOT_CONFIGURED" });
+  } else if (req.method !== "POST" && req.method !== "GET") return res.status(405).end()
   
   try {
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -47,9 +53,6 @@ export default async function handler(req, res) {
     if (error) return res.status(500).json({ error: error.message })
     
     // Add new notify-expiring action
-    const urlObj = new URL(req.originalUrl || req.url || "/", `http://${req.headers?.host || 'localhost'}`);
-    const action = req.query?.action || urlObj.searchParams.get("action");
-
     if (action === "notify-expiring") {
       try {
         const now = new Date()
@@ -79,24 +82,8 @@ export default async function handler(req, res) {
             .toLocaleDateString("en-NG", { day: "numeric", month: "long" })
 
           // Send push notification as a contained secondary effect.
-          await sendOneSignal({ title: `Your ${order.product_name || "subscription"} expires soon`, body: "Your subscription expires soon. Renew now to keep access.", url: "/dashboard", targeting: { include_aliases: { external_id: [order.user_id] } }, requestKey: deterministicEventUuid("expiry-warning", order.id) });
-          if (false) await fetch(
-            (process.env.NEXT_PUBLIC_SITE_URL || "https://www.plugsy.ng") +
-            "/api/notifications?action=removed",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                userId: order.user_id,
-                title: `⏰ Your ${order.product_name || "subscription"} expires soon`,
-                body: "Your subscription expires on " + expiryDate +
-                  ". Renew now to keep access.",
-                url: "/dashboard",
-                tag: "expiry-warning-" + order.id
-              })
-            }
-          ).catch(e => console.error("[expiry-notify] push error:", e.message))
-
+          const recipient = await resolveCanonicalClerkId(supabase, order.user_id, order.user_email);
+          if (recipient) await sendOneSignal({ title: `Your ${order.product_name || "subscription"} expires soon`, body: `Your subscription expires on ${expiryDate}. Renew now to keep access.`, url: "/dashboard", targeting: { include_aliases: { external_id: [recipient] } }, requestKey: deterministicEventUuid("expiry-warning", `${order.id}:${order.subscription_expires_at}`) });
           // Send chat message so they see it in the app
           try {
             await insertSupportTimelineMessage(supabase, order, {
@@ -186,23 +173,8 @@ export default async function handler(req, res) {
 
         for (const order of expiredToday || []) {
           // Send push notification as a contained secondary effect.
-          await sendOneSignal({ title: `Your ${order.product_name || "subscription"} has expired`, body: "Your subscription ended today. Renew now to restore access.", url: "/dashboard", targeting: { include_aliases: { external_id: [order.user_id] } }, requestKey: deterministicEventUuid("expired", order.id) });
-          if (false) await fetch(
-            (process.env.NEXT_PUBLIC_SITE_URL || "https://www.plugsy.ng") +
-            "/api/notifications?action=removed",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                userId: order.user_id,
-                title: `🔴 Your ${order.product_name || "subscription"} has expired`,
-                body: "Your subscription ended today. Renew now to restore access.",
-                url: "/dashboard",
-                tag: "expired-" + order.id
-              })
-            }
-          ).catch(e => console.error("[expiry-notify] push error:", e.message))
-
+          const recipient = await resolveCanonicalClerkId(supabase, order.user_id, order.user_email);
+          if (recipient) await sendOneSignal({ title: `Your ${order.product_name || "subscription"} has expired`, body: "Your subscription ended today. Renew now to restore access.", url: "/dashboard", targeting: { include_aliases: { external_id: [recipient] } }, requestKey: deterministicEventUuid("expired", `${order.id}:${order.subscription_expires_at}`) });
           // Send chat message so they see it in the app
           try {
             await insertSupportTimelineMessage(supabase, order, {

@@ -10,14 +10,14 @@ const restore = () => { process.env = { ...originalEnv }; global.fetch = origina
 test("uses current OneSignal endpoint and Key authentication", async () => {
   process.env.ONESIGNAL_APP_ID = "app"; process.env.ONESIGNAL_APP_API_KEY = "preferred"; delete process.env.ONESIGNAL_REST_API_KEY;
   let request;
-  global.fetch = async (url, options) => { request = { url, options }; return new Response(JSON.stringify({ id: "message-1" }), { status: 200 }); };
+  global.fetch = async (url, options) => { request = { url, options }; return new Response(JSON.stringify({ id: "11111111-1111-5111-8111-111111111111" }), { status: 200 }); };
   const result = await sendOneSignal({ title: "Title", body: "Body", url: "/dashboard", targeting: { included_segments: ["Subscribed Users"] } });
   assert.equal(result.ok, true); assert.equal(request.url, "https://api.onesignal.com/notifications"); assert.equal(request.options.headers.Authorization, "Key preferred"); assert.match(request.options.body, /"target_channel":"push"/); restore();
 });
 
 test("prefers App API key and reports fallback without exposing it", () => {
   process.env.ONESIGNAL_APP_ID = "app"; process.env.ONESIGNAL_APP_API_KEY = "preferred"; process.env.ONESIGNAL_REST_API_KEY = "deprecated";
-  const configuration = getOneSignalConfiguration(); assert.equal(configuration.appApiKey, "preferred"); assert.equal(configuration.deprecatedKeyFallbackActive, false); assert.equal(JSON.stringify(configuration).includes("preferred"), true); restore();
+  const configuration = getOneSignalConfiguration(); assert.equal(configuration.appApiKey, undefined); assert.equal(configuration.deprecatedKeyFallbackActive, false); assert.equal(JSON.stringify(configuration).includes("preferred"), false); restore();
 });
 
 test("maps provider outcomes safely", async () => {
@@ -37,7 +37,7 @@ test("uses JSON idempotency and rejects invalid UUIDs", async () => {
   process.env.ONESIGNAL_APP_ID = "app"; process.env.ONESIGNAL_APP_API_KEY = "key";
   assert.equal(deterministicEventUuid("message", "m1"), deterministicEventUuid("message", "m1"));
   assert.notEqual(deterministicEventUuid("message", "m1"), deterministicEventUuid("message", "m2"));
-  global.fetch = async (_url, options) => { const payload = JSON.parse(options.body); assert.equal(payload.idempotency_key, deterministicEventUuid("message", "m1")); assert.equal(options.headers["Idempotency-Key"], undefined); return new Response(JSON.stringify({ id: "accepted" }), { status: 200 }); };
+  global.fetch = async (_url, options) => { const payload = JSON.parse(options.body); assert.equal(payload.idempotency_key, deterministicEventUuid("message", "m1")); assert.equal(options.headers["Idempotency-Key"], undefined); return new Response(JSON.stringify({ id: deterministicEventUuid("message", "m1") }), { status: 200 }); };
   const result = await sendOneSignal({ title: "Title", body: "Body", url: "/dashboard", targeting: { include_aliases: { external_id: ["user_abc"] } }, requestKey: deterministicEventUuid("message", "m1") });
   assert.equal(result.ok, true);
   assert.equal((await sendOneSignal({ title: "Title", body: "Body", url: "/dashboard", targeting: { included_segments: ["Subscribed Users"] }, requestKey: "not-a-uuid" })).code, "ONESIGNAL_REQUEST_REJECTED"); restore();
@@ -50,6 +50,32 @@ test("does not return provider identifiers on failure", async () => {
   assert.equal(result.code, "ONESIGNAL_REQUEST_REJECTED"); assert.equal(JSON.stringify(result).includes("secret-sub"), false); assert.equal(JSON.stringify(result).includes("user_secret"), false); restore();
 });
 
+test("classifies provider response shapes without leaking identifiers", async () => {
+  process.env.ONESIGNAL_APP_ID = "app"; process.env.ONESIGNAL_APP_API_KEY = "key";
+  for (const response of [new Response("not-json", { status: 200 }), new Response("null", { status: 200 }), new Response("[]", { status: 200 }), new Response(JSON.stringify({ id: "not-a-uuid" }), { status: 200 })]) {
+    global.fetch = async () => response;
+    assert.equal((await sendOneSignal({ title: "a", body: "b", url: "/dashboard", targeting: { included_segments: ["Subscribed Users"] } })).code, "ONESIGNAL_INVALID_RESPONSE");
+  }
+  global.fetch = async () => new Response(JSON.stringify({ id: "" }), { status: 200 });
+  assert.equal((await sendOneSignal({ title: "a", body: "b", url: "/dashboard", targeting: { included_segments: ["Subscribed Users"] } })).code, "ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS");
+  restore();
+});
+
+test("deferred reaction push has no guessed endpoint and calls remain authenticated", async () => {
+  const [api, portfolio, calls, cron] = await Promise.all([
+    readFile(new URL("../api/notifications.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/pages/PublicPortfolio.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../api-handlers/calls.js", import.meta.url), "utf8"),
+    readFile(new URL("../api-handlers/bookings.js", import.meta.url), "utf8"),
+  ]);
+  assert.doesNotMatch(api, /portfolio_reactions|notify-portfolio-reaction/);
+  assert.doesNotMatch(portfolio, /notify-portfolio-reaction/);
+  assert.match(portfolio, /vp_add_reaction/);
+  assert.match(calls, /requireVerifiedClerkUser/);
+  assert.doesNotMatch(calls, /Access-Control-Allow-Origin/);
+  assert.match(cron, /CRON_SECRET/);
+});
+
 test("transactional source paths use derived authenticated actions", async () => {
   const [api, admin, chat, portfolio, dashboard] = await Promise.all([
     readFile(new URL("../api/notifications.js", import.meta.url), "utf8"),
@@ -59,14 +85,14 @@ test("transactional source paths use derived authenticated actions", async () =>
     readFile(new URL("../src/pages/Dashboard.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(api, /action === "notify-message"/);
-  assert.match(api, /action === "notify-portfolio-reaction"/);
+  assert.doesNotMatch(api, /notify-portfolio-reaction/);
   assert.match(api, /message\.sender_id !== actor\.userId/);
   assert.match(api, /deterministicEventUuid\("message", message\.id\)/);
   assert.match(admin, /sendOneSignal\(/);
   assert.doesNotMatch(admin, /api\/notifications\?action=.*send/);
   assert.match(chat, /action=notify-message/);
-  assert.match(portfolio, /action=notify-portfolio-reaction/);
-  assert.match(dashboard, /action=send-test-to-self/);
+  assert.doesNotMatch(portfolio, /notify-portfolio-reaction/);
+  assert.match(dashboard, /requestOneSignalPermission/);
   assert.doesNotMatch(chat, /action=unavailable/);
 });
 

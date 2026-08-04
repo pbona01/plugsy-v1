@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { useUser } from "@clerk/clerk-react";
+import { useAuth, useUser } from "@clerk/clerk-react";
 import toast from "react-hot-toast";
-import { isSubscribed, requestNotificationPermission, getOneSignalState } from "@/utils/onesignal";
+import { isSubscribed, requestNotificationPermission, getOneSignalState, initOneSignal } from "@/utils/onesignal";
 
 export default function NotificationBell() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [blocked, setBlocked] = useState(false);
@@ -12,7 +13,10 @@ export default function NotificationBell() {
 
   const refresh = async () => {
     if (!user) return;
-    setSdkState(getOneSignalState());
+    const generation = user.id;
+    const resolved = await initOneSignal();
+    if (!user || generation !== user.id) return;
+    setSdkState(resolved);
     if (await isSubscribed()) { setVisible(false); return; }
     setBlocked(typeof Notification !== "undefined" && Notification.permission === "denied");
     setVisible(!localStorage.getItem("notif_dismissed_onesignal"));
@@ -25,9 +29,9 @@ export default function NotificationBell() {
     const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as any).standalone === true;
     if (isIOS && !standalone) { toast.error("Add Plugsy to your Home Screen before enabling alerts on iOS."); return; }
     setLoading(true);
-    const ok = await requestNotificationPermission(user.id);
+    const result = await requestNotificationPermission(user.id, await getToken());
     setLoading(false);
-    if (ok) { setVisible(false); toast.success("Notifications enabled."); }
+    if (result.active) { setVisible(false); toast.success(result.registered ? "Notifications enabled." : "Notifications active; account registration needs repair."); }
     else if (typeof Notification !== "undefined" && Notification.permission === "denied") { setBlocked(true); toast.error("Notifications are blocked. Change the browser site setting to enable them."); }
     else if (getOneSignalState() === "failed") toast.error("Alerts could not be initialized. Please try again later.");
     else toast.error("No active push subscription was confirmed. Try Repair Alerts.");

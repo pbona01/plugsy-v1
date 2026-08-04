@@ -15,7 +15,7 @@ export const deterministicEventUuid = (namespace, eventId) => {
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-${variant}${digest.slice(18, 20)}-${digest.slice(20, 32)}`;
 };
 
-export const getOneSignalConfiguration = () => {
+const getPrivateConfiguration = () => {
   const appId = text(process.env.ONESIGNAL_APP_ID);
   const appApiKey = text(process.env.ONESIGNAL_APP_API_KEY) || text(process.env.ONESIGNAL_REST_API_KEY);
   return {
@@ -28,8 +28,13 @@ export const getOneSignalConfiguration = () => {
   };
 };
 
+export const getOneSignalConfiguration = () => {
+  const config = getPrivateConfiguration();
+  return { appIdConfigured: config.appIdConfigured, appApiKeyConfigured: config.appApiKeyConfigured, configured: config.configured, deprecatedKeyFallbackActive: config.deprecatedKeyFallbackActive };
+};
+
 export const safeConfigurationStatus = () => {
-  const config = getOneSignalConfiguration();
+  const config = getPrivateConfiguration();
   return {
     success: true,
     configured: config.configured,
@@ -77,7 +82,7 @@ export const buildOneSignalPayload = ({ title, body, url, targeting, idempotency
   if (!validTitle || !validBody) throw new Error("NOTIFICATION_CONTENT_INVALID");
   if (idempotencyKey !== undefined && !isUuid(idempotencyKey)) throw new Error("ONESIGNAL_IDEMPOTENCY_INVALID");
   const payload = {
-    app_id: getOneSignalConfiguration().appId,
+    app_id: getPrivateConfiguration().appId,
     target_channel: "push",
     headings: { en: validTitle },
     contents: { en: validBody },
@@ -101,7 +106,7 @@ export const mapOneSignalFailure = (status, network = false) => {
 };
 
 export async function sendOneSignal({ title, body, url, targeting, requestKey = undefined }) {
-  const config = getOneSignalConfiguration();
+  const config = getPrivateConfiguration();
   if (!config.configured) return { ok: false, code: "ONESIGNAL_CONFIGURATION_UNAVAILABLE" };
   let payload;
   try { payload = buildOneSignalPayload({ title, body, url, targeting, idempotencyKey: requestKey }); }
@@ -122,8 +127,10 @@ export async function sendOneSignal({ title, body, url, targeting, requestKey = 
     let data = null;
     try { data = await response.json(); } catch { data = null; }
     if (!response.ok) return { ok: false, code: mapOneSignalFailure(response.status) };
-    const id = text(data?.id || data?.message_id);
-    if (!id) return { ok: false, code: "ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS" };
+    if (!data || typeof data !== "object" || Array.isArray(data)) return { ok: false, code: "ONESIGNAL_INVALID_RESPONSE" };
+    const id = text(data.id);
+    if (id === "") return { ok: false, code: "ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS" };
+    if (!isUuid(id)) return { ok: false, code: "ONESIGNAL_INVALID_RESPONSE" };
     return { ok: true, code: "ONESIGNAL_ACCEPTED", messageId: id };
   } catch {
     return { ok: false, code: mapOneSignalFailure(0, true) };

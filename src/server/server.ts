@@ -51,6 +51,7 @@ import { PassThrough } from "stream";
 import { requireVerifiedClerkUser } from "../../api/_clerkAuth.js";
 import { syncVerifiedClerkProfile } from "../../api/_profileSync.js";
 import { sendOneSignal } from "../../api/_oneSignal.js";
+import { resolveCanonicalClerkId } from "../../api/_recipient.js";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -77,7 +78,8 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
 
 async function sendLocalPush(userId: string, title: string, body: string, url: string = "/dashboard", tag: string = "plugsy") {
   try {
-    await sendOneSignal({ title, body, url, targeting: { include_aliases: { external_id: [userId] } } });
+    const recipient = await resolveCanonicalClerkId(supabase, userId);
+    if (recipient) await sendOneSignal({ title, body, url, targeting: { include_aliases: { external_id: [recipient] } } });
   } catch (e) {
     console.error("[push] transactional notification failed safely");
   }
@@ -85,7 +87,9 @@ async function sendLocalPush(userId: string, title: string, body: string, url: s
 
 async function sendLocalPushToAdmins(title: string, body: string, url: string = "/admin", tag: string = "admin-notif") {
   try {
-    await sendOneSignal({ title, body, url, targeting: { filters: [{ field: "tag", key: "user_role", relation: "=", value: "admin" }] } });
+    const { data: profiles } = await supabase.from("profiles").select("clerk_id").eq("role", "admin");
+    const recipients = [...new Set((await Promise.all((profiles || []).map((profile) => resolveCanonicalClerkId(supabase, profile.clerk_id)))).filter(Boolean))].slice(0, 2000);
+    if (recipients.length) await sendOneSignal({ title, body, url, targeting: { include_aliases: { external_id: recipients } } });
   } catch (e) {
     console.error("[push] admin notification failed safely");
   }

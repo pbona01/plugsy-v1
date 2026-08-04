@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react"
 import { supabase } from "@/lib/supabase"
 import { ringtonePlayer } from "@/utils/ringtones"
-import { useUser } from "@clerk/clerk-react"
+import { useAuth, useUser } from "@clerk/clerk-react"
 import IncomingCallScreen from "@/components/calls/IncomingCallScreen"
 import OutgoingCallScreen from "@/components/calls/OutgoingCallScreen"
 import ActiveCallScreen from "@/components/calls/ActiveCallScreen"
@@ -44,6 +44,7 @@ export const useCall = () => {
 const RING_TIMEOUT_MS = 45000 // auto-miss after 45 seconds
 
 export const CallProvider = ({ children }: { children: ReactNode }) => {
+  const { getToken } = useAuth()
   const { user } = useUser()
   const [incomingCall, setIncomingCall] = useState<CallState | null>(null)
   const [outgoingCall, setOutgoingCall] = useState<CallState | null>(null)
@@ -253,11 +254,8 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
       const res = await fetch("/api/calls?action=create-room", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chatId, hostId: user?.id, hostName, hostAvatar,
-          calleeId, chatName, callType
-        })
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
+        body: JSON.stringify({ chatId, callType })
       })
       const data = await res.json()
 
@@ -325,12 +323,8 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
     await fetch("/api/calls?action=end-call", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        callId: outgoingCall.id,
-        chatId: outgoingCall.chatId,
-        roomName: outgoingCall.roomName
-      })
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
+      body: JSON.stringify({ callId: outgoingCall.id })
     })
 
     setOutgoingCall(null)
@@ -342,12 +336,8 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
     await fetch("/api/calls?action=end-call", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        callId: activeCall.id,
-        chatId: activeCall.chatId,
-        roomName: activeCall.roomName
-      })
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
+      body: JSON.stringify({ callId: activeCall.id })
     })
 
     setActiveCall(null)

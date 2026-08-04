@@ -623,56 +623,9 @@ export default function Dashboard() {
                           if (!user) return;
                           toast.loading("Repairing connection...", { id: "repair-notif" });
                           try {
-                            const repaired = await requestOneSignalPermission(user.id);
-                            if (!repaired) throw new Error("No active push subscription was confirmed");
-                            toast.success("Notifications repaired successfully!", { id: "repair-notif" });
-                            return;
-                            const OneSignal = (window as any).OneSignal;
-                            if (!OneSignal) throw new Error("OneSignal SDK not loaded");
-
-                            await OneSignal.Notifications.requestPermission();
-                            await new Promise(r => setTimeout(r, 3000));
-
-                            let playerId = OneSignal.User?.PushSubscription?.id;
-                            if (!playerId && typeof OneSignal.getUserId === "function") {
-                              playerId = await OneSignal.getUserId();
-                            }
-
-                            if (!playerId) throw new Error("Could not retrieve OneSignal ID");
-
-                            const { data: profile } = await supabase
-                              .from("profiles")
-                              .select("role")
-                              .eq("clerk_id", user.id)
-                              .single();
-
-                            const userRole = profile?.role || "user";
-
-                            await supabase.from("push_subscriptions").upsert({
-                              user_id: user.id,
-                              user_role: userRole,
-                              onesignal_player_id: playerId,
-                              subscription: { playerId },
-                              updated_at: new Date().toISOString()
-                            }, { onConflict: "user_id" });
-
-                            if (typeof OneSignal.login === "function") await OneSignal.login(user.id);
-                            if (OneSignal.User?.addTag) await OneSignal.User.addTag("user_role", userRole);
-
-                            localStorage.setItem("onesignal_subscribed", "true");
-                            toast.success("Notifications repaired successfully!", { id: "repair-notif" });
-                            
-                            // Send test
-                            fetch("/api/notifications?action=send-test-to-self", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
-                              body: JSON.stringify({
-                                requestKey: crypto.randomUUID(),
-                                title: "🔄 Connection Repaired",
-                                body: "Your notification link is now healthy.",
-                                url: "/dashboard"
-                              })
-                            });
+                            const repaired = await requestOneSignalPermission(user.id, await getToken());
+                            if (!repaired.active) throw new Error(repaired.code);
+                            toast.success(repaired.registered ? "Notifications repaired successfully!" : "Alerts are active; registration needs repair.", { id: "repair-notif" });
                           } catch (err: any) {
                             toast.error("Repair failed: " + err.message, { id: "repair-notif" });
                           }

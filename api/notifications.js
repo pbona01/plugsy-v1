@@ -1,7 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
+import { clerkClient } from "@clerk/clerk-sdk-node";
 import { randomUUID } from "node:crypto";
 import { requireVerifiedClerkAdmin, requireVerifiedClerkUser } from "./_clerkAuth.js";
 import { deterministicEventUuid, safeConfigurationStatus, sendOneSignal } from "./_oneSignal.js";
+import { canonicalClerkId, resolveCanonicalClerkId } from "./_recipient.js";
 
 const actionOf = (req) => {
   const parsed = new URL(req.originalUrl || req.url || "/", `http://${req.headers?.host || "localhost"}`);
@@ -44,6 +46,21 @@ async function requireAdmin(req, res, supabase) {
   return requireVerifiedClerkAdmin(req, res, supabase);
 }
 
+async function verifiedSegmentRecipients(supabase, segment) {
+  const { data, error } = await supabase.from("push_subscriptions").select("user_id").not("onesignal_player_id", "is", null);
+  if (error) return { error: true, ids: [] };
+  const candidates = [...new Set(await Promise.all((data || []).map((row) => resolveCanonicalClerkId(supabase, row.user_id))))].filter(Boolean);
+  const ids = [];
+  for (const id of candidates) {
+    const { data: profile } = await supabase.from("profiles").select("role").eq("clerk_id", id).maybeSingle();
+    let clerkAdmin = false;
+    try { const user = await clerkClient.users.getUser(id); clerkAdmin = String(user?.publicMetadata?.role || user?.public_metadata?.role || "").toLowerCase() === "admin"; } catch { /* profile verification remains authoritative when Clerk lookup is unavailable */ }
+    const admin = String(profile?.role || "").toLowerCase() === "admin" || clerkAdmin;
+    if ((segment === "admin" && admin) || (segment === "user" && !admin)) ids.push(id);
+  }
+  return { error: false, ids: [...new Set(ids)].slice(0, 2000) };
+}
+
 async function notifyMessage(req, res, supabase) {
   if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
   const actor = await requireVerifiedClerkUser(req, res);
@@ -52,6 +69,7 @@ async function notifyMessage(req, res, supabase) {
   if (!messageId || messageId.length > 128) return fail(res, 400, "MESSAGE_ID_INVALID", "Message identity is invalid.");
   const { data: message, error: messageError } = await supabase.from("messages").select("id,chat_id,sender_id,sender_role,sender_name,content,message_type,attachment_type,created_at").eq("id", messageId).maybeSingle();
   if (messageError || !message) return fail(res, 404, "MESSAGE_NOT_FOUND", "Message was not found.");
+  if (!recentEnough(message.created_at)) return fail(res, 409, "MESSAGE_TOO_OLD", "This message is no longer eligible for notification delivery.");
   if (message.sender_id !== actor.userId) return fail(res, 403, "MESSAGE_SENDER_REQUIRED", "Only the message sender can request delivery.");
   const { data: chat, error: chatError } = await supabase.from("chats").select("id,chat_type,user_id,name").eq("id", message.chat_id).maybeSingle();
   if (chatError || !chat) return fail(res, 404, "CHAT_NOT_FOUND", "Chat was not found.");
@@ -61,12 +79,17 @@ async function notifyMessage(req, res, supabase) {
   const memberIds = [...new Set((memberships || []).map((row) => actorId(row.user_id)).filter(Boolean))];
   if (chat.chat_type === "support" || !chat.chat_type) {
     if (message.sender_role === "user") {
-      if (chat.user_id !== actor.userId) return fail(res, 403, "CHAT_MEMBERSHIP_REQUIRED", "Chat membership is required.");
-      const result = await sendOneSignal({ title: "New message from a Plugsy user", body: messageText(message), url: "/admin/chats", targeting: { filters: [{ field: "tag", key: "user_role", relation: "=", value: "admin" }] }, requestKey: deterministicEventUuid("message", message.id) });
+      const owner = await resolveCanonicalClerkId(supabase, chat.user_id);
+      if (owner !== actor.userId) return fail(res, 403, "CHAT_MEMBERSHIP_REQUIRED", "Chat membership is required.");
+      const admins = await verifiedSegmentRecipients(supabase, "admin");
+      if (admins.error) return fail(res, 503, "RECIPIENT_LOOKUP_FAILED", "Notification recipients are temporarily unavailable.");
+      if (!admins.ids.length) return safeOutcome(res, { ok: false, code: "ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS" });
+      const result = await sendOneSignal({ title: "New message from a Plugsy user", body: messageText(message), url: "/admin/chats", targeting: { include_aliases: { external_id: admins.ids } }, requestKey: deterministicEventUuid("message", message.id) });
       return safeOutcome(res, result);
     }
-    if (String(actorProfile?.role || "").toLowerCase() !== "admin" && message.sender_role !== "bot") return fail(res, 403, "ADMIN_REQUIRED", "Admin access is required.");
-    const owner = actorId(chat.user_id);
+    const clerkAdmin = String(actor.clerkUser?.publicMetadata?.role || actor.clerkUser?.public_metadata?.role || "").toLowerCase() === "admin";
+    if (String(actorProfile?.role || "").toLowerCase() !== "admin" && !clerkAdmin) return fail(res, 403, "ADMIN_REQUIRED", "Admin access is required.");
+    const owner = await resolveCanonicalClerkId(supabase, chat.user_id);
     if (!owner) return fail(res, 200, "ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS", "No eligible subscribers were found.");
     const result = await sendOneSignal({ title: "New message from Plugsy", body: messageText(message), url: "/dashboard/messages", targeting: { include_aliases: { external_id: [owner] } }, requestKey: deterministicEventUuid("message", message.id) });
     return safeOutcome(res, result);
@@ -78,26 +101,12 @@ async function notifyMessage(req, res, supabase) {
   return safeOutcome(res, result);
 }
 
-async function notifyReaction(req, res, supabase) {
-  if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
-  const reactionId = String(bodyOf(req).reactionId || "").trim();
-  if (!reactionId || reactionId.length > 128) return fail(res, 400, "REACTION_ID_INVALID", "Reaction identity is invalid.");
-  const { data: reaction, error: reactionError } = await supabase.from("portfolio_reactions").select("id,portfolio_id,reaction_type,created_at").eq("id", reactionId).maybeSingle();
-  if (reactionError || !reaction || !recentEnough(reaction.created_at)) return fail(res, 404, "REACTION_NOT_FOUND", "Reaction was not found.");
-  const { data: portfolio, error: portfolioError } = await supabase.from("vp_portfolios").select("id,user_id").eq("id", reaction.portfolio_id).maybeSingle();
-  const owner = actorId(portfolio?.user_id);
-  if (portfolioError || !owner) return fail(res, 404, "REACTION_OWNER_NOT_FOUND", "Reaction recipient was not found.");
-  const type = String(reaction.reaction_type || "reaction").replace(/[\u0000-\u001F\u007F]/g, " ").slice(0, 40);
-  const result = await sendOneSignal({ title: "New portfolio reaction", body: `Someone reacted ${type} to your portfolio`, url: `/portfolio/${portfolio.id}/edit?tab=analytics`, targeting: { include_aliases: { external_id: [owner] } }, requestKey: deterministicEventUuid("reaction", reaction.id) });
-  return safeOutcome(res, result);
-}
-
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
   const action = actionOf(req);
   const body = bodyOf(req);
   const supabase = serviceClient();
-  if (!supabase && ["register-subscription", "notify-message", "notify-portfolio-reaction", "status", "get-subscriber-counts", "broadcast-all", "broadcast-segment"].includes(action)) return fail(res, 503, "NOTIFICATION_SERVICE_UNAVAILABLE", "Notification service is temporarily unavailable.");
+  if (!supabase && ["register-subscription", "notify-message", "status", "get-subscriber-counts", "broadcast-all", "broadcast-segment"].includes(action)) return fail(res, 503, "NOTIFICATION_SERVICE_UNAVAILABLE", "Notification service is temporarily unavailable.");
 
   if (action === "register-subscription") {
     if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
@@ -105,12 +114,11 @@ export default async function handler(req, res) {
     const subscriptionId = String(body.subscriptionId || "").trim();
     if (!subscriptionId || subscriptionId.length > 256) return fail(res, 400, "SUBSCRIPTION_INVALID", "Subscription details are invalid.");
     const { data: profile } = await supabase.from("profiles").select("role").eq("clerk_id", actor.userId).maybeSingle();
-    const { error: saveError } = await supabase.from("push_subscriptions").upsert({ user_id: actor.userId, user_role: profile?.role || "user", onesignal_player_id: subscriptionId, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+    const { error: saveError } = await supabase.from("push_subscriptions").upsert({ user_id: actor.userId, user_role: profile?.role || "user", onesignal_player_id: subscriptionId, subscription: { id: subscriptionId }, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
     if (saveError) return fail(res, 503, "SUBSCRIPTION_SAVE_FAILED", "Your notification subscription could not be saved.");
     return res.status(200).json({ success: true });
   }
   if (action === "notify-message") return notifyMessage(req, res, supabase);
-  if (action === "notify-portfolio-reaction") return notifyReaction(req, res, supabase);
   if (action === "send-test-to-self") {
     if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
     const actor = await requireVerifiedClerkUser(req, res); if (!actor) return;
@@ -133,7 +141,13 @@ export default async function handler(req, res) {
   if (!["broadcast-all", "broadcast-segment", "send-test-to-self"].includes(action)) return fail(res, 404, "NOTIFICATION_ACTION_UNAVAILABLE", "Notification action is unavailable.");
   if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
   const actor = await requireAdmin(req, res, supabase); if (!actor) return;
-  const targeting = action === "broadcast-all" ? { included_segments: ["Subscribed Users"] } : action === "broadcast-segment" && ["user", "admin"].includes(body.segment) ? { filters: [{ field: "tag", key: "user_role", relation: "=", value: body.segment }] } : null;
+  let targeting = action === "broadcast-all" ? { included_segments: ["Subscribed Users"] } : null;
+  if (action === "broadcast-segment" && ["user", "admin"].includes(body.segment)) {
+    const recipients = await verifiedSegmentRecipients(supabase, body.segment);
+    if (recipients.error) return fail(res, 503, "RECIPIENT_LOOKUP_FAILED", "Notification recipients are temporarily unavailable.");
+    if (!recipients.ids.length) return safeOutcome(res, { ok: false, code: "ONESIGNAL_NO_ELIGIBLE_SUBSCRIPTIONS" });
+    targeting = { include_aliases: { external_id: recipients.ids } };
+  }
   if (!targeting) return fail(res, 400, "NOTIFICATION_TARGET_INVALID", "Notification target is invalid.");
   const result = await sendOneSignal({ title: body.title, body: body.body, url: body.url, targeting, requestKey: body.requestKey || randomUUID() });
   return safeOutcome(res, result);

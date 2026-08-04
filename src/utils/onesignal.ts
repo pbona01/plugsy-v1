@@ -62,22 +62,28 @@ export const syncSubscriptionToDatabase = async (userId: string) => {
   } catch { return false; }
 };
 
-export const requestNotificationPermission = async (userId?: string): Promise<boolean> => {
-  if ((await initOneSignal()) !== "initialized" || !supported()) return false;
+export type NotificationEnableResult = { active: boolean; registered: boolean; code: string };
+export const requestNotificationPermission = async (userId?: string, token?: string): Promise<NotificationEnableResult> => {
+  if ((await initOneSignal()) !== "initialized" || !supported()) return { active: false, registered: false, code: "SDK_UNAVAILABLE" };
   try {
+    if (userId) await window.OneSignal.login(userId);
     if (window.OneSignal.Notifications.permission !== true) await window.OneSignal.Notifications.requestPermission();
-    if (window.OneSignal.Notifications.permission !== true) return false;
+    if (window.OneSignal.Notifications.permission !== true) return { active: false, registered: false, code: "PERMISSION_BLOCKED" };
     await pushSubscription()?.optIn?.();
     for (let index = 0; index < 24 && !activeSubscription(); index += 1) await delay(250);
-    if (!activeSubscription()) return false;
-    if (userId && !(await syncSubscriptionToDatabase(userId))) console.warn("[OneSignal] active subscription confirmed but diagnostic persistence failed");
+    if (!activeSubscription()) return { active: false, registered: false, code: "SUBSCRIPTION_MISSING" };
+    let registered = true;
+    if (userId && token) {
+      const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ subscriptionId: activeSubscription()?.id }) });
+      registered = response.ok;
+    } else if (userId) registered = await syncSubscriptionToDatabase(userId);
     window.localStorage.setItem("onesignal_subscribed", "true");
     window.dispatchEvent(new CustomEvent("onesignal_subscribed_state_changed", { detail: { subscribed: true } }));
-    return true;
-  } catch { return false; }
+    return { active: true, registered, code: registered ? "ACTIVE" : "REGISTRATION_WARNING" };
+  } catch { return { active: false, registered: false, code: "ENABLE_FAILED" }; }
 };
 
-export const repairPushSubscription = async (userId: string) => requestNotificationPermission(userId);
+export const repairPushSubscription = async (userId: string, token?: string) => requestNotificationPermission(userId, token);
 
 export const silentlyLinkOneSignalUser = async (userId: string, userRole: string) => {
   const generation = ++identityGeneration;
@@ -87,7 +93,6 @@ export const silentlyLinkOneSignalUser = async (userId: string, userRole: string
     if ((await initOneSignal()) !== "initialized" || generation !== identityGeneration) return;
     await window.OneSignal.login(userId);
     if (generation !== identityGeneration) return;
-    await window.OneSignal.User?.addTag?.("user_role", userRole || "user");
     if (generation === identityGeneration) await syncSubscriptionToDatabase(userId);
   }).catch(() => undefined);
   await identityQueue;

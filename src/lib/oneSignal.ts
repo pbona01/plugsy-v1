@@ -10,6 +10,6 @@ export { isSubscribed as checkOneSignalSubscribed, silentlyLinkOneSignalUser };
 export const initOneSignal = originalInit;
 export const getOneSignalPlayerId = getPlayerId;
 
-export const requestOneSignalPermission = async (userId?: string): Promise<boolean> => {
-  return requestNotificationPermission(userId);
+export const requestOneSignalPermission = async (userId?: string, token?: string) => {
+  return requestNotificationPermission(userId, token);
 };
