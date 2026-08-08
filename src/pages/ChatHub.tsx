@@ -75,6 +75,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
   });
   const [loading, setLoading] = useState(true);
   const hasLoadedRef = useRef(false);
+  const inboxRefreshRef = useRef({ inFlight: false, timer: null as ReturnType<typeof setTimeout> | null });
 
   // DM State
   const [dms, setDms] = useState<ChatWithMember[]>([]);
@@ -274,7 +275,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     if (!userId) return;
     const interval = setInterval(() => {
       if (activeTab !== "status") {
-        fetchChats();
+        void fetchChats();
       }
     }, 30000);
     return () => clearInterval(interval);
@@ -284,26 +285,40 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     if (!userId) return;
     const channel = supabase.channel('user-events-' + userId)
       .on('broadcast', { event: 'new_unread' }, () => {
-        fetchChats();
+        scheduleFetchChats();
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
-        fetchChats();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload: any) => {
+        const chatId = payload.new?.chat_id || payload.old?.chat_id;
+        if (chatId && !dmsRef.current.some((chat) => chat.id === chatId)) return;
+        scheduleFetchChats();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'chats' }, () => {
-        fetchChats();
+        scheduleFetchChats();
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_members' }, () => {
-        fetchChats();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_members' }, (payload: any) => {
+        if (payload.new?.user_id && payload.new.user_id !== userId && payload.old?.user_id !== userId) return;
+        scheduleFetchChats();
       })
       .subscribe();
 
     return () => {
+      if (inboxRefreshRef.current.timer) clearTimeout(inboxRefreshRef.current.timer);
       supabase.removeChannel(channel).catch(() => {});
     };
   }, [userId, activeTab]);
 
+  const scheduleFetchChats = () => {
+    if (inboxRefreshRef.current.timer) clearTimeout(inboxRefreshRef.current.timer);
+    inboxRefreshRef.current.timer = setTimeout(() => {
+      inboxRefreshRef.current.timer = null;
+      void fetchChats();
+    }, 150);
+  };
+
   const fetchChats = async () => {
     if (!userId) return;
+    if (inboxRefreshRef.current.inFlight) return;
+    inboxRefreshRef.current.inFlight = true;
     if (!hasLoadedRef.current) {
       setLoading(true);
     }
@@ -326,7 +341,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
         // Fetch DM chats
         const { data: chatsData, error: chatsErr } = await supabase
           .from("chats")
-          .select("*")
+          .select("id,chat_type,name,description,cover_image_url,is_public,member_count,last_message,last_message_at,active_call_status,created_at,unread_count,typing_users")
           .eq("chat_type", "dm")
           .in("id", chatIds)
           .order("last_message_at", { ascending: false });
@@ -396,7 +411,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
         if (chatIds.length > 0) {
           const { data: joinedGroups, error: joinedErr } = await supabase
             .from("chats")
-            .select("*")
+          .select("id,chat_type,name,description,cover_image_url,is_public,member_count,last_message,last_message_at,active_call_status,created_at,unread_count,typing_users")
             .eq("chat_type", "group")
             .in("id", chatIds)
             .order("last_message_at", { ascending: false });
@@ -409,7 +424,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
         // Fetch public communities
         const { data: publicGroups, error: pubErr } = await supabase
           .from("chats")
-          .select("*")
+            .select("id,chat_type,name,description,cover_image_url,is_public,member_count,last_message,last_message_at,active_call_status,created_at,unread_count,typing_users")
           .eq("chat_type", "group")
           .eq("is_public", true)
           .order("member_count", { ascending: false })
@@ -424,6 +439,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     } catch (err: any) {
       console.error("Error loading chat hub:", err);
     } finally {
+      inboxRefreshRef.current.inFlight = false;
       setLoading(false);
       hasLoadedRef.current = true;
     }

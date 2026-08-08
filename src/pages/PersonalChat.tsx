@@ -23,6 +23,16 @@ import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import plugsyLogo from "../assets/images/plugsy_icon.svg";
 import { useProfile } from "../hooks/useProfile";
 import { notifyPersistedMessage } from "../utils/messageNotification";
+import {
+  CHAT_MESSAGE_PAGE_SIZE,
+  getMessageCursor,
+  mergeIncomingMessage,
+  mergeMessagesById,
+  prependOlderMessages,
+  shouldApplyChatResponse,
+} from "../utils/chatScalability";
+
+const CHAT_MESSAGE_COLUMNS = "id,chat_id,sender_id,sender_role,content,attachment_url,attachment_type,sender_name,message_type,sticker_url,created_at,duration_seconds";
 
 // Fixed set of default emojis for stickers
 const DEFAULT_STICKERS = ["🔥", "😂", "❤️", "👍", "🙌", "🎉", "✨", "💯", "🚀", "💡", "🎨", "🤩", "👑", "🍕", "👾"];
@@ -166,7 +176,7 @@ export default function PersonalChat() {
     // by most recent activity
     const { data: chats, error } = await supabase
       .from("chats")
-      .select("*")
+      .select("id,chat_type,name,description,cover_image_url,is_public,member_count,invite_code,created_by,active_call_room,active_call_status,last_message,last_message_at,created_at,unread_count,typing_users")
       .in("id", chatIds)
       .eq("chat_type", "dm")
       .order("last_message_at", { ascending: false });
@@ -216,6 +226,7 @@ export default function PersonalChat() {
     if (!currentUserId) return;
 
     const poll = setInterval(async () => {
+      if (document.visibilityState === "hidden") return;
       const chatIds = conversationsRef.current.map(c => c.id);
       if (chatIds.length === 0) {
         // Also check for brand new DMs that started
@@ -269,7 +280,7 @@ export default function PersonalChat() {
         console.log("[conversations] new conversation detected, full refetch");
         fetchConversations();
       }
-    }, 2500);
+    }, 30000);
 
     return () => clearInterval(poll);
   }, [currentUserId]);
@@ -323,7 +334,7 @@ export default function PersonalChat() {
       // 1. Fetch Groups (Communities)
       const { data: groupsData } = await supabase
         .from("chats")
-        .select("*")
+        .select("id,chat_type,name,description,cover_image_url,is_public,member_count,invite_code,created_by,active_call_room,active_call_status,last_message,last_message_at,created_at,unread_count,typing_users")
         .eq("chat_type", "group")
         .in("id", chatIds)
         .order("last_message_at", { ascending: false });
@@ -332,7 +343,7 @@ export default function PersonalChat() {
       // 2. Fetch Channels
       const { data: channelsData } = await supabase
         .from("chats")
-        .select("*")
+        .select("id,chat_type,name,description,cover_image_url,is_public,member_count,invite_code,created_by,active_call_room,active_call_status,last_message,last_message_at,created_at,unread_count,typing_users")
         .eq("chat_type", "channel")
         .in("id", chatIds)
         .order("last_message_at", { ascending: false });
@@ -581,6 +592,10 @@ export default function PersonalChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pressTimer = useRef<any>(null);
   const isImageHoldRef = useRef(false);
+  const messageRequestRef = useRef({ generation: 0, initial: false, older: false, reconcile: false });
+  const hasOlderMessagesRef = useRef(true);
+  const [hasOlderMessages, setHasOlderMessages] = useState(true);
+  const oldestCursorRef = useRef<{ created_at: string; id: string } | null>(null);
 
   useEffect(() => {
     if (chatId && userId) {
@@ -614,36 +629,41 @@ export default function PersonalChat() {
 
   const fetchNewMessages = async () => {
     const currentChatId = chatIdRef.current;
-    if (!currentChatId) return;
+    if (!currentChatId || messageRequestRef.current.reconcile || document.visibilityState === "hidden") return;
+    const generation = messageRequestRef.current.generation;
+    messageRequestRef.current.reconcile = true;
 
     const wasNearBottom = isNearBottom();
     const lastMsg = messagesRef.current[messagesRef.current.length - 1];
 
     let query = supabase
       .from("messages")
-      .select("*")
+      .select(CHAT_MESSAGE_COLUMNS)
       .eq("chat_id", currentChatId)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(CHAT_MESSAGE_PAGE_SIZE);
 
-    if (lastMsg?.created_at) {
-      query = query.gt("created_at", lastMsg.created_at);
+    if (lastMsg?.created_at && lastMsg?.id) {
+      query = query.or(`created_at.gt.${lastMsg.created_at},and(created_at.eq.${lastMsg.created_at},id.gt.${lastMsg.id})`);
     }
 
     const { data, error } = await query;
 
     if (error) {
       console.error("[chat-poll] fetch error:", error.message);
+      messageRequestRef.current.reconcile = false;
+      return;
+    }
+
+    if (!shouldApplyChatResponse(generation, messageRequestRef.current.generation) || chatIdRef.current !== currentChatId) {
+      messageRequestRef.current.reconcile = false;
       return;
     }
 
     if (data && data.length > 0) {
       console.log("[chat-poll] found", data.length, "new messages");
-      setMessages(prev => {
-        const existingIds = new Set(prev.map(m => m.id));
-        const newOnes = data.filter(m => !existingIds.has(m.id));
-        if (newOnes.length === 0) return prev;
-        return [...prev, ...newOnes];
-      });
+      setMessages(prev => data.reduce((next, message) => mergeIncomingMessage(next, message), prev));
 
       if (wasNearBottom) {
         setTimeout(() => scrollToBottom(), 100);
@@ -651,34 +671,91 @@ export default function PersonalChat() {
         setShowNewMessagePill(true);
       }
     }
+    messageRequestRef.current.reconcile = false;
   };
 
-  // Initial full load when chatId changes
+  useEffect(() => () => {
+    if (debouncedStopTypingRef.current) clearTimeout(debouncedStopTypingRef.current);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    if (isTypingRef.current) {
+      isTypingRef.current = false;
+      void updateTypingStatus(false);
+    }
+  }, [chatId]);
+
+  const loadOlderMessages = async () => {
+    const currentChatId = chatIdRef.current;
+    const cursor = oldestCursorRef.current;
+    if (!currentChatId || !cursor || !hasOlderMessagesRef.current || messageRequestRef.current.older) return;
+    const generation = messageRequestRef.current.generation;
+    messageRequestRef.current.older = true;
+    const container = messagesContainerRef.current;
+    const previousHeight = container?.scrollHeight || 0;
+    const previousTop = container?.scrollTop || 0;
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select(CHAT_MESSAGE_COLUMNS)
+        .eq("chat_id", currentChatId)
+        .or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(CHAT_MESSAGE_PAGE_SIZE);
+      if (error) throw error;
+      if (!shouldApplyChatResponse(generation, messageRequestRef.current.generation)) return;
+      const older = [...(data || [])].reverse();
+      hasOlderMessagesRef.current = older.length === CHAT_MESSAGE_PAGE_SIZE;
+      setHasOlderMessages(hasOlderMessagesRef.current);
+      if (older.length) {
+        oldestCursorRef.current = getMessageCursor(older[0]);
+        setMessages(prev => prependOlderMessages(older, prev));
+        requestAnimationFrame(() => {
+          if (container) container.scrollTop = previousTop + container.scrollHeight - previousHeight;
+        });
+      }
+    } catch (error) {
+      console.error("Failed to load earlier messages:", error);
+    } finally {
+      messageRequestRef.current.older = false;
+    }
+  };
+
+  // Bounded initial load when chatId changes
   useEffect(() => {
     if (!chatId) return;
 
     const loadInitial = async () => {
+      const generation = ++messageRequestRef.current.generation;
+      hasOlderMessagesRef.current = true;
+      setHasOlderMessages(true);
+      setLoading(true);
+      oldestCursorRef.current = null;
       console.log("[chat] loading initial messages for:", chatId);
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("messages")
-        .select("*")
+        .select(CHAT_MESSAGE_COLUMNS)
         .eq("chat_id", chatId)
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(CHAT_MESSAGE_PAGE_SIZE);
 
-      setMessages(data || []);
-      
-      // Aggressive scroll polling for the first 1.5 seconds to combat image/layout shifts
-      let attempts = 0;
-      const scrollInterval = setInterval(() => {
-        scrollToBottom(true);
-        attempts++;
-        if (attempts > 15) {
-           clearInterval(scrollInterval);
-        }
-      }, 100);
+      if (error) throw error;
+
+      if (!shouldApplyChatResponse(generation, messageRequestRef.current.generation)) return;
+
+      const initial = mergeMessagesById([...(data || [])].reverse());
+      setMessages(initial);
+      hasOlderMessagesRef.current = initial.length === CHAT_MESSAGE_PAGE_SIZE;
+      setHasOlderMessages(hasOlderMessagesRef.current);
+      oldestCursorRef.current = initial.length ? getMessageCursor(initial[0]) : null;
+      setLoading(false);
+      requestAnimationFrame(() => scrollToBottom(true));
     };
 
-    loadInitial();
+    loadInitial().catch((error) => {
+      console.error("Failed to fetch messages:", error);
+      setLoading(false);
+    });
   }, [chatId]);
 
   // Polling loop — separate effect, runs continuously
@@ -689,13 +766,14 @@ export default function PersonalChat() {
 
     console.log("[chat-poll] starting poll interval for:", chatId);
 
-    const interval = setInterval(() => {
-      fetchNewMessages();
-    }, 2500);
+    const interval = setInterval(fetchNewMessages, 30000);
+    const onVisibility = () => { if (document.visibilityState === "visible") void fetchNewMessages(); };
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       console.log("[chat-poll] stopping poll interval");
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [chatId]); // ONLY chatId as dependency, nothing else
 
@@ -1028,7 +1106,7 @@ export default function PersonalChat() {
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select("*")
+        .select("clerk_id,username,full_name,profile_pic_url,image_url,bio,saved_stickers")
         .limit(100);
 
       if (error) throw error;
@@ -1092,6 +1170,13 @@ export default function PersonalChat() {
     presenceChannelRef.current = presenceChannel;
 
     presenceChannel
+      .on("broadcast", { event: "new_message" }, ({ payload }: any) => {
+        if (payload?.chat_id !== chatId || !payload?.id) return;
+        const wasNearBottom = isNearBottom();
+        setMessages(prev => mergeIncomingMessage(prev, payload));
+        if (wasNearBottom) setTimeout(() => scrollToBottom(), 100);
+        else setShowNewMessagePill(true);
+      })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await presenceChannel.track({
@@ -1133,6 +1218,18 @@ export default function PersonalChat() {
     // 2. Subscribe to chats table updates (for active call status)
     const chatChannel = supabase
       .channel(`chat-details-realtime:${chatId}-${uniqueId}`)
+      .on("postgres_changes", {
+        event: "INSERT",
+        schema: "public",
+        table: "messages",
+        filter: `chat_id=eq.${chatId}`,
+      }, (payload) => {
+        const message = payload.new as Message;
+        const wasNearBottom = isNearBottom();
+        setMessages(prev => mergeIncomingMessage(prev, message));
+        if (wasNearBottom) setTimeout(() => scrollToBottom(), 100);
+        else setShowNewMessagePill(true);
+      })
       .on(
         "postgres_changes",
         {
@@ -1204,11 +1301,12 @@ export default function PersonalChat() {
     try {
       const { data: chatData, error: chatErr } = await supabase
         .from("chats")
-        .select("*")
+        .select("id,chat_type,name,description,cover_image_url,is_public,member_count,invite_code,created_by,active_call_room,active_call_status,last_message,last_message_at,created_at,unread_count,typing_users")
         .eq("id", chatId)
         .single();
 
       if (chatErr) throw chatErr;
+      if (chatIdRef.current !== chatId) return;
       setChat(chatData);
 
       if (chatData.active_call_status === "active" && chatData.active_call_room) {
@@ -1276,7 +1374,7 @@ export default function PersonalChat() {
       console.error(err);
       toast.error("Failed to load chat details");
     } finally {
-      setLoading(false);
+      // Message loading owns the page loading state.
     }
   };
 
@@ -1317,12 +1415,14 @@ export default function PersonalChat() {
     try {
       const { data, error } = await supabase
         .from("messages")
-        .select("*")
+        .select(CHAT_MESSAGE_COLUMNS)
         .eq("chat_id", chatId)
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(CHAT_MESSAGE_PAGE_SIZE);
 
       if (error) throw error;
-      setMessages(data || []);
+      setMessages(mergeMessagesById([...(data || [])].reverse()));
     } catch (err) {
       console.error("Failed to fetch messages:", err);
     }
@@ -2490,6 +2590,17 @@ export default function PersonalChat() {
           onScroll={handleScroll}
           className="flex-grow overflow-y-auto p-4 md:p-6 space-y-4 relative z-10 scrollbar-none"
         >
+          {!loading && messages.length > 0 && hasOlderMessages && (
+            <div className="flex justify-center pb-2">
+              <button
+                type="button"
+                onClick={() => void loadOlderMessages()}
+                className="text-xs font-semibold text-blue-500 hover:text-blue-600 px-3 py-1.5 rounded-full bg-blue-500/10"
+              >
+                Load earlier messages
+              </button>
+            </div>
+          )}
           {loading ? (
             <div className="space-y-5 h-full flex flex-col justify-end">
               <div className="flex items-end gap-3 justify-start text-left">

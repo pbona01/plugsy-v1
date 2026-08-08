@@ -1,5 +1,5 @@
 import { CallProvider } from "./contexts/CallContext";
-import React, { useEffect } from "react";
+import React, { lazy, Suspense, useEffect } from "react";
 import { HelmetProvider, Helmet } from "react-helmet-async";
 import {
   BrowserRouter as Router,
@@ -31,24 +31,24 @@ import Dashboard from "./pages/Dashboard";
 import ComingSoon from "./pages/ComingSoon";
 import Chat from "./pages/Chat";
 import Learn from "./pages/Learn";
-import ChatHub from "./pages/ChatHub";
+const ChatHub = lazy(() => import("./pages/ChatHub"));
 import JoinInvite from "./pages/JoinInvite";
 import PublicProfile from "./pages/PublicProfile";
-import PersonalChat from "./pages/PersonalChat";
+const PersonalChat = lazy(() => import("./pages/PersonalChat"));
 import OrderHistory from "./pages/OrderHistory";
-import Admin from "./pages/Admin";
-import AdminChats from "./pages/AdminChats";
-import AdminPortfolioSales from "./pages/AdminPortfolioSales";
-import AdminBroadcast from "./pages/AdminBroadcast";
+const Admin = lazy(() => import("./pages/Admin"));
+const AdminChats = lazy(() => import("./pages/AdminChats"));
+const AdminPortfolioSales = lazy(() => import("./pages/AdminPortfolioSales"));
+const AdminBroadcast = lazy(() => import("./pages/AdminBroadcast"));
 import PaymentCallback from "./pages/PaymentCallback";
 import PortfolioCallback from "./pages/PortfolioCallback";
-import PortfolioDashboard from "./pages/PortfolioDashboard";
-import OneLinkPage from "./pages/OneLinkPage";
-import { CreatePortfolio } from "./pages/CreatePortfolio";
-import { EditPortfolio } from "./pages/EditPortfolio";
-import { PublicPortfolio } from "./pages/PublicPortfolio";
-import { Wallet } from "./pages/Wallet";
-import { WalletCallback } from "./pages/WalletCallback";
+const PortfolioDashboard = lazy(() => import("./pages/PortfolioDashboard"));
+const OneLinkPage = lazy(() => import("./pages/OneLinkPage"));
+const CreatePortfolio = lazy(() => import("./pages/CreatePortfolio").then((module) => ({ default: module.CreatePortfolio })));
+const EditPortfolio = lazy(() => import("./pages/EditPortfolio").then((module) => ({ default: module.EditPortfolio })));
+const PublicPortfolio = lazy(() => import("./pages/PublicPortfolio").then((module) => ({ default: module.PublicPortfolio })));
+const Wallet = lazy(() => import("./pages/Wallet").then((module) => ({ default: module.Wallet })));
+const WalletCallback = lazy(() => import("./pages/WalletCallback").then((module) => ({ default: module.WalletCallback })));
 import { TermsOfService } from "./pages/TermsOfService";
 import { PrivacyPolicy } from "./pages/PrivacyPolicy";
 import { BackgroundGradientAnimationDemo } from "./components/effects/background-gradient-animation-demo";
@@ -430,6 +430,8 @@ function AppContent({
         transition={{ duration: reduceMotion ? 0.01 : 0.18, ease: [0.22, 1, 0.36, 1] }}
         className="w-full h-full flex-grow flex flex-col overflow-x-hidden"
       >
+        <GlobalErrorBoundary>
+        <Suspense fallback={<LoadingSplash />}>
         <Routes location={location}>
           <Route
             path="/"
@@ -653,6 +655,8 @@ function AppContent({
 
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
+        </Suspense>
+        </GlobalErrorBoundary>
       </motion.div>
     </AnimatePresence>
   );
