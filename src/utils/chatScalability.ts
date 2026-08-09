@@ -54,6 +54,117 @@ export const getNextMessageCursor = (messages: ChatMessageLike[]): ChatMessageCu
 export const shouldApplyChatResponse = (generation: number, currentGeneration: number) =>
   generation === currentGeneration;
 
+export interface TypingUserEntry {
+  name?: string | null;
+  timestamp?: number | string | null;
+}
+
+export const deriveActiveTypingUsers = (
+  typingUsers: Record<string, TypingUserEntry> | null | undefined,
+  currentUserId: string | null | undefined,
+  now = Date.now(),
+  timeoutMs = 4000,
+): Map<string, string> => {
+  const active = new Map<string, string>();
+  Object.entries(typingUsers || {}).forEach(([userId, entry]) => {
+    const timestamp = typeof entry?.timestamp === "string"
+      ? Number(entry.timestamp)
+      : entry?.timestamp;
+    if (!userId || userId === currentUserId || !Number.isFinite(timestamp) || now - Number(timestamp) >= timeoutMs) return;
+    active.set(userId, entry?.name || "Someone");
+  });
+  return active;
+};
+
+export const getNextTypingExpiry = (
+  typingUsers: Record<string, TypingUserEntry> | null | undefined,
+  currentUserId: string | null | undefined,
+  now = Date.now(),
+  timeoutMs = 4000,
+): number | null => {
+  const expiries = Object.entries(typingUsers || {})
+    .filter(([userId]) => userId !== currentUserId)
+    .map(([, entry]) => {
+      const timestamp = typeof entry?.timestamp === "string" ? Number(entry.timestamp) : entry?.timestamp;
+      return Number.isFinite(timestamp) ? Number(timestamp) + timeoutMs : null;
+    })
+    .filter((expiry): expiry is number => expiry !== null && expiry > now);
+  return expiries.length ? Math.min(...expiries) : null;
+};
+
+export interface ChatRequestOwner {
+  generation: number;
+  chatId: string;
+}
+
+export const ownsChatRequest = (
+  owner: ChatRequestOwner,
+  current: { generation: number; chatId: string | null },
+) => owner.generation === current.generation && owner.chatId === current.chatId;
+
+export const shouldScheduleChatHubRefresh = (
+  event: "new_unread" | "chat_members" | "messages" | "chats",
+  currentUserId: string,
+  payload: { new?: { user_id?: string }; old?: { user_id?: string }} = {},
+) => {
+  if (event === "new_unread") return true;
+  if (event !== "chat_members") return false;
+  return [payload.new?.user_id, payload.old?.user_id].includes(currentUserId);
+};
+
+export const createRefreshCoordinator = (delayMs = 150) => {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let inFlight = false;
+  let pending = false;
+  let disposed = false;
+  let latestRun: (() => Promise<void> | void) | null = null;
+
+  const execute = async () => {
+    if (disposed || inFlight) return;
+    inFlight = true;
+    try {
+      await latestRun?.();
+    } catch {
+      // The caller owns logging/error UI; coordinator must remain usable.
+    } finally {
+      inFlight = false;
+      if (!disposed && pending) {
+        pending = false;
+        timer = setTimeout(() => {
+          timer = null;
+          void execute();
+        }, delayMs);
+      }
+    }
+  };
+
+  const schedule = (run: () => Promise<void> | void) => {
+    if (disposed) return;
+    latestRun = run;
+    if (inFlight) {
+      pending = true;
+      return;
+    }
+    if (timer) return;
+    timer = setTimeout(() => {
+      timer = null;
+      void execute();
+    }, delayMs);
+  };
+
+  return {
+    schedule,
+    dispose: () => {
+      disposed = true;
+      pending = false;
+      latestRun = null;
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+    getState: () => ({ inFlight, pending, timer }),
+  };
+};
+
 export const coalesceChatRefresh = (schedule: (run: () => void) => void, run: () => void) =>
   schedule(run);
 

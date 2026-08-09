@@ -28,8 +28,11 @@ import {
   getMessageCursor,
   mergeIncomingMessage,
   mergeMessagesById,
+  deriveActiveTypingUsers,
+  getNextTypingExpiry,
+  ownsChatRequest,
+  ChatRequestOwner,
   prependOlderMessages,
-  shouldApplyChatResponse,
 } from "../utils/chatScalability";
 
 const CHAT_MESSAGE_COLUMNS = "id,chat_id,sender_id,sender_role,content,attachment_url,attachment_type,sender_name,message_type,sticker_url,created_at,duration_seconds";
@@ -73,6 +76,7 @@ interface Chat {
   created_by: string | null;
   active_call_room: string | null;
   active_call_status: string | null;
+  typing_users?: Record<string, { name?: string | null; timestamp?: number | string | null }> | null;
 }
 
 const CallEventBubble = ({ message }: { message: any }) => (
@@ -156,7 +160,9 @@ export default function PersonalChat() {
     navigate("/chats/" + targetChatId);
   };
 
-  const fetchConversations = async () => {
+  const conversationRefreshRef = useRef(false);
+
+  const loadConversations = async () => {
     if (!currentUserId) return;
     console.log("[conversations] fetching for user:", currentUserId);
 
@@ -166,7 +172,7 @@ export default function PersonalChat() {
       .select("chat_id")
       .eq("user_id", currentUserId);
 
-    const chatIds = (memberships || []).map(m => m.chat_id);
+    const chatIds = [...new Set((memberships || []).map(m => m.chat_id).filter(Boolean))];
     if (chatIds.length === 0) {
       setConversations([]);
       return;
@@ -185,37 +191,41 @@ export default function PersonalChat() {
 
     if (!chats) return;
 
-    // For each DM, resolve the OTHER member's profile info
-    const enriched = await Promise.all(
-      chats.map(async (chat) => {
-        const { data: otherMember } = await supabase
-          .from("chat_members")
-          .select("user_id, user_name, user_email")
-          .eq("chat_id", chat.id)
-          .neq("user_id", currentUserId)
-          .maybeSingle();
-
-        let otherProfile = null;
-        if (otherMember?.user_id) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("full_name, profile_pic_url, username")
-            .eq("clerk_id", otherMember.user_id)
-            .maybeSingle();
-          otherProfile = profile;
-        }
-
-        return {
-          ...chat,
-          otherUserId: otherMember?.user_id,
-          otherUserName: otherProfile?.full_name || 
-            otherMember?.user_name || "User",
-          otherUserAvatar: otherProfile?.profile_pic_url || null
-        };
-      })
-    );
+    const { data: members } = await supabase
+      .from("chat_members")
+      .select("chat_id, user_id, user_name")
+      .in("chat_id", chatIds)
+      .neq("user_id", currentUserId);
+    const typedMembers = (members || []) as Array<{ chat_id: string; user_id: string; user_name: string | null }>;
+    const membersByChat = new Map(typedMembers.map((member) => [member.chat_id, member]));
+    const otherUserIds = [...new Set(typedMembers.map((member) => member.user_id).filter(Boolean))];
+    const { data: profiles } = otherUserIds.length
+      ? await supabase.from("profiles").select("clerk_id, full_name, profile_pic_url, username").in("clerk_id", otherUserIds)
+      : { data: [] };
+    const typedProfiles = (profiles || []) as Array<{ clerk_id: string; full_name: string | null; profile_pic_url: string | null }>;
+    const profilesById = new Map(typedProfiles.map((profile) => [profile.clerk_id, profile]));
+    const enriched = chats.map((chat) => {
+      const otherMember = membersByChat.get(chat.id);
+      const otherProfile = otherMember?.user_id ? profilesById.get(otherMember.user_id) : null;
+      return {
+        ...chat,
+        otherUserId: otherMember?.user_id,
+        otherUserName: otherProfile?.full_name || otherMember?.user_name || "User",
+        otherUserAvatar: otherProfile?.profile_pic_url || null,
+      };
+    });
 
     setConversations(enriched);
+  };
+
+  const fetchConversations = async () => {
+    if (conversationRefreshRef.current) return;
+    conversationRefreshRef.current = true;
+    try {
+      await loadConversations();
+    } finally {
+      conversationRefreshRef.current = false;
+    }
   };
 
   useEffect(() => {
@@ -226,12 +236,14 @@ export default function PersonalChat() {
     if (!currentUserId) return;
 
     const poll = setInterval(async () => {
-      if (document.visibilityState === "hidden") return;
-      const chatIds = conversationsRef.current.map(c => c.id);
+      if (document.visibilityState === "hidden" || conversationRefreshRef.current) return;
+      conversationRefreshRef.current = true;
+      try {
+      const chatIds = [...new Set(conversationsRef.current.map(c => c.id).filter(Boolean))];
       if (chatIds.length === 0) {
         // Also check for brand new DMs that started
         // since last fetch
-        fetchConversations();
+        await loadConversations();
         return;
       }
 
@@ -272,13 +284,16 @@ export default function PersonalChat() {
         .select("chat_id")
         .eq("user_id", currentUserId);
 
-      const currentChatIds = (memberships || []).map(m => m.chat_id);
+      const currentChatIds = [...new Set((memberships || []).map(m => m.chat_id).filter(Boolean))];
       const knownChatIds = new Set(chatIds);
       const hasNewChat = currentChatIds.some(id => !knownChatIds.has(id));
 
       if (hasNewChat) {
         console.log("[conversations] new conversation detected, full refetch");
-        fetchConversations();
+        await loadConversations();
+      }
+      } finally {
+        conversationRefreshRef.current = false;
       }
     }, 30000);
 
@@ -371,6 +386,17 @@ export default function PersonalChat() {
   const typingTimeoutRef = useRef<any>(null);
   const debouncedStopTypingRef = useRef<any>(null);
   const isTypingRef = useRef(false);
+  const typingExpiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applyTypingUsers = (typingUsers: Chat["typing_users"]) => {
+    const now = Date.now();
+    setTypingUsers(deriveActiveTypingUsers(typingUsers, userId, now));
+    if (typingExpiryTimerRef.current) clearTimeout(typingExpiryTimerRef.current);
+    const nextExpiry = getNextTypingExpiry(typingUsers, userId, now);
+    if (nextExpiry !== null) {
+      typingExpiryTimerRef.current = setTimeout(() => applyTypingUsers(typingUsers), Math.max(0, nextExpiry - Date.now()));
+    }
+  };
 
   // Removed broadcast channel setup for typing
 
@@ -592,7 +618,13 @@ export default function PersonalChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pressTimer = useRef<any>(null);
   const isImageHoldRef = useRef(false);
-  const messageRequestRef = useRef({ generation: 0, initial: false, older: false, reconcile: false });
+  const messageRequestRef = useRef<{
+    generation: number;
+    chatId: string | null;
+    initial: ChatRequestOwner | null;
+    older: ChatRequestOwner | null;
+    reconcile: ChatRequestOwner | null;
+  }>({ generation: 0, chatId: null, initial: null, older: null, reconcile: null });
   const hasOlderMessagesRef = useRef(true);
   const [hasOlderMessages, setHasOlderMessages] = useState(true);
   const oldestCursorRef = useRef<{ created_at: string; id: string } | null>(null);
@@ -630,8 +662,8 @@ export default function PersonalChat() {
   const fetchNewMessages = async () => {
     const currentChatId = chatIdRef.current;
     if (!currentChatId || messageRequestRef.current.reconcile || document.visibilityState === "hidden") return;
-    const generation = messageRequestRef.current.generation;
-    messageRequestRef.current.reconcile = true;
+    const owner: ChatRequestOwner = { generation: messageRequestRef.current.generation, chatId: currentChatId };
+    messageRequestRef.current.reconcile = owner;
 
     const wasNearBottom = isNearBottom();
     const lastMsg = messagesRef.current[messagesRef.current.length - 1];
@@ -648,35 +680,39 @@ export default function PersonalChat() {
       query = query.or(`created_at.gt.${lastMsg.created_at},and(created_at.eq.${lastMsg.created_at},id.gt.${lastMsg.id})`);
     }
 
-    const { data, error } = await query;
+    try {
+      const { data, error } = await query;
 
-    if (error) {
-      console.error("[chat-poll] fetch error:", error.message);
-      messageRequestRef.current.reconcile = false;
-      return;
-    }
-
-    if (!shouldApplyChatResponse(generation, messageRequestRef.current.generation) || chatIdRef.current !== currentChatId) {
-      messageRequestRef.current.reconcile = false;
-      return;
-    }
-
-    if (data && data.length > 0) {
-      console.log("[chat-poll] found", data.length, "new messages");
-      setMessages(prev => data.reduce((next, message) => mergeIncomingMessage(next, message), prev));
-
-      if (wasNearBottom) {
-        setTimeout(() => scrollToBottom(), 100);
-      } else {
-        setShowNewMessagePill(true);
+      if (error) {
+        console.error("[chat-poll] fetch error:", error.message);
+        return;
       }
+
+      if (!ownsChatRequest(owner, messageRequestRef.current) || chatIdRef.current !== currentChatId) return;
+
+      if (data && data.length > 0) {
+        console.log("[chat-poll] found", data.length, "new messages");
+        setMessages(prev => data.reduce((next, message) => mergeIncomingMessage(next, message), prev));
+
+        if (wasNearBottom) {
+          setTimeout(() => scrollToBottom(), 100);
+        } else {
+          setShowNewMessagePill(true);
+        }
+      }
+    } catch (error: any) {
+      console.error("[chat-reconcile] fetch error:", error?.message || error);
+    } finally {
+      if (messageRequestRef.current.reconcile === owner) messageRequestRef.current.reconcile = null;
     }
-    messageRequestRef.current.reconcile = false;
   };
 
   useEffect(() => () => {
     if (debouncedStopTypingRef.current) clearTimeout(debouncedStopTypingRef.current);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    if (typingExpiryTimerRef.current) clearTimeout(typingExpiryTimerRef.current);
+    typingExpiryTimerRef.current = null;
+    setTypingUsers(new Map());
     if (isTypingRef.current) {
       isTypingRef.current = false;
       void updateTypingStatus(false);
@@ -687,8 +723,8 @@ export default function PersonalChat() {
     const currentChatId = chatIdRef.current;
     const cursor = oldestCursorRef.current;
     if (!currentChatId || !cursor || !hasOlderMessagesRef.current || messageRequestRef.current.older) return;
-    const generation = messageRequestRef.current.generation;
-    messageRequestRef.current.older = true;
+    const owner: ChatRequestOwner = { generation: messageRequestRef.current.generation, chatId: currentChatId };
+    messageRequestRef.current.older = owner;
     const container = messagesContainerRef.current;
     const previousHeight = container?.scrollHeight || 0;
     const previousTop = container?.scrollTop || 0;
@@ -702,7 +738,7 @@ export default function PersonalChat() {
         .order("id", { ascending: false })
         .limit(CHAT_MESSAGE_PAGE_SIZE);
       if (error) throw error;
-      if (!shouldApplyChatResponse(generation, messageRequestRef.current.generation)) return;
+      if (!ownsChatRequest(owner, messageRequestRef.current) || chatIdRef.current !== currentChatId) return;
       const older = [...(data || [])].reverse();
       hasOlderMessagesRef.current = older.length === CHAT_MESSAGE_PAGE_SIZE;
       setHasOlderMessages(hasOlderMessagesRef.current);
@@ -716,7 +752,7 @@ export default function PersonalChat() {
     } catch (error) {
       console.error("Failed to load earlier messages:", error);
     } finally {
-      messageRequestRef.current.older = false;
+      if (messageRequestRef.current.older === owner) messageRequestRef.current.older = null;
     }
   };
 
@@ -724,8 +760,17 @@ export default function PersonalChat() {
   useEffect(() => {
     if (!chatId) return;
 
+    const owner: ChatRequestOwner = {
+      generation: messageRequestRef.current.generation + 1,
+      chatId,
+    };
+    messageRequestRef.current.generation = owner.generation;
+    messageRequestRef.current.chatId = chatId;
+    messageRequestRef.current.initial = owner;
+    messageRequestRef.current.older = null;
+    messageRequestRef.current.reconcile = null;
+
     const loadInitial = async () => {
-      const generation = ++messageRequestRef.current.generation;
       hasOlderMessagesRef.current = true;
       setHasOlderMessages(true);
       setLoading(true);
@@ -741,7 +786,7 @@ export default function PersonalChat() {
 
       if (error) throw error;
 
-      if (!shouldApplyChatResponse(generation, messageRequestRef.current.generation)) return;
+      if (!ownsChatRequest(owner, messageRequestRef.current)) return;
 
       const initial = mergeMessagesById([...(data || [])].reverse());
       setMessages(initial);
@@ -749,12 +794,18 @@ export default function PersonalChat() {
       setHasOlderMessages(hasOlderMessagesRef.current);
       oldestCursorRef.current = initial.length ? getMessageCursor(initial[0]) : null;
       setLoading(false);
-      requestAnimationFrame(() => scrollToBottom(true));
+      if (messageRequestRef.current.initial === owner) messageRequestRef.current.initial = null;
+      requestAnimationFrame(() => {
+        if (ownsChatRequest(owner, messageRequestRef.current)) scrollToBottom(true);
+      });
     };
 
     loadInitial().catch((error) => {
       console.error("Failed to fetch messages:", error);
-      setLoading(false);
+      if (ownsChatRequest(owner, messageRequestRef.current)) {
+        messageRequestRef.current.initial = null;
+        setLoading(false);
+      }
     });
   }, [chatId]);
 
@@ -1188,34 +1239,7 @@ export default function PersonalChat() {
         }
       });
 
-    // 1. Polling for typing indicator
-    const pollTyping = setInterval(async () => {
-      if (!chatId) return;
-      try {
-        const { data: chat } = await supabase
-          .from("chats")
-          .select("typing_users")
-          .eq("id", chatId)
-          .single();
-
-        const typing = chat?.typing_users || {};
-        const now = Date.now();
-        const activeTypers = new Map();
-
-        Object.entries(typing).forEach(([tUserId, info]: [string, any]) => {
-          if (tUserId !== userId && (now - info.timestamp) < 4000) {
-            activeTypers.set(tUserId, info.name);
-          }
-        });
-        setTypingUsers(activeTypers);
-      } catch (e) {
-        // ignore
-      }
-    }, 2000);
-    // Remember to clear pollTyping in cleanup
-
-
-    // 2. Subscribe to chats table updates (for active call status)
+    // Subscribe to chats table updates (for active call status and typing state).
     const chatChannel = supabase
       .channel(`chat-details-realtime:${chatId}-${uniqueId}`)
       .on("postgres_changes", {
@@ -1241,6 +1265,7 @@ export default function PersonalChat() {
         async (payload) => {
           const updatedChat = payload.new as Chat;
           setChat((prev) => (prev ? { ...prev, ...updatedChat } : updatedChat));
+          applyTypingUsers(updatedChat.typing_users);
 
           // Call state changes
           if (updatedChat.active_call_status === "active" && updatedChat.active_call_room) {
@@ -1287,7 +1312,6 @@ export default function PersonalChat() {
       .subscribe();
 
     return () => {
-      clearInterval(pollTyping);
       supabase.removeChannel(chatChannel);
       if (presenceChannelRef.current) {
         supabase.removeChannel(presenceChannelRef.current);
@@ -1308,6 +1332,7 @@ export default function PersonalChat() {
       if (chatErr) throw chatErr;
       if (chatIdRef.current !== chatId) return;
       setChat(chatData);
+      applyTypingUsers(chatData.typing_users);
 
       if (chatData.active_call_status === "active" && chatData.active_call_room) {
         // Find who started the call

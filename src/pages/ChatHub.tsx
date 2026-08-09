@@ -18,6 +18,7 @@ import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import plugsyLogo from "../assets/images/plugsy_icon.svg";
 import { getCanonicalOneLinkUrl } from "../utils/onelink";
 import { syncClerkUserToSupabase } from "../lib/authUtils";
+import { createRefreshCoordinator, shouldScheduleChatHubRefresh } from "../utils/chatScalability";
 import {
   parseOneLinkProfileBio,
 } from "../../shared/onelink.js";
@@ -75,7 +76,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
   });
   const [loading, setLoading] = useState(true);
   const hasLoadedRef = useRef(false);
-  const inboxRefreshRef = useRef({ inFlight: false, timer: null as ReturnType<typeof setTimeout> | null });
+  const inboxRefreshCoordinator = React.useMemo(() => createRefreshCoordinator(150), [userId, activeTab]);
 
   // DM State
   const [dms, setDms] = useState<ChatWithMember[]>([]);
@@ -265,7 +266,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
 
   useEffect(() => {
     if (userId && activeTab !== "status") {
-      fetchChats();
+      scheduleFetchChats();
     } else if (activeTab === "status") {
       setLoading(false);
     }
@@ -275,7 +276,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     if (!userId) return;
     const interval = setInterval(() => {
       if (activeTab !== "status") {
-        void fetchChats();
+        scheduleFetchChats();
       }
     }, 30000);
     return () => clearInterval(interval);
@@ -285,40 +286,25 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     if (!userId) return;
     const channel = supabase.channel('user-events-' + userId)
       .on('broadcast', { event: 'new_unread' }, () => {
-        scheduleFetchChats();
+        if (shouldScheduleChatHubRefresh("new_unread", userId)) scheduleFetchChats();
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload: any) => {
-        const chatId = payload.new?.chat_id || payload.old?.chat_id;
-        if (chatId && !dmsRef.current.some((chat) => chat.id === chatId)) return;
-        scheduleFetchChats();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'chats' }, () => {
-        scheduleFetchChats();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_members' }, (payload: any) => {
-        if (payload.new?.user_id && payload.new.user_id !== userId && payload.old?.user_id !== userId) return;
-        scheduleFetchChats();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_members', filter: `user_id=eq.${userId}` }, (payload: any) => {
+        if (shouldScheduleChatHubRefresh("chat_members", userId, payload)) scheduleFetchChats();
       })
       .subscribe();
 
     return () => {
-      if (inboxRefreshRef.current.timer) clearTimeout(inboxRefreshRef.current.timer);
+      inboxRefreshCoordinator.dispose();
       supabase.removeChannel(channel).catch(() => {});
     };
   }, [userId, activeTab]);
 
   const scheduleFetchChats = () => {
-    if (inboxRefreshRef.current.timer) clearTimeout(inboxRefreshRef.current.timer);
-    inboxRefreshRef.current.timer = setTimeout(() => {
-      inboxRefreshRef.current.timer = null;
-      void fetchChats();
-    }, 150);
+    inboxRefreshCoordinator.schedule(() => fetchChats());
   };
 
   const fetchChats = async () => {
     if (!userId) return;
-    if (inboxRefreshRef.current.inFlight) return;
-    inboxRefreshRef.current.inFlight = true;
     if (!hasLoadedRef.current) {
       setLoading(true);
     }
@@ -439,7 +425,6 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     } catch (err: any) {
       console.error("Error loading chat hub:", err);
     } finally {
-      inboxRefreshRef.current.inFlight = false;
       setLoading(false);
       hasLoadedRef.current = true;
     }
@@ -563,7 +548,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
       if (chatErr) throw chatErr;
 
       toast.success(`Deleted conversation with ${partnerName}`);
-      fetchChats();
+      scheduleFetchChats();
     } catch (err: any) {
       toast.error(err.message || "Failed to delete conversation");
     }
