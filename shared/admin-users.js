@@ -15,9 +15,10 @@ export const isAdminUsersSuccessPayload = (value) =>
       value.success === true &&
       Array.isArray(value.users) &&
       Array.isArray(value.admins) &&
-      Object.keys(value).length === 3 &&
+      (!value.pagination || typeof value.pagination === "object") &&
+      (Object.keys(value).length === 3 || Object.keys(value).length === 4) &&
       Object.keys(value).every((key) =>
-        ["success", "users", "admins"].includes(key),
+        ["success", "users", "admins", "pagination"].includes(key),
       ),
   );
 
@@ -43,7 +44,11 @@ export async function parseAdminUsersResponse(response) {
   if (!isAdminUsersSuccessPayload(payload)) {
     throw new Error(getAdminUsersFailureMessage(response.status, true));
   }
-  return { users: payload.users, admins: payload.admins };
+  return {
+    users: payload.users,
+    admins: payload.admins,
+    pagination: payload.pagination || { page: 1, pageSize: payload.users.length, total: payload.users.length, hasMore: false },
+  };
 }
 
 export function createAdminUsersRequestGate() {

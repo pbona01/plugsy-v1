@@ -2,7 +2,6 @@ import { LiquidGlass } from "../components/ui/LiquidGlass";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Logo } from '../components/ui/Logo';
 import { motion, AnimatePresence } from 'motion/react';
-import { createClient } from "@supabase/supabase-js";
 import { supabase, setSupabaseAuth } from '../lib/supabase';
 import { useClerk, useUser, useAuth } from '@clerk/clerk-react';
 import { optimizeCloudinaryUrl } from '../lib/cloudinary';
@@ -11,7 +10,7 @@ import { SafeImage } from '../components/SafeImage';
 import { ScaleButton } from '../components/PageTransition';
 import { PlanEditor } from '../components/PlanEditor';
 import { cn } from '../lib/utils';
-import { 
+import {
   Users as UsersIcon, 
   CreditCard, 
   CheckCircle2, 
@@ -60,6 +59,21 @@ import {
   createAdminUsersRequestGate,
   parseAdminUsersResponse,
 } from '../../shared/admin-users.js';
+import {
+  ADMIN_DEFAULT_PAGE_SIZE,
+  createAdminRequestCoordinator,
+} from '../utils/adminScalability';
+
+function AdminPageControls({ page, hasMore, loading, onPrevious, onNext }: { page: number; hasMore: boolean; loading: boolean; onPrevious: () => void; onNext: () => void }) {
+  if (page === 1 && !hasMore) return null;
+  return (
+    <div className="flex items-center justify-end gap-3 text-[10px] font-black uppercase tracking-widest text-brand-text-secondary">
+      <button type="button" onClick={onPrevious} disabled={loading || page <= 1} className="rounded-lg border border-brand-border px-3 py-2 disabled:opacity-40">Previous</button>
+      <span>Page {page}</span>
+      <button type="button" onClick={onNext} disabled={loading || !hasMore} className="rounded-lg border border-brand-border px-3 py-2 disabled:opacity-40">Next</button>
+    </div>
+  );
+}
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -73,12 +87,18 @@ export default function Admin() {
   const [users, setUsers] = useState<any[]>([]);
   const [admins, setAdmins] = useState<any[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [userSearch, setUserSearch] = useState('');
+  const [usersPage, setUsersPage] = useState(1);
+  const [usersHasMore, setUsersHasMore] = useState(false);
   const [adminUsersLoading, setAdminUsersLoading] = useState(false);
   const [adminUsersError, setAdminUsersError] = useState<string | null>(null);
   const [hasConfirmedAdminUsers, setHasConfirmedAdminUsers] = useState(false);
   const adminUsersRequestGateRef = useRef(createAdminUsersRequestGate());
   const adminUsersInFlightRef = useRef<Promise<void> | null>(null);
+  const adminLoadCoordinatorRef = useRef(createAdminRequestCoordinator());
   const [orders, setOrders] = useState<any[]>([]);
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [ordersHasMore, setOrdersHasMore] = useState(false);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [chats, setChats] = useState<any[]>([]);
   const [plans, setPlans] = useState<any[]>([]);
@@ -89,6 +109,8 @@ export default function Admin() {
   const [fetchErrors, setFetchErrors] = useState<Record<string, string | null>>({});
   const [adminSubscriptions, setAdminSubscriptions] = useState<any[]>([]);
   const [adminSubsLoading, setAdminSubsLoading] = useState(false);
+  const [adminSubscriptionsPage, setAdminSubscriptionsPage] = useState(1);
+  const [adminSubscriptionsHasMore, setAdminSubscriptionsHasMore] = useState(false);
   const [overviewMetrics, setOverviewMetrics] = useState<any>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState<string | null>(null);
@@ -98,6 +120,8 @@ export default function Admin() {
   const [oneLinksLoading, setOneLinksLoading] = useState(false);
   const [oneLinksError, setOneLinksError] = useState<string | null>(null);
   const [oneLinksSearch, setOneLinksSearch] = useState('');
+  const [oneLinksPage, setOneLinksPage] = useState(1);
+  const [oneLinksHasMore, setOneLinksHasMore] = useState(false);
   const oneLinksAbortRef = useRef<AbortController | null>(null);
   const oneLinksSequenceRef = useRef(0);
   const oneLinksInFlightRef = useRef(false);
@@ -177,7 +201,7 @@ export default function Admin() {
       if (!userId) return;
       try {
         await setSupabaseAuth(getToken, true);
-        const { data } = await supabase.from('profiles').select('*').eq('clerk_id', userId).maybeSingle();
+        const { data } = await supabase.from('profiles').select('id,clerk_id,email,full_name,username,role,profile_pic_url,image_url').eq('clerk_id', userId).maybeSingle();
         if (data) setCurrentUserProfile(data);
       } catch (e) {
         console.error("Profile fetch error:", e);
@@ -207,7 +231,7 @@ export default function Admin() {
       try {
         const token = await getToken();
         if (!token) throw new Error(ADMIN_USERS_CLIENT_MESSAGES.unauthorized);
-        const response = await fetch("/api/admin?action=list-users", {
+        const response = await fetch(`/api/admin?action=list-users&page=${usersPage}&pageSize=${ADMIN_DEFAULT_PAGE_SIZE}&search=${encodeURIComponent(userSearch.trim().slice(0, 120))}`, {
           method: "GET",
           headers: {
             Accept: "application/json",
@@ -220,6 +244,7 @@ export default function Admin() {
         if (!adminUsersRequestGateRef.current.isCurrent(requestState.id)) return;
         setAllUsers(result.users);
         setAdmins(result.admins);
+        setUsersHasMore(Boolean(result.pagination?.hasMore));
         setHasConfirmedAdminUsers(true);
         setAdminUsersError(null);
       } catch (error: any) {
@@ -251,17 +276,27 @@ export default function Admin() {
         adminUsersInFlightRef.current = null;
       }
     }
-  }, [getToken]);
+  }, [getToken, usersPage, userSearch]);
 
   useEffect(() => {
     if (activeTab !== "users" || !userId) return;
 
-    void fetchAdminUsers();
     return () => {
       adminUsersRequestGateRef.current.invalidate();
       adminUsersInFlightRef.current = null;
     };
-  }, [activeTab, userId, fetchAdminUsers]);
+  }, [activeTab, userId]);
+
+  useEffect(() => {
+    if (activeTab !== "users") return;
+    const timer = window.setTimeout(() => {
+      if (userSearch) setUsersPage(1);
+      adminUsersRequestGateRef.current.invalidate();
+      adminUsersInFlightRef.current = null;
+      void fetchAdminUsers();
+    }, userSearch ? 300 : 0);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, userSearch, usersPage, fetchAdminUsers]);
 
   useEffect(
     () => () => adminUsersRequestGateRef.current.dispose(),
@@ -357,21 +392,25 @@ export default function Admin() {
         setAdminSubsLoading(true);
         const { data: subscriptionsData, error } = await supabase
           .from("orders")
-          .select("*")
+          .select("id,user_id,user_email,product_name,amount,status,delivery_status,order_reference,plan_duration,subscription_started_at,subscription_expires_at,created_at")
           .eq("delivery_status", "login_sent")
-          .order("created_at", { ascending: false });
+          .order("created_at", { ascending: false })
+          .range((adminSubscriptionsPage - 1) * ADMIN_DEFAULT_PAGE_SIZE, adminSubscriptionsPage * ADMIN_DEFAULT_PAGE_SIZE - 1);
 
         console.log("[subscriptions] data:", subscriptionsData, error);
         if (!error) {
            setAdminSubscriptions(subscriptionsData || []);
+           setAdminSubscriptionsHasMore((subscriptionsData || []).length === ADMIN_DEFAULT_PAGE_SIZE);
         }
         setAdminSubsLoading(false);
       };
       fetchAdminSubs();
     }
-  }, [activeTab]);
+  }, [activeTab, adminSubscriptionsPage]);
 
   const [withdrawalsLoading, setWithdrawalsLoading] = useState(false);
+  const [withdrawalsPage, setWithdrawalsPage] = useState(1);
+  const [withdrawalsHasMore, setWithdrawalsHasMore] = useState(false);
 
   const fetchWithdrawals = async () => {
     setWithdrawalsLoading(true);
@@ -381,14 +420,16 @@ export default function Admin() {
 
       const { data, error } = await adminClient
         .from('withdrawals')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('id,user_id,user_email,user_name,amount,status,provider_status,reference,bank_name,account_name,account_number,created_at')
+        .order('created_at', { ascending: false })
+        .range((withdrawalsPage - 1) * ADMIN_DEFAULT_PAGE_SIZE, withdrawalsPage * ADMIN_DEFAULT_PAGE_SIZE - 1);
         
       if (error) {
         console.error("[admin] fetch withdrawals error:", error);
         setFetchErrors(prev => ({ ...prev, withdrawals: true }));
       } else {
         setWithdrawals(data || []);
+        setWithdrawalsHasMore((data || []).length === ADMIN_DEFAULT_PAGE_SIZE);
         setFetchErrors(prev => ({ ...prev, withdrawals: false }));
       }
     } catch (err) {
@@ -403,16 +444,20 @@ export default function Admin() {
     if (activeTab === 'withdrawals') {
       fetchWithdrawals();
     }
-  }, [activeTab]);
+  }, [activeTab, withdrawalsPage]);
 
   const [orderFilter, setOrderFilter] = useState<'pending' | 'all'>('pending');
 
   // Filters for User Table
-  const [userSearch, setUserSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | 'user' | 'admin'>('all');
 
   const handleTabChange = (id: string) => {
     setActiveTab(id);
+    if (['pending', 'orders', 'medals'].includes(id)) setOrdersPage(1);
+    if (id === 'users') setUsersPage(1);
+    if (id === 'onelinks') setOneLinksPage(1);
+    if (id === 'subscriptions') setAdminSubscriptionsPage(1);
+    if (id === 'withdrawals') setWithdrawalsPage(1);
     navigate(`/admin?tab=${id}`, { replace: true });
     setIsSidebarOpen(false);
     
@@ -438,195 +483,103 @@ export default function Admin() {
     }
   }, [tabParam]);
 
-  // Helper to fetch everything
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fetchAll = React.useCallback(async () => {
+    const request = adminLoadCoordinatorRef.current.begin(activeTab);
+    if (!request) return;
+    setLoading(true);
     try {
       const token = await getToken();
       if (!token) return;
-      
       await setSupabaseAuth(getToken, true);
-      
-      const fetchAdminData = async (collection: string, delay = 0, retries = 1) => {
-        try {
-          if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
-          setFetchErrors(prev => ({ ...prev, [collection]: false }));
-
-          // Helper for timeout
-          const timeout = (ms: number) => new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), ms));
-
-          const executeFetch = async () => {
-            console.log(`[executeFetch] Starting fetch for ${collection}...`);
-            // FORCE Direct Table Fetch for all critical tables to bypass middleman API issues & HTML-as-JSON errors
-            const tableMap: Record<string, string> = {
-              'plans': 'plans',
-              'subscriptions': 'subscriptions',
-              'profiles': 'profiles',
-              'orders': 'orders',
-              'chats': 'chats',
-              'messages': 'messages',
-              'withdrawals': 'withdrawals',
-              'portfolio_purchases': 'portfolio_purchases',
-              'site_settings': 'site_settings'
-            };
-            
-            const table = tableMap[collection];
-            
-            if (table) {
-                console.log(`[executeFetch] Mapped ${collection} to table ${table}`);
-                
-                // Use API for critical tables to bypass client-side RLS limits securely
-                if (collection === 'orders' || collection === 'profiles' || collection === 'subscriptions') {
-                  console.log(`[executeFetch] Using API for ${collection} fetch...`);
-                  const res = await fetch(`/api/admin?action=list-${collection}`, {
-                    headers: {
-                      Authorization: `Bearer ${token}`,
-                    },
-                  });
-                  if (res.ok) {
-                    const data = await res.json();
-                    if (data.success) {
-                      if (collection === 'orders') return safeArray(data.orders);
-                      if (collection === 'profiles') return safeArray(data.profiles);
-                      if (collection === 'subscriptions') return safeArray(data.subscriptions);
-                    }
-                  }
-                  console.warn(`[executeFetch] API fetch for ${collection} failed, falling back to direct Supabase...`);
-                }
-
-                const clientToUse = supabase;
-
-                let query = clientToUse.from(table).select('*');
-                
-                if (['profiles', 'orders', 'plans', 'subscriptions', 'withdrawals', 'portfolio_purchases'].includes(collection)) {
-                  query = query.order('created_at', { ascending: false });
-                }
-                
-                if (collection === 'profiles') query = query.limit(1000);
-                if (collection === 'orders') query = query.limit(1000);
-
-                console.log(`[executeFetch] Awaiting supabase query for ${table}...`);
-                const { data, error } = await query;
-                console.log(`[executeFetch] Finished supabase query for ${table}. Error:`, error?.message);
-                
-                if (error) {
-                  console.error(`[ADMIN] Supabase error for ${table}:`, error);
-                  
-                  // Clean anonymous client fallback for tables affected by Clerk JWT RLS errors
-                  if (collection === 'profiles') {
-                    console.log(`[executeFetch] Trying fallback for profiles using clean anonymous client`);
-                    try {
-                      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co';
-                      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_6krQD2xCzjSLtaol0F0YNg_bCk3ZpNa';
-                      const cleanClient = createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
-                      const { data: fallback, error: fallbackErr } = await cleanClient.from('profiles').select('*').order('created_at', { ascending: false }).limit(1000);
-                      if (fallbackErr) throw fallbackErr;
-                      console.log(`[executeFetch] Clean anonymous fallback for profiles succeeded:`, fallback?.length);
-                      return safeArray(fallback);
-                    } catch (fallbackE) {
-                      console.error(`[executeFetch] Clean anonymous fallback for profiles failed:`, fallbackE);
-                    }
-                  }
-
-                  if (collection === 'orders') {
-                    console.log(`[executeFetch] Trying fallback for orders`);
-                    try {
-                      const { data: fallback, error: fallbackErr } = await supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(500);
-                      if (!fallbackErr) return safeArray(fallback);
-                      
-                      // Also try clean anonymous client for orders if standard failed
-                      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co';
-                      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_6krQD2xCzjSLtaol0F0YNg_bCk3ZpNa';
-                      const cleanClient = createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
-                      const { data: fallbackAnon, error: fallbackAnonErr } = await cleanClient.from('orders').select('*').order('created_at', { ascending: false }).limit(500);
-                      if (fallbackAnonErr) throw fallbackAnonErr;
-                      return safeArray(fallbackAnon);
-                    } catch (fallbackE) {
-                      console.error(`[executeFetch] Fallbacks for orders failed:`, fallbackE);
-                    }
-                  }
-                  
-                  throw error;
-                }
-                
-                return safeArray(data);
-            }
-
-            // We removed intermediate APIs in favor of direct DB queries to stay under Vercel 12 fn limit.
-            // All essential tables are covered above. Return empty array if requested collection not covered.
-            return [];
-          };
-
-          // Wrap fetch with 45s timeout
-          try {
-            return await Promise.race([executeFetch(), timeout(45000)]);
-          } catch (e: any) {
-            if (e.message === 'TIMEOUT' && retries > 0) {
-              console.warn(`Retrying fetch for ${collection} due to timeout...`);
-              return fetchAdminData(collection, 1000, retries - 1);
-            }
-            throw e;
-          }
-        } catch (e) {
-          console.error(`Error fetching ${collection}:`, e);
-          setFetchErrors(prev => ({ ...prev, [collection]: true }));
-          return collection === 'site_settings' ? {} : [];
-        }
+      const headers = { Accept: "application/json", Authorization: `Bearer ${token}` };
+      const loadApiPage = async (action: string, page = 1) => {
+        const response = await fetch(`/api/admin?action=${action}&page=${page}&pageSize=${ADMIN_DEFAULT_PAGE_SIZE}`, {
+          headers, cache: "no-store", signal: request.controller.signal,
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || payload?.success !== true) throw new Error(`${action} failed`);
+        return payload;
       };
-
-      const [
-        usersData,
-        ordersData,
-        subsData,
-        chatsData,
-        plansData,
-        withdrawalsData,
-        portfolioData,
-        configData
-      ] = await Promise.all([
-        fetchAdminData('profiles', 500),
-        fetchAdminData('orders'),
-        fetchAdminData('subscriptions', 1000), // 1s delay
-        fetchAdminData('chats', 500),
-        fetchAdminData('plans', 500),
-        tabParam !== 'pending' ? fetchAdminData('withdrawals', 1500) : Promise.resolve(null),
-        tabParam !== 'pending' ? fetchAdminData('portfolio_purchases', 1000) : Promise.resolve(null),
-        tabParam !== 'pending' ? fetchAdminData('site_settings', 500) : Promise.resolve(null)
-      ]);
-
-      if (usersData) setUsers(usersData);
-      if (ordersData) setOrders(ordersData);
-      if (subsData) setSubscriptions(subsData);
-      if (chatsData) setChats(chatsData);
-      if (plansData) setPlans(plansData);
-      if (portfolioData) setPortfolioPurchases(portfolioData);
-      if (withdrawalsData !== null && withdrawalsData !== undefined) setWithdrawals(withdrawalsData);
-      
-      if (configData !== null && configData !== undefined) {
-        const isKeyValPattern = configData.length > 0 && 'setting_key' in configData[0];
-        if (isKeyValPattern) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const settingsObj = configData.reduce((acc: any, item: any) => {
-            acc[item.setting_key] = item.setting_value;
-            return acc;
-          }, {});
-          setSiteSettings(settingsObj);
-        } else if (configData.length > 0) {
-          setSiteSettings(configData[0]);
+      const loadTablePage = async (table: string, columns: string, orderColumn = "created_at") => {
+        const { data, error } = await supabase.from(table).select(columns).order(orderColumn, { ascending: false }).range(0, ADMIN_DEFAULT_PAGE_SIZE - 1);
+        if (error) throw error;
+        return safeArray(data);
+      };
+      const sharedChatsPromise = loadTablePage("chats", "id,user_id,chat_type,status,needs_admin_attention,last_message,last_message_at,created_at,updated_at");
+      void sharedChatsPromise.then((chatsData) => {
+        if (adminLoadCoordinatorRef.current.owns(request)) setChats(chatsData);
+      });
+      let payload: any;
+      switch (activeTab) {
+        case "overview": {
+          const [ordersData, chatsData, subscriptionsData] = await Promise.all([
+            loadApiPage("list-orders"),
+            sharedChatsPromise,
+            loadTablePage("subscriptions", "id,user_id,order_id,status,ends_at,created_at"),
+          ]);
+          if (adminLoadCoordinatorRef.current.owns(request)) {
+            setOrders(safeArray(ordersData.orders));
+            setChats(chatsData);
+            setSubscriptions(subscriptionsData);
+          }
+          break;
         }
+        case "pending":
+        case "orders":
+        case "medals":
+          payload = await loadApiPage("list-orders", ordersPage);
+          if (adminLoadCoordinatorRef.current.owns(request)) {
+            setOrders(safeArray(payload.orders));
+            setOrdersHasMore(Boolean(payload.pagination?.hasMore));
+          }
+          break;
+        case "broadcast":
+          payload = await loadApiPage("list-users");
+          if (adminLoadCoordinatorRef.current.owns(request)) {
+            setAllUsers(safeArray(payload.users));
+            setUsers(safeArray(payload.users));
+            setAdmins(safeArray(payload.admins));
+          }
+          break;
+        case "communities":
+        case "chats": {
+          const chatsData = await sharedChatsPromise;
+          if (adminLoadCoordinatorRef.current.owns(request)) setChats(chatsData);
+          break;
+        }
+        case "plans": {
+          const plansData = await loadTablePage("plans", "*");
+          if (adminLoadCoordinatorRef.current.owns(request)) setPlans(plansData);
+          break;
+        }
+        case "settings": {
+          const configData = await loadTablePage("site_settings", "*");
+          if (adminLoadCoordinatorRef.current.owns(request) && configData.length > 0) {
+            const settingsObj = configData[0]?.setting_key
+              ? configData.reduce((acc: Record<string, string>, item: any) => ({ ...acc, [item.setting_key]: item.setting_value }), {})
+              : configData[0];
+            setSiteSettings(settingsObj);
+          }
+          break;
+        }
+        default:
+          break;
       }
-    } catch (e) {
-      console.error("Admin fetch error:", e);
+    } catch (error: any) {
+      if (error?.name !== "AbortError" && adminLoadCoordinatorRef.current.owns(request)) {
+        console.error("Admin tab fetch error:", error);
+        setFetchErrors(prev => ({ ...prev, [activeTab]: true }));
+      }
     } finally {
-      setLoading(false);
+      if (adminLoadCoordinatorRef.current.owns(request)) setLoading(false);
     }
-  }, [getToken, tabParam]);
+  }, [activeTab, getToken, ordersPage]);
 
   useEffect(() => {
     setLoading(true);
     
     // Initial fetch
-    fetchAll();
+    void fetchAll();
 
       const uniqueSuffix = `${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
 
@@ -714,6 +667,8 @@ export default function Admin() {
       };
     }, [fetchAll, userId]);
 
+  useEffect(() => () => adminLoadCoordinatorRef.current.dispose(), []);
+
 
   const refreshOverview = useCallback(async () => {
     if (!userId || overviewAbortRef.current) return;
@@ -766,7 +721,8 @@ export default function Admin() {
     : { combinedRevenue: null, totalRevenue: null, portfolioRevenue: null };
 
   const loadPublishedOneLinks = useCallback(async () => {
-    if (!userId || oneLinksInFlightRef.current) return;
+    if (!userId) return;
+    oneLinksAbortRef.current?.abort();
     oneLinksInFlightRef.current = true;
     const sequence = ++oneLinksSequenceRef.current;
     const controller = new AbortController();
@@ -774,10 +730,11 @@ export default function Admin() {
     setOneLinksLoading(true);
     try {
       const token = await getToken();
-      const response = await fetch("/api/admin?action=list-published-onelinks", { headers: { Accept: "application/json", Authorization: `Bearer ${token}` }, cache: "no-store", signal: controller.signal });
+      const response = await fetch(`/api/admin?action=list-published-onelinks&page=${oneLinksPage}&pageSize=${ADMIN_DEFAULT_PAGE_SIZE}&search=${encodeURIComponent(oneLinksSearch.trim().slice(0, 120))}`, { headers: { Accept: "application/json", Authorization: `Bearer ${token}` }, cache: "no-store", signal: controller.signal });
       const payload = await response.json().catch(() => null);
       if (!response.ok || payload?.success !== true || !Array.isArray(payload.oneLinks) || sequence !== oneLinksSequenceRef.current) throw new Error("Published One Links are unavailable.");
       setPublishedOneLinks(payload.oneLinks);
+      setOneLinksHasMore(Boolean(payload.pagination?.hasMore));
       setOneLinksUpdatedAt(payload.updatedAt || null);
       setOneLinksError(null);
     } catch (error: any) { if (error?.name !== 'AbortError' && sequence === oneLinksSequenceRef.current) setOneLinksError("Published One Links refresh failed; showing the previous confirmed list."); }
@@ -789,7 +746,7 @@ export default function Admin() {
         oneLinksAbortRef.current = null;
       }
     }
-  }, [getToken, userId]);
+  }, [getToken, userId, oneLinksPage, oneLinksSearch]);
 
   useEffect(() => {
     if (activeTab === "onelinks") void loadPublishedOneLinks();
@@ -799,7 +756,20 @@ export default function Admin() {
       oneLinksAbortRef.current = null;
       oneLinksInFlightRef.current = false;
     };
-  }, [activeTab, loadPublishedOneLinks]);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== "onelinks") return;
+    const timer = window.setTimeout(() => {
+      setOneLinksPage(1);
+      void loadPublishedOneLinks();
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, oneLinksSearch]);
+
+  useEffect(() => {
+    if (activeTab === "onelinks" && oneLinksPage > 1) void loadPublishedOneLinks();
+  }, [activeTab, oneLinksPage, loadPublishedOneLinks]);
 
   const visibleOneLinks = publishedOneLinks.filter((entry) => {
     const query = oneLinksSearch.toLowerCase();
@@ -1337,6 +1307,7 @@ export default function Admin() {
               <div className="space-y-8">
                 <header>
                   <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">Pending Queue</h2>
+                  <AdminPageControls page={ordersPage} hasMore={ordersHasMore} loading={loading} onPrevious={() => setOrdersPage(page => Math.max(1, page - 1))} onNext={() => setOrdersPage(page => page + 1)} />
                   <p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs flex items-center gap-2">
                     Awaiting Fulfillment (logins delivery)
                     <button onClick={fetchAll} className="hover:text-brand-accent p-1 transition-colors"><RefreshCw size={14}/></button>
@@ -1576,7 +1547,7 @@ export default function Admin() {
               <div className="space-y-8">
                 <header className="flex flex-wrap items-center justify-between gap-4">
                   <div><h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">One Links</h2><p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">{publishedOneLinks.length} published pages {oneLinksUpdatedAt ? `· updated ${new Date(oneLinksUpdatedAt).toLocaleString()}` : ''}</p>{oneLinksError && <p className="text-xs text-orange-500 mt-2">{oneLinksError}</p>}</div>
-                  <div className="flex gap-3"><input aria-label="Search published One Links" value={oneLinksSearch} onChange={(event) => setOneLinksSearch(event.target.value)} placeholder="Search owner or username" className="h-10 px-4 rounded-xl bg-brand-surface border border-brand-border text-sm" /><button onClick={() => void loadPublishedOneLinks()} disabled={oneLinksLoading} className="btn-primary h-10 px-4 flex items-center gap-2"><RefreshCw size={14} /> Refresh</button></div>
+                  <div className="flex flex-wrap gap-3"><input aria-label="Search published One Links" value={oneLinksSearch} onChange={(event) => setOneLinksSearch(event.target.value)} placeholder="Search owner or username" className="h-10 px-4 rounded-xl bg-brand-surface border border-brand-border text-sm" /><button onClick={() => void loadPublishedOneLinks()} disabled={oneLinksLoading} className="btn-primary h-10 px-4 flex items-center gap-2"><RefreshCw size={14} /> Refresh</button><AdminPageControls page={oneLinksPage} hasMore={oneLinksHasMore} loading={oneLinksLoading} onPrevious={() => setOneLinksPage(page => Math.max(1, page - 1))} onNext={() => setOneLinksPage(page => page + 1)} /></div>
                 </header>
                 {oneLinksLoading && publishedOneLinks.length === 0 ? <div className="card-premium p-16 text-center"><Loader2 className="animate-spin mx-auto" /></div> : oneLinksError && publishedOneLinks.length === 0 ? <div className="card-premium p-16 text-center text-red-500">{oneLinksError}</div> : visibleOneLinks.length === 0 ? <div className="card-premium p-16 text-center text-brand-text-secondary">No published One Links found.</div> : <div className="grid gap-4">{visibleOneLinks.map((entry) => <div key={`${entry.ownerClerkId || entry.username}`} className="card-premium p-5 flex flex-wrap items-center justify-between gap-4"><div><p className="font-black">{entry.ownerName} <span className="text-[9px] uppercase text-brand-accent ml-2">{entry.publicationSource}</span></p><p className="text-xs text-brand-text-secondary">{entry.ownerEmail || 'No email'} · @{entry.username}</p></div><div className="flex gap-2"><button onClick={() => navigator.clipboard?.writeText(entry.publicUrl)} className="h-9 px-3 rounded-lg border border-brand-border text-xs">Copy Link</button><a href={entry.publicUrl} target="_blank" rel="noopener noreferrer" className="h-9 px-3 rounded-lg bg-brand-accent text-white text-xs flex items-center">Open Live Link</a></div></div>)}</div>}
               </div>
@@ -1709,6 +1680,7 @@ export default function Admin() {
                 <div className="space-y-4 pt-4">
                   <div className="flex justify-between items-center bg-brand-text/5 p-4 rounded-2xl border border-brand-border">
                     <h3 className="text-xs font-black uppercase tracking-widest text-brand-text">✦ Latest Registered Members / Users ({filteredUsers.length})</h3>
+                    <AdminPageControls page={usersPage} hasMore={usersHasMore} loading={adminUsersLoading} onPrevious={() => setUsersPage(page => Math.max(1, page - 1))} onNext={() => setUsersPage(page => page + 1)} />
                   </div>
                   <div className="overflow-x-auto rounded-[2rem] border border-brand-border bg-brand-surface shadow-xl">
                     <table className="w-full text-left">
@@ -1822,6 +1794,7 @@ export default function Admin() {
                 <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
                   <div>
                     <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">All Orders</h2>
+                    <AdminPageControls page={ordersPage} hasMore={ordersHasMore} loading={loading} onPrevious={() => setOrdersPage(page => Math.max(1, page - 1))} onNext={() => setOrdersPage(page => page + 1)} />
                     <p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">All Recorded Order Transmissions</p>
                   </div>
                 </header>
@@ -2234,6 +2207,7 @@ export default function Admin() {
               <div className="space-y-12">
                 <header>
                   <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">Subscriptions</h2>
+                  <AdminPageControls page={adminSubscriptionsPage} hasMore={adminSubscriptionsHasMore} loading={adminSubsLoading} onPrevious={() => setAdminSubscriptionsPage(page => Math.max(1, page - 1))} onNext={() => setAdminSubscriptionsPage(page => page + 1)} />
                   <p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">Provisioned Authority Monitoring</p>
                 </header>
                 {adminSubsLoading ? (
@@ -2539,6 +2513,7 @@ export default function Admin() {
                   <>
                 <header>
                   <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">Withdrawals</h2>
+                  <AdminPageControls page={withdrawalsPage} hasMore={withdrawalsHasMore} loading={withdrawalsLoading} onPrevious={() => setWithdrawalsPage(page => Math.max(1, page - 1))} onNext={() => setWithdrawalsPage(page => page + 1)} />
                   <p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">Financial Requests</p>
                 </header>
 

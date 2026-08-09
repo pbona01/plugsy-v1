@@ -50,6 +50,30 @@ const MAX_CLERK_PAGES = 100;
 const MAX_CLERK_RECORDS = 10_000;
 const PROFILE_PAGE_SIZE = 1000;
 const MAX_PROFILE_PAGES = 50;
+const ADMIN_DEFAULT_PAGE_SIZE = 50;
+const ADMIN_MAX_PAGE_SIZE = 100;
+const ADMIN_MAX_SEARCH_LENGTH = 120;
+
+const normalizePage = (value) => {
+  const page = Number(value);
+  return Number.isInteger(page) && page > 0 ? page : 1;
+};
+const normalizePageSize = (value) => {
+  const pageSize = Number(value);
+  if (!Number.isInteger(pageSize) || pageSize < 1) return ADMIN_DEFAULT_PAGE_SIZE;
+  return Math.min(ADMIN_MAX_PAGE_SIZE, pageSize);
+};
+const normalizeSearch = (value) => textValue(value).slice(0, ADMIN_MAX_SEARCH_LENGTH);
+const paginationFromRequest = (req) => ({
+  page: normalizePage(req.query?.page || new URL(req.originalUrl || req.url, "http://localhost").searchParams.get("page")),
+  pageSize: normalizePageSize(req.query?.pageSize || new URL(req.originalUrl || req.url, "http://localhost").searchParams.get("pageSize")),
+});
+const paginationPayload = (page, pageSize, total, rowCount) => ({
+  page,
+  pageSize,
+  total: Number.isSafeInteger(total) && total >= 0 ? total : page * pageSize,
+  hasMore: page * pageSize < total || rowCount >= pageSize,
+});
 
 export class AdminUsersFailure extends Error {
   constructor(code, status = 503, details = {}) {
@@ -1003,14 +1027,16 @@ async function handleListSubscriptions(req, res) {
     const writer = await requireVerifiedAdmin(req, res, supabase);
     if (!writer) return;
 
-    const { data: subscriptions, error } = await supabase
+    const { page, pageSize } = paginationFromRequest(req);
+    const from = (page - 1) * pageSize;
+    const { data: subscriptions, error, count } = await supabase
       .from("subscriptions")
-      .select("*")
+      .select("id,user_id,order_id,status,product_name,amount,plan_duration,order_reference,subscription_started_at,subscription_expires_at,ends_at,created_at,updated_at", { count: "exact" })
       .order("created_at", { ascending: false })
-      .limit(1000);
+      .range(from, from + pageSize - 1);
 
     if (error) throw error;
-    return res.status(200).json({ success: true, subscriptions });
+    return res.status(200).json({ success: true, subscriptions, pagination: paginationPayload(page, pageSize, count, subscriptions?.length || 0) });
   } catch {
     return res.status(500).json({ success: false, error: "LIST_SUBSCRIPTIONS_FAILED" });
   }
@@ -1022,14 +1048,16 @@ async function handleListProfiles(req, res) {
     const writer = await requireVerifiedAdmin(req, res, supabase);
     if (!writer) return;
 
-    const { data: profiles, error } = await supabase
+    const { page, pageSize } = paginationFromRequest(req);
+    const from = (page - 1) * pageSize;
+    const { data: profiles, error, count } = await supabase
       .from("profiles")
-      .select("*")
+      .select("id,clerk_id,email,full_name,username,wallet_tag,role,image_url,profile_pic_url,last_login_at,created_at", { count: "exact" })
       .order("created_at", { ascending: false })
-      .limit(1000);
+      .range(from, from + pageSize - 1);
 
     if (error) throw error;
-    return res.status(200).json({ success: true, profiles });
+    return res.status(200).json({ success: true, profiles, pagination: paginationPayload(page, pageSize, count, profiles?.length || 0) });
   } catch {
     return res.status(500).json({ success: false, error: "LIST_PROFILES_FAILED" });
   }
@@ -1153,8 +1181,17 @@ export async function handleListPublishedOneLinks(req, res, dependencies = {}) {
       .select("id,clerk_id,email,full_name,username,bio,profile_pic_url,image_url,one_link_username,one_link_display_name,one_link_avatar_url,one_link_settings,one_link_updated_at,updated_at")
       .order("id", { ascending: true })
       .range(from, to), { expectedCount: profileCountResult.count });
-    const oneLinks = collectPublishedOneLinks(profiles);
-    return res.status(200).json({ success: true, oneLinks, total: oneLinks.length, updatedAt: new Date().toISOString() });
+    const allOneLinks = collectPublishedOneLinks(profiles);
+    const { page, pageSize } = paginationFromRequest(req);
+    const url = new URL(req.originalUrl || req.url, "http://localhost");
+    const search = normalizeSearch(req.query?.search || url.searchParams.get("search"));
+    const filteredOneLinks = search
+      ? allOneLinks.filter((entry) => [entry.ownerName, entry.ownerEmail, entry.username]
+        .some((value) => String(value || "").toLowerCase().includes(search.toLowerCase())))
+      : allOneLinks;
+    const from = (page - 1) * pageSize;
+    const oneLinks = filteredOneLinks.slice(from, from + pageSize);
+    return res.status(200).json({ success: true, oneLinks, total: filteredOneLinks.length, pagination: paginationPayload(page, pageSize, filteredOneLinks.length, oneLinks.length), updatedAt: new Date().toISOString() });
   } catch (error) {
     const code = error instanceof AdminOverviewFailure ? error.code : "ADMIN_OVERVIEW_DATABASE_ERROR";
     return res.status(503).json({ success: false, code, error: "Published One Links are temporarily unavailable." });
@@ -1201,12 +1238,24 @@ export async function handleListUsers(req, res, dependencies = {}) {
       throw new AdminUsersFailure("ADMIN_USERS_RESPONSE_INVALID", 502);
     }
     const normalizedUsers = normalizeAdminUsers(clerkUsers, profiles);
+    const { page, pageSize } = paginationFromRequest(req);
+    const url = new URL(req.originalUrl || req.url, "http://localhost");
+    const paginationRequested = ["page", "pageSize", "search"].some((key) => url.searchParams.has(key));
+    const search = normalizeSearch(req.query?.search || url.searchParams.get("search"));
+    const filteredUsers = search
+      ? normalizedUsers.filter((user) => [user.email, user.full_name, user.username, user.clerk_id]
+        .some((value) => String(value || "").toLowerCase().includes(search.toLowerCase())))
+      : normalizedUsers;
+    const from = (page - 1) * pageSize;
+    const pageUsers = filteredUsers.slice(from, from + pageSize);
 
-    return res.status(200).json({
+    const response = {
       success: true,
-      users: normalizedUsers,
-      admins: normalizedUsers.filter((user) => user.role === "admin"),
-    });
+      users: pageUsers,
+      admins: filteredUsers.filter((user) => user.role === "admin"),
+    };
+    if (paginationRequested) response.pagination = paginationPayload(page, pageSize, filteredUsers.length, pageUsers.length);
+    return res.status(200).json(response);
   } catch (error) {
     const failure =
       error instanceof AdminUsersFailure
@@ -1275,14 +1324,16 @@ async function handleListPortfolioPurchases(req, res) {
     const writer = await requireVerifiedAdmin(req, res, supabase);
     if (!writer) return;
 
-    const { data: portfolio_purchases, error } = await supabase
+    const { page, pageSize } = paginationFromRequest(req);
+    const from = (page - 1) * pageSize;
+    const { data: portfolio_purchases, error, count } = await supabase
       .from("portfolio_purchases")
-      .select("*")
+      .select("id,user_id,user_email,user_name,portfolio_id,amount,status,created_at,updated_at", { count: "exact" })
       .order("created_at", { ascending: false })
-      .limit(1000);
+      .range(from, from + pageSize - 1);
 
     if (error) throw error;
-    return res.status(200).json({ success: true, portfolio_purchases });
+    return res.status(200).json({ success: true, portfolio_purchases, pagination: paginationPayload(page, pageSize, count, portfolio_purchases?.length || 0) });
   } catch {
     return res.status(500).json({ success: false, error: "LIST_PORTFOLIO_PURCHASES_FAILED" });
   }
@@ -1294,14 +1345,16 @@ async function handleListOrders(req, res) {
     const writer = await requireVerifiedAdmin(req, res, supabase);
     if (!writer) return;
 
-    const { data: orders, error } = await supabase
+    const { page, pageSize } = paginationFromRequest(req);
+    const from = (page - 1) * pageSize;
+    const { data: orders, error, count } = await supabase
       .from("orders")
-      .select("*")
+      .select("id,user_id,user_email,user_name,product_name,amount,status,payment_status,delivery_status,plan_duration,plan_name,plan_months,subscription_started_at,subscription_expires_at,created_at,updated_at,order_reference,paystack_ref,purchase_code_used,reward_status,logins,logins_sent_at,completed_at,confirmed_by", { count: "exact" })
       .order("created_at", { ascending: false })
-      .limit(1000);
+      .range(from, from + pageSize - 1);
 
     if (error) throw error;
-    return res.status(200).json({ success: true, orders });
+    return res.status(200).json({ success: true, orders, pagination: paginationPayload(page, pageSize, count, orders?.length || 0) });
   } catch {
     return res.status(500).json({ success: false, error: "LIST_ORDERS_FAILED" });
   }
