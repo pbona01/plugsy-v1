@@ -3,8 +3,10 @@ import { readFile, readdir } from "node:fs/promises";
 import { test } from "node:test";
 
 const candidateUrl = new URL("../supabase/rollouts/database_scalability_v1_candidates.sql", import.meta.url);
+const documentationUrl = new URL("../docs/database-scalability-v1.md", import.meta.url);
 const preflightUrl = new URL("../supabase/audits/database_scalability_v1_preflight.sql", import.meta.url);
 const candidate = await readFile(candidateUrl, "utf8");
+const documentation = await readFile(documentationUrl, "utf8");
 const preflight = await readFile(preflightUrl, "utf8");
 
 const readyCandidates = [
@@ -16,8 +18,6 @@ const readyCandidates = [
   "idx_orders_delivery_created_at",
   "idx_subscriptions_user_status",
   "idx_status_views_viewer_status",
-  "idx_status_views_status_viewed_at",
-  "idx_vp_portfolios_slug",
 ];
 
 const sourceContracts: Record<string, { source: string; markers: string[] }> = {
@@ -53,14 +53,6 @@ const sourceContracts: Record<string, { source: string; markers: string[] }> = {
     source: "../src/components/chat/StatusHub.tsx",
     markers: ['.from("status_views")', '.eq("viewer_id"', '.eq("status_id"'],
   },
-  idx_status_views_status_viewed_at: {
-    source: "../src/components/chat/StatusHub.tsx",
-    markers: ['.from("status_views")', '.eq("status_id"', '.order("viewed_at"'],
-  },
-  idx_vp_portfolios_slug: {
-    source: "../src/pages/PublicPortfolio.tsx",
-    markers: ['.from("vp_portfolios")', '.eq("slug"'],
-  },
 };
 
 const stripSqlComments = (sql: string) => sql.replace(/--[^\r\n]*/g, "");
@@ -85,8 +77,21 @@ test("candidate names are unique and the two plan-testing candidates are absent"
   const names = [...candidate.matchAll(/create\s+index\s+if\s+not\s+exists\s+(\w+)/gi)].map((match) => match[1]);
   assert.deepEqual(names, readyCandidates);
   assert.equal(new Set(names).size, names.length);
+  assert.doesNotMatch(candidate, /create\s+index\s+if\s+not\s+exists\s+idx_status_views_status_viewed_at/i);
+  assert.doesNotMatch(candidate, /create\s+index\s+if\s+not\s+exists\s+idx_vp_portfolios_slug/i);
+  assert.match(candidate, /idx_status_views_status_viewed_at[\s\S]*NOT APPLIED[\s\S]*NEEDS LIVE PLAN TESTING/i);
+  assert.match(candidate, /idx_vp_portfolios_slug[\s\S]*NOT APPLIED[\s\S]*REDUNDANT IN PRODUCTION/i);
   assert.doesNotMatch(candidate, /idx_orders_status_created_at/);
   assert.doesNotMatch(candidate, /idx_statuses_user_expires_created/);
+});
+
+test("production rollout documentation records the verified result", () => {
+  assert.match(documentation, /Production rollout\s+2026-08-09/);
+  assert.match(documentation, /Phase 2[\s\S]*COMPLETE/);
+  assert.match(documentation, /indisvalid\s*=\s*true/);
+  assert.match(documentation, /indisready\s*=\s*true/);
+  assert.match(documentation, /indislive\s*=\s*true/);
+  assert.match(candidate, /valid=true, ready=true, live=true/);
 });
 
 test("every ready candidate maps to a specific repository query shape", async () => {
@@ -158,4 +163,8 @@ test("read-only preflight inspects catalog structure and query plans without exe
   assert.match(preflight, /expires_at > '<NOW>'/i);
   assert.match(preflight, /EXPLAIN \(COSTS, VERBOSE, FORMAT TEXT\)/g);
   assert.doesNotMatch(executableSql, /EXPLAIN\s+ANALYZE/i);
+});
+
+test("rollout artifact has no destructive SQL", () => {
+  assert.doesNotMatch(candidate, /\b(drop|truncate|delete|update|insert|alter|grant|revoke)\b/i);
 });
