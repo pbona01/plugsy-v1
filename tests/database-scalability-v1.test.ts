@@ -1,65 +1,134 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { test } from "node:test";
 
-const migrationUrl = new URL("../supabase/migrations/20260809090000_database_scalability_v1.sql", import.meta.url);
-const migration = await readFile(migrationUrl, "utf8");
+const candidateUrl = new URL("../supabase/rollouts/database_scalability_v1_candidates.sql", import.meta.url);
+const preflightUrl = new URL("../supabase/audits/database_scalability_v1_preflight.sql", import.meta.url);
+const candidate = await readFile(candidateUrl, "utf8");
+const preflight = await readFile(preflightUrl, "utf8");
 
-const expectedIndexes = [
+const readyCandidates = [
   "idx_messages_chat_created_id",
   "idx_chat_members_user_chat",
   "idx_chat_members_chat_user",
   "idx_calls_chat_status_started",
   "idx_chats_public_group_member_count",
-  "idx_orders_status_created_at",
   "idx_orders_delivery_created_at",
   "idx_subscriptions_user_status",
-  "idx_statuses_user_expires_created",
   "idx_status_views_viewer_status",
   "idx_status_views_status_viewed_at",
   "idx_vp_portfolios_slug",
 ];
 
-const queryEvidence: Record<string, { source: string; marker: string; table: string }> = {
-  idx_messages_chat_created_id: { source: "../src/pages/PersonalChat.tsx", marker: '.from("messages")', table: "messages" },
-  idx_chat_members_user_chat: { source: "../src/pages/ChatHub.tsx", marker: '.from("chat_members")', table: "chat_members" },
-  idx_chat_members_chat_user: { source: "../src/pages/PersonalChat.tsx", marker: '.from("chat_members")', table: "chat_members" },
-  idx_calls_chat_status_started: { source: "../src/pages/PersonalChat.tsx", marker: '.from("calls")', table: "calls" },
-  idx_chats_public_group_member_count: { source: "../src/pages/ChatHub.tsx", marker: '.from("chats")', table: "chats" },
-  idx_orders_status_created_at: { source: "../src/pages/Dashboard.tsx", marker: ".from('orders')", table: "orders" },
-  idx_orders_delivery_created_at: { source: "../src/pages/Admin.tsx", marker: '.from("orders")', table: "orders" },
-  idx_subscriptions_user_status: { source: "../src/pages/Dashboard.tsx", marker: ".from('subscriptions')", table: "subscriptions" },
-  idx_statuses_user_expires_created: { source: "../src/components/chat/StatusHub.tsx", marker: '.from("statuses")', table: "statuses" },
-  idx_status_views_viewer_status: { source: "../src/components/chat/StatusHub.tsx", marker: '.from("status_views")', table: "status_views" },
-  idx_status_views_status_viewed_at: { source: "../src/components/chat/StatusHub.tsx", marker: '.from("status_views")', table: "status_views" },
-  idx_vp_portfolios_slug: { source: "../src/pages/PublicPortfolio.tsx", marker: '.from("vp_portfolios")', table: "vp_portfolios" },
+const sourceContracts: Record<string, { source: string; markers: string[] }> = {
+  idx_messages_chat_created_id: {
+    source: "../src/pages/PersonalChat.tsx",
+    markers: ['.from("messages")', '.eq("chat_id"', '.order("created_at"', '.order("id"', ".limit(CHAT_MESSAGE_PAGE_SIZE)"],
+  },
+  idx_chat_members_user_chat: {
+    source: "../src/pages/ChatHub.tsx",
+    markers: ['.from("chat_members")', '.eq("user_id"'],
+  },
+  idx_chat_members_chat_user: {
+    source: "../src/pages/PersonalChat.tsx",
+    markers: ['.from("chat_members")', '.eq("chat_id"'],
+  },
+  idx_calls_chat_status_started: {
+    source: "../src/pages/PersonalChat.tsx",
+    markers: ['.from("calls")', '.eq("chat_id"', '.eq("status", "active")', '.order("started_at"'],
+  },
+  idx_chats_public_group_member_count: {
+    source: "../src/pages/ChatHub.tsx",
+    markers: ['.from("chats")', '.eq("chat_type", "group")', '.eq("is_public", true)', '.order("member_count"'],
+  },
+  idx_orders_delivery_created_at: {
+    source: "../src/pages/Admin.tsx",
+    markers: ['.from("orders")', '.eq("delivery_status", "login_sent")', '.order("created_at"'],
+  },
+  idx_subscriptions_user_status: {
+    source: "../src/pages/Dashboard.tsx",
+    markers: [".from('subscriptions')", ".eq('user_id'", ".eq('status'"],
+  },
+  idx_status_views_viewer_status: {
+    source: "../src/components/chat/StatusHub.tsx",
+    markers: ['.from("status_views")', '.eq("viewer_id"', '.eq("status_id"'],
+  },
+  idx_status_views_status_viewed_at: {
+    source: "../src/components/chat/StatusHub.tsx",
+    markers: ['.from("status_views")', '.eq("status_id"', '.order("viewed_at"'],
+  },
+  idx_vp_portfolios_slug: {
+    source: "../src/pages/PublicPortfolio.tsx",
+    markers: ['.from("vp_portfolios")', '.eq("slug"'],
+  },
 };
 
-test("migration contains only additive non-unique index creation", () => {
-  const prohibited = /\bDROP\b|\bTRUNCATE\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w|\bINSERT\s+INTO\b|\bALTER\s+TABLE\b|DISABLE\s+ROW\s+LEVEL\s+SECURITY|CREATE\s+POLICY|DROP\s+POLICY|\bGRANT\b|\bREVOKE\b|CREATE\s+UNIQUE\s+INDEX|CREATE\s+TRIGGER|CREATE\s+FUNCTION/i;
-  assert.doesNotMatch(migration, prohibited);
-  assert.match(migration, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS/i);
-  assert.doesNotMatch(migration, /CREATE\s+INDEX\s+(?!IF\s+NOT\s+EXISTS)/i);
+const stripSqlComments = (sql: string) => sql.replace(/--[^\r\n]*/g, "");
+
+test("Phase 2 has no automatically runnable Supabase migration", async () => {
+  const migrationFiles = await readdir(new URL("../supabase/migrations/", import.meta.url));
+  assert.equal(migrationFiles.some((name) => name.includes("database_scalability_v1")), false);
 });
 
-test("migration has the expected index names", () => {
-  const names = [...migration.matchAll(/create\s+index\s+if\s+not\s+exists\s+(\w+)/gi)].map((match) => match[1]);
-  assert.deepEqual(names, expectedIndexes);
+test("candidate rollout contains only non-unique CREATE INDEX statements", () => {
+  const executableSql = stripSqlComments(candidate);
+  const statements = executableSql.split(";").map((statement) => statement.trim()).filter(Boolean);
+  assert.equal(statements.length, readyCandidates.length);
+  for (const statement of statements) {
+    assert.match(statement, /^create\s+index\s+if\s+not\s+exists\s+\w+/i);
+  }
+  assert.doesNotMatch(executableSql, /create\s+unique\s+index/i);
+  assert.doesNotMatch(executableSql, /\b(drop|truncate|delete|update|insert|alter|grant|revoke)\b/i);
+});
+
+test("candidate names are unique and the two plan-testing candidates are absent", () => {
+  const names = [...candidate.matchAll(/create\s+index\s+if\s+not\s+exists\s+(\w+)/gi)].map((match) => match[1]);
+  assert.deepEqual(names, readyCandidates);
   assert.equal(new Set(names).size, names.length);
+  assert.doesNotMatch(candidate, /idx_orders_status_created_at/);
+  assert.doesNotMatch(candidate, /idx_statuses_user_expires_created/);
 });
 
-test("every implemented index maps to repository query evidence", async () => {
-  for (const indexName of expectedIndexes) {
-    const evidence = queryEvidence[indexName];
-    assert.ok(evidence, `missing query mapping for ${indexName}`);
-    const source = await readFile(new URL(evidence.source, import.meta.url), "utf8");
-    assert.ok(source.includes(evidence.marker), `${indexName} query source missing`);
-    assert.match(migration, new RegExp(`on\\s+public\\.${evidence.table}\\b`, "i"), `${indexName} references an unproved table`);
+test("every ready candidate maps to a specific repository query shape", async () => {
+  for (const indexName of readyCandidates) {
+    const contract = sourceContracts[indexName];
+    assert.ok(contract, `missing query contract for ${indexName}`);
+    const source = await readFile(new URL(contract.source, import.meta.url), "utf8");
+    for (const marker of contract.markers) {
+      assert.ok(source.includes(marker), `${indexName} is missing query marker ${marker}`);
+    }
   }
 });
 
-test("message index matches Phase 1 cursor ordering", async () => {
-  assert.match(migration, /on\s+public\.messages\s*\(\s*chat_id,\s*created_at\s+desc,\s*id\s+desc\s*\)/i);
-  const source = await readFile(new URL("../src/pages/PersonalChat.tsx", import.meta.url), "utf8");
-  assert.match(source, /order\("created_at",\s*\{\s*ascending:\s*false\s*\}\)[\s\S]*order\("id",\s*\{\s*ascending:\s*false\s*\}\)[\s\S]*limit\(CHAT_MESSAGE_PAGE_SIZE\)/);
+test("runtime source does not reference the manual rollout artifact", async () => {
+  const runtimeFiles: string[] = [];
+  const visit = async (directory: URL): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const entryUrl = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, directory);
+      if (entry.isDirectory()) await visit(entryUrl);
+      else if (/\.(ts|tsx|js|jsx)$/.test(entry.name)) runtimeFiles.push(entryUrl.href);
+    }
+  };
+  await visit(new URL("../src/", import.meta.url));
+  for (const fileUrl of runtimeFiles) {
+    const source = await readFile(new URL(fileUrl), "utf8");
+    assert.doesNotMatch(source, /database_scalability_v1_candidates|supabase\/rollouts/);
+  }
+});
+
+test("read-only preflight inspects catalog structure and query plans without execution", () => {
+  const executableSql = stripSqlComments(preflight);
+  assert.doesNotMatch(executableSql, /\b(insert|update|delete|drop|truncate|alter|grant|revoke)\b/i);
+  assert.match(preflight, /pg_index/i);
+  assert.match(preflight, /pg_class/i);
+  assert.match(preflight, /pg_am/i);
+  assert.match(preflight, /pg_attribute/i);
+  assert.match(preflight, /pg_get_expr/i);
+  assert.match(preflight, /indisvalid/i);
+  assert.match(preflight, /indisready/i);
+  assert.match(preflight, /indisunique/i);
+  assert.match(preflight, /indisprimary/i);
+  assert.match(preflight, /equivalent_index_names/i);
+  assert.match(preflight, /EXPLAIN \(COSTS, VERBOSE, FORMAT TEXT\)/g);
+  assert.doesNotMatch(executableSql, /EXPLAIN\s+ANALYZE/i);
 });
