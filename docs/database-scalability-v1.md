@@ -60,9 +60,14 @@ UNTIL LIVE EQUIVALENCE CHECK` in the rollout artifact.
 
 Run `supabase/audits/database_scalability_v1_preflight.sql` manually in a
 reviewed read-only session. It reports table/index size, scan usage, validity,
-readiness, uniqueness, primary status, structural duplicate signatures, and
-candidate-name/equivalence checks. It also contains commented plain `EXPLAIN`
-examples; none are executed by the script.
+readiness, live/uniqueness/primary status, structural duplicate signatures,
+and candidate-name/equivalence checks. Structural traversal uses explicit
+1-based logical positions mapped to the zero-based `int2vector` storage
+subscripts. Exact catalog-vector duplicates are reported separately from
+same-key coverage by UNIQUE/PRIMARY indexes and from prefix/superset review
+signals. It also contains commented plain `EXPLAIN` examples for message
+newer/older cursors, dashboard order ownership, and deferred status plans;
+none are executed by the script.
 
 Then review the output and create a separate approved production rollout.
 Hot/large tables—including messages, orders, and status-related tables—need a
