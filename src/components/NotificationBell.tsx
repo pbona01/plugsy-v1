@@ -21,7 +21,18 @@ export default function NotificationBell() {
     if (disposed.current || currentGeneration !== generation.current) return;
     setSdkState(resolved);
     if (resolved === "unsupported") { setVisible(true); return; }
-    if (await isSubscribed()) { if (!registrationWarning) setVisible(false); return; }
+    if (await isSubscribed()) {
+      const token = await getToken().catch(() => null);
+      const response = await fetch("/api/notifications?action=subscription-status", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }).catch(() => null);
+      const status = response?.ok ? await response.json().catch(() => null) : null;
+      if (disposed.current || currentGeneration !== generation.current) return;
+      const needsRepair = status?.registered !== true;
+      setRegistrationWarning(needsRepair);
+      setVisible(needsRepair);
+      return;
+    }
     if (disposed.current || currentGeneration !== generation.current) return;
     setBlocked(typeof Notification !== "undefined" && Notification.permission === "denied");
     setVisible(!localStorage.getItem("notif_dismissed_onesignal"));

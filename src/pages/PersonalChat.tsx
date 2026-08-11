@@ -228,9 +228,73 @@ export default function PersonalChat() {
     }
   };
 
+  const updateConversationPreview = (message: any) => {
+    const messageChatId = String(message?.chat_id || "");
+    if (!messageChatId) return;
+    const preview = message.message_type === "image"
+      ? "📷 Sent an image"
+      : message.message_type === "audio" || message.message_type === "voice_note"
+        ? "🎤 Voice note"
+        : message.message_type === "sticker"
+          ? "🎨 Sent a sticker"
+          : String(message.content || "New message");
+    setConversations((previous) => {
+      let found = false;
+      const next = previous.map((conversation) => {
+        if (conversation.id !== messageChatId) return conversation;
+        found = true;
+        return {
+          ...conversation,
+          last_message: preview,
+          last_message_at: message.created_at || new Date().toISOString(),
+          unread_count: message.sender_id !== currentUserId && messageChatId !== chatId
+            ? Number(conversation.unread_count || 0) + 1
+            : conversation.unread_count,
+        };
+      });
+      if (!found) {
+        void fetchConversations();
+        return previous;
+      }
+      return next.sort((a, b) => new Date(b.last_message_at || b.created_at).getTime() - new Date(a.last_message_at || a.created_at).getTime());
+    });
+  };
+
+  const updateConversationTyping = (payload: { chat_id?: string; user_id?: string; name?: string; is_typing?: boolean }) => {
+    const targetChatId = String(payload?.chat_id || "");
+    if (!targetChatId || !payload.user_id || payload.user_id === currentUserId) return;
+    setConversations((previous) => previous.map((conversation) => {
+      if (conversation.id !== targetChatId) return conversation;
+      const typingUsers = { ...(conversation.typing_users || {}) };
+      if (payload.is_typing) typingUsers[payload.user_id] = { name: payload.name || "Someone", timestamp: Date.now() };
+      else delete typingUsers[payload.user_id];
+      return { ...conversation, typing_users: typingUsers };
+    }));
+    if (payload.is_typing) {
+      window.setTimeout(() => {
+        setConversations((previous) => previous.map((conversation) => {
+          if (conversation.id !== targetChatId) return conversation;
+          const typingUsers = { ...(conversation.typing_users || {}) };
+          delete typingUsers[payload.user_id!];
+          return { ...conversation, typing_users: typingUsers };
+        }));
+      }, 4_500);
+    }
+  };
+
   useEffect(() => {
     fetchConversations();
   }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    const channel = supabase
+      .channel(`user-events-${currentUserId}-sidebar`)
+      .on("broadcast", { event: "new_message" }, ({ payload }: any) => updateConversationPreview(payload))
+      .on("broadcast", { event: "typing" }, ({ payload }: any) => updateConversationTyping(payload))
+      .subscribe();
+    return () => { supabase.removeChannel(channel).catch(() => {}); };
+  }, [currentUserId, chatId]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -428,6 +492,15 @@ export default function PersonalChat() {
         name: currentUserName,
         is_typing: isTyping,
       });
+      const typingRecipientId = otherMemberIdRef.current;
+      if (chatType === "dm" && typingRecipientId) {
+        void sendBroadcastSafely(`user-events-${typingRecipientId}`, "typing", {
+          chat_id: chatId,
+          user_id: userId,
+          name: currentUserName,
+          is_typing: isTyping,
+        });
+      }
 
       // Keep the stored state as a compatibility fallback for older clients.
       const { data: chat } = await supabase
@@ -1612,6 +1685,7 @@ export default function PersonalChat() {
     // Replace optimistic message with actual DB record
     if (inserted) {
       setMessages((prev) => prev.map((m) => (m.id === tempId ? inserted : m)));
+      updateConversationPreview(inserted);
 
       try {
         const previewText = content.slice(0, 100);
@@ -1732,6 +1806,7 @@ export default function PersonalChat() {
 
       // Replace optimistic message with actual DB record
       setMessages((prev) => prev.map((m) => (m.id === tempId ? data : m)));
+      updateConversationPreview(data);
 
       // Broadcast the message so old clients can receive it
       if (data) {
@@ -1880,6 +1955,7 @@ export default function PersonalChat() {
 
     // Replace optimistic message with actual DB record
     setMessages((prev) => prev.map((m) => (m.id === tempId ? data : m)));
+    updateConversationPreview(data);
 
     // Broadcast the message
     if (data) {

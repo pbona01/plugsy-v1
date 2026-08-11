@@ -9,11 +9,12 @@ import {
 export const sendBroadcastSafely = async (channelName: string, eventName: string, payload: any = {}) => {
   console.log(`[broadcast-safely] attempting to send '${eventName}' to '${channelName}'`);
 
-  // The notification listener and inbox refresh listener deliberately use
-  // separate channel instances. Relay unread events before any early return
-  // below so both channels receive the event regardless of connection state.
-  if (eventName === "new_unread" && channelName.startsWith("user-events-") && !channelName.endsWith("-inbox")) {
-    void sendBroadcastSafely(`${channelName}-inbox`, eventName, payload);
+  // Notification, inbox, and sidebar each own an immutable channel. Relay
+  // user events before any early return so a connected recipient gets all
+  // immediate UI updates without modifying an already-subscribed channel.
+  if (channelName.startsWith("user-events-") && !channelName.endsWith("-inbox") && !channelName.endsWith("-sidebar")) {
+    if (eventName === "new_unread") void sendBroadcastSafely(`${channelName}-inbox`, eventName, payload);
+    if (eventName === "new_message" || eventName === "typing") void sendBroadcastSafely(`${channelName}-sidebar`, eventName, payload);
   }
   
   // Look for any existing channel matching the name or topic

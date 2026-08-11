@@ -142,7 +142,7 @@ export default async function handler(req, res) {
   const action = actionOf(req);
   const body = bodyOf(req);
   const supabase = serviceClient();
-  if (!supabase && ["register-subscription", "unregister-subscription", "notify-message", "status", "get-subscriber-counts", "broadcast-all", "broadcast-segment"].includes(action)) return fail(res, 503, "NOTIFICATION_SERVICE_UNAVAILABLE", "Notification service is temporarily unavailable.");
+  if (!supabase && ["register-subscription", "unregister-subscription", "subscription-status", "notify-message", "status", "get-subscriber-counts", "broadcast-all", "broadcast-segment"].includes(action)) return fail(res, 503, "NOTIFICATION_SERVICE_UNAVAILABLE", "Notification service is temporarily unavailable.");
 
   if (action === "register-subscription") {
     if (req.method !== "POST") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
@@ -162,6 +162,17 @@ export default async function handler(req, res) {
     const { error } = await supabase.from("push_subscriptions").update({ onesignal_player_id: null, subscription: null, updated_at: new Date().toISOString() }).eq("user_id", actor.userId);
     if (error) return fail(res, 503, "SUBSCRIPTION_SAVE_FAILED", "Your notification subscription could not be updated.");
     return res.status(200).json({ success: true });
+  }
+  if (action === "subscription-status") {
+    if (req.method !== "GET") return fail(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
+    const actor = await requireVerifiedClerkUser(req, res); if (!actor) return;
+    const { data, error } = await supabase
+      .from("push_subscriptions")
+      .select("onesignal_player_id")
+      .eq("user_id", actor.userId)
+      .maybeSingle();
+    if (error) return fail(res, 503, "SUBSCRIPTION_STATUS_UNAVAILABLE", "Notification status is temporarily unavailable.");
+    return res.status(200).json({ success: true, registered: Boolean(data?.onesignal_player_id) });
   }
   if (action === "notify-message") return notifyMessage(req, res, supabase);
   if (action === "send-test-to-self") {
