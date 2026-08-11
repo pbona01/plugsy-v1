@@ -20,23 +20,9 @@ function ThemedClerkProvider({ children }: { children: React.ReactNode }) {
     }
   }
   
-  // Register badge service worker
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/badge-sw.js').then((registration) => {
-      console.log('Badge Service Worker registered:', registration);
-      
-      // Listen for messages from the service worker
-      navigator.serviceWorker.addEventListener('message', (event) => {
-        if (event.data && event.data.type === 'UPDATE_BADGE') {
-          if ('setAppBadge' in navigator) {
-            (navigator as any).setAppBadge(event.data.count).catch((err: any) => console.error("Error setting badge:", err));
-          }
-        }
-      });
-    }).catch((error) => {
-      console.error('Badge Service Worker registration failed:', error);
-    });
-  }
+  // Vite PWA owns the single root-scope worker (`/sw.js`). It imports the
+  // OneSignal and badge helpers, so registering a second root worker here
+  // would race OneSignal and intermittently disable web push.
 
   // Use the key from environment, falling back only if strictly missing
   const PUBLISHABLE_KEY = (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY || 

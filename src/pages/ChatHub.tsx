@@ -119,7 +119,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     if (userIdToFind === userId) return;
     try {
       const { data, error } = await supabase
-        .from("profiles")
+        .from("profile_directory_v1")
         .select(CHAT_PROFILE_COLUMNS)
         .eq("clerk_id", userIdToFind)
         .maybeSingle();
@@ -190,7 +190,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     setLoadingSuggested(true);
     try {
       const { data, error } = await supabase
-        .from("profiles")
+        .from("profile_directory_v1")
         .select(CHAT_PROFILE_COLUMNS)
         .neq("clerk_id", userId)
         .limit(5);
@@ -275,10 +275,10 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
   useEffect(() => {
     if (!userId) return;
     const interval = setInterval(() => {
-      if (activeTab !== "status") {
+      if (document.visibilityState === "visible" && activeTab !== "status") {
         scheduleFetchChats();
       }
-    }, 30000);
+    }, 5 * 60_000);
     return () => clearInterval(interval);
   }, [userId, activeTab]);
 
@@ -356,7 +356,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
         let profilesMap: Record<string, Profile> = {};
         if (otherUserIds.length > 0) {
           const { data: profilesData, error: profErr } = await supabase
-            .from("profiles")
+            .from("profile_directory_v1")
             .select(CHAT_PROFILE_COLUMNS)
             .in("clerk_id", otherUserIds);
 
@@ -445,7 +445,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
     setSearching(true);
     try {
       const { data, error } = await supabase
-        .from("profiles")
+        .from("profile_directory_v1")
         .select(CHAT_PROFILE_COLUMNS)
         .or(`username.ilike.%${searchQuery}%,full_name.ilike.%${searchQuery}%`)
         .neq("clerk_id", userId)

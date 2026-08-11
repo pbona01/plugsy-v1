@@ -324,7 +324,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
       if (calleeId) {
         const { data: calleeProfile } = await supabase
-          .from("profiles")
+          .from("profile_directory_v1")
           .select("full_name, profile_pic_url")
           .eq("clerk_id", calleeId)
           .maybeSingle()

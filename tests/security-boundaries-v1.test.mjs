@@ -42,6 +42,15 @@ test("production Supabase and AI credentials are never compiled in as fallbacks"
   assert.doesNotMatch(files[2], /VITE_GEMINI_API_KEY/);
 });
 
+test("browser bundles do not own provider secrets or a competing push worker", async () => {
+  const [main, envExample] = await Promise.all([
+    source("src/main.tsx"),
+    source(".env.example"),
+  ]);
+  assert.doesNotMatch(main, /serviceWorker\.register\(['"]\/badge-sw\.js/);
+  assert.doesNotMatch(envExample, /VITE_TELEGRAM_ADMIN_TELEGRAM_BOT_TOKEN/);
+});
+
 test("booking alerts require a cron secret or verified admin", async () => {
   const file = await source("api-handlers/bookings.js");
   assert.match(file, /requireVerifiedClerkAdmin/);

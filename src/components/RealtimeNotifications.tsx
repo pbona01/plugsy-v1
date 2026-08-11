@@ -59,10 +59,11 @@ export default function RealtimeNotifications() {
 
     triggerUnreadCountRefresh();
     window.addEventListener('focus', triggerUnreadCountRefresh);
-    const unreadRefreshInterval = window.setInterval(
-      triggerUnreadCountRefresh,
-      30000,
-    );
+    // Broadcast events and focus handle the normal path. This is only a
+    // visibility-aware recovery check, not a per-user database poll.
+    const unreadRefreshInterval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void triggerUnreadCountRefresh();
+    }, 5 * 60_000);
 
     // Channel 1: Portfolio Reactions
     const reactChannel = supabase

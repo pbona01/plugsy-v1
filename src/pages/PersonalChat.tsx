@@ -200,7 +200,7 @@ export default function PersonalChat() {
     const membersByChat = new Map(typedMembers.map((member) => [member.chat_id, member]));
     const otherUserIds = [...new Set(typedMembers.map((member) => member.user_id).filter(Boolean))];
     const { data: profiles } = otherUserIds.length
-      ? await supabase.from("profiles").select("clerk_id, full_name, profile_pic_url, username").in("clerk_id", otherUserIds)
+      ? await supabase.from("profile_directory_v1").select("clerk_id, full_name, profile_pic_url, username").in("clerk_id", otherUserIds)
       : { data: [] };
     const typedProfiles = (profiles || []) as Array<{ clerk_id: string; full_name: string | null; profile_pic_url: string | null }>;
     const profilesById = new Map(typedProfiles.map((profile) => [profile.clerk_id, profile]));
@@ -817,7 +817,9 @@ export default function PersonalChat() {
 
     console.log("[chat-poll] starting poll interval for:", chatId);
 
-    const interval = setInterval(fetchNewMessages, 30000);
+    // Realtime is the primary delivery path; retain a low-frequency visible
+    // fallback for missed events and reconnects.
+    const interval = setInterval(fetchNewMessages, 5 * 60_000);
     const onVisibility = () => { if (document.visibilityState === "visible") void fetchNewMessages(); };
     document.addEventListener("visibilitychange", onVisibility);
 
@@ -1156,8 +1158,8 @@ export default function PersonalChat() {
     setLoadingProfiles(true);
     try {
       const { data, error } = await supabase
-        .from("profiles")
-        .select("clerk_id,username,full_name,profile_pic_url,image_url,bio,saved_stickers")
+        .from("profile_directory_v1")
+        .select("clerk_id,username,full_name,profile_pic_url,image_url,bio")
         .limit(100);
 
       if (error) throw error;
@@ -1290,7 +1292,7 @@ export default function PersonalChat() {
             if (latestCall.host_id !== userId) {
               // Fetch host name
               const { data: hostProfile } = await supabase
-                .from("profiles")
+                .from("profile_directory_v1")
                 .select("full_name, username")
                 .eq("clerk_id", latestCall.host_id)
                 .maybeSingle();
@@ -1356,7 +1358,7 @@ export default function PersonalChat() {
         if (latestCall?.room_url && latestCall.room_name && latestCall.host_id !== userId) {
           // Fetch host name
           const { data: hostProfile } = await supabase
-            .from("profiles")
+            .from("profile_directory_v1")
             .select("full_name, username")
             .eq("clerk_id", latestCall.host_id)
             .maybeSingle();
@@ -1381,7 +1383,7 @@ export default function PersonalChat() {
         if (membersData) {
           setOtherMemberId(membersData.user_id);
           const { data: otherProfile } = await supabase
-            .from("profiles")
+          .from("profile_directory_v1")
             .select("*")
             .eq("clerk_id", membersData.user_id)
             .maybeSingle();
@@ -1415,7 +1417,7 @@ export default function PersonalChat() {
       // Enrich with profile pics
       const userIds = membersList.map((m) => m.user_id);
       const { data: profilesList } = await supabase
-        .from("profiles")
+        .from("profile_directory_v1")
         .select("clerk_id, username, profile_pic_url, image_url")
         .in("clerk_id", userIds);
 
@@ -2086,8 +2088,8 @@ export default function PersonalChat() {
     // Fallback: Fetch from database (e.g. if user left the group)
     try {
       const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
+        .from("profile_directory_v1")
+        .select("clerk_id,username,full_name,profile_pic_url,image_url,bio")
         .eq("clerk_id", userIdToFind)
         .maybeSingle();
       

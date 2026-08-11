@@ -17,6 +17,9 @@ const BG_PRESETS = [
   "#0f1a0f", // forest
   "#3b0a45", // plum
 ];
+const STATUS_CONTACT_LIMIT = 500;
+const STATUS_PAGE_LIMIT = 200;
+const STATUS_VIEW_LIMIT = 200;
 
 interface StatusHubProps {
   onBackToChats?: () => void;
@@ -185,7 +188,8 @@ export default function StatusHub({ onBackToChats, onProfileClick }: StatusHubPr
         .select("*")
         .eq("user_id", userId)
         .gt("expires_at", nowIso)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .limit(STATUS_PAGE_LIMIT);
 
       if (myErr) throw myErr;
       setMyStatuses(myData || []);
@@ -194,7 +198,9 @@ export default function StatusHub({ onBackToChats, onProfileClick }: StatusHubPr
       const { data: myViews, error: viewsErr } = await supabase
         .from("status_views")
         .select("status_id")
-        .eq("viewer_id", userId);
+        .eq("viewer_id", userId)
+        .order("viewed_at", { ascending: false })
+        .limit(STATUS_VIEW_LIMIT);
 
       if (viewsErr) throw viewsErr;
       const viewedIds = new Set<string>((myViews || []).map((v) => v.status_id));
@@ -225,7 +231,8 @@ export default function StatusHub({ onBackToChats, onProfileClick }: StatusHubPr
             .from("chat_members")
             .select("user_id")
             .in("chat_id", chatIds)
-            .neq("user_id", userId);
+            .neq("user_id", userId)
+            .limit(STATUS_CONTACT_LIMIT);
 
           const knownUserIds = Array.from(
             new Set((relatedMembers || []).map((m) => m.user_id))
@@ -237,7 +244,8 @@ export default function StatusHub({ onBackToChats, onProfileClick }: StatusHubPr
               .select("*")
               .in("user_id", knownUserIds)
               .gt("expires_at", nowIso)
-              .order("created_at", { ascending: true }); // Ascending so stack is oldest to newest
+              .order("created_at", { ascending: true }) // Ascending so stack is oldest to newest
+              .limit(STATUS_PAGE_LIMIT);
 
             if (statErr) throw statErr;
 
@@ -448,14 +456,15 @@ export default function StatusHub({ onBackToChats, onProfileClick }: StatusHubPr
         .from("status_views")
         .select("id, status_id, viewer_id, viewed_at")
         .eq("status_id", statusId)
-        .order("viewed_at", { ascending: false });
+        .order("viewed_at", { ascending: false })
+        .limit(STATUS_VIEW_LIMIT);
 
       if (viewsErr) throw viewsErr;
 
       if (views && views.length > 0) {
         const viewerIds = views.map((v) => v.viewer_id);
         const { data: profiles, error: profsErr } = await supabase
-          .from("profiles")
+          .from("profile_directory_v1")
           .select("clerk_id, username, full_name, profile_pic_url, image_url")
           .in("clerk_id", viewerIds);
 

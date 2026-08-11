@@ -51,6 +51,7 @@ const MAX_CLERK_PAGES = 100;
 const MAX_CLERK_RECORDS = 10_000;
 const PROFILE_PAGE_SIZE = 1000;
 const MAX_PROFILE_PAGES = 50;
+const ADMIN_DASHBOARD_PAGE_SIZE = 250;
 
 export class AdminUsersFailure extends Error {
   constructor(code, status = 503, details = {}) {
@@ -1008,7 +1009,7 @@ async function handleListSubscriptions(req, res) {
       .from("subscriptions")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(1000);
+      .limit(ADMIN_DASHBOARD_PAGE_SIZE);
 
     if (error) throw error;
     return res.status(200).json({ success: true, subscriptions });
@@ -1027,7 +1028,7 @@ async function handleListProfiles(req, res) {
       .from("profiles")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(1000);
+      .limit(ADMIN_DASHBOARD_PAGE_SIZE);
 
     if (error) throw error;
     return res.status(200).json({ success: true, profiles });
@@ -1280,7 +1281,7 @@ async function handleListPortfolioPurchases(req, res) {
       .from("portfolio_purchases")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(1000);
+      .limit(ADMIN_DASHBOARD_PAGE_SIZE);
 
     if (error) throw error;
     return res.status(200).json({ success: true, portfolio_purchases });
@@ -1299,7 +1300,7 @@ async function handleListOrders(req, res) {
       .from("orders")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(1000);
+      .limit(ADMIN_DASHBOARD_PAGE_SIZE);
 
     if (error) throw error;
     return res.status(200).json({ success: true, orders });
@@ -1340,33 +1341,34 @@ async function handleFinancialDashboard(req, res) {
     const writer = await requireVerifiedAdmin(req, res, supabase);
     if (!writer) return;
 
-    // 1. Global Balance Tracking (aggregate total of all balances)
-    const { data: profiles, error: pErr } = await supabase
-      .from("profiles")
-      .select("id, email, full_name, balance, clerk_id, created_at");
+    // Aggregates run in PostgreSQL. The dashboard only receives a bounded
+    // recent ledger and balance page, rather than every financial row.
+    const [summaryResult, profilesResult, transactionsResult] = await Promise.all([
+      supabase.rpc("admin_financial_summary_v1"),
+      supabase
+        .from("profiles")
+        .select("id, email, full_name, balance, clerk_id, created_at")
+        .order("created_at", { ascending: false })
+        .limit(ADMIN_DASHBOARD_PAGE_SIZE),
+      supabase
+        .from("wallet_transactions")
+        .select("id,user_id,user_email,reference,type,amount,status,metadata,created_at")
+        .order("created_at", { ascending: false })
+        .limit(ADMIN_DASHBOARD_PAGE_SIZE),
+    ]);
 
-    if (pErr) throw pErr;
-
-    const totalLiquidity = profiles.reduce((sum, p) => sum + (Number(p.balance) || 0), 0);
-
-    // 2. Individual History (all wallet transactions to see deposits/withdrawals)
-    const { data: txs, error: tErr } = await supabase
-      .from("wallet_transactions")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (tErr) throw tErr;
-
-    // 3. Paystack Funding Estimate (sum of all pending withdrawals)
-    const pendingWithdrawals = txs.filter(t => t.type === 'withdraw' && t.status === 'pending');
-    const pendingFundingEstimate = pendingWithdrawals.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+    if (summaryResult.error || profilesResult.error || transactionsResult.error) throw new Error("FINANCIAL_DASHBOARD_QUERY_FAILED");
+    const summary = Array.isArray(summaryResult.data) ? summaryResult.data[0] : summaryResult.data;
+    if (!summary) throw new Error("FINANCIAL_DASHBOARD_SUMMARY_UNAVAILABLE");
 
     return res.status(200).json({
       success: true,
-      totalLiquidity,
-      pendingFundingEstimate,
-      users: profiles,
-      transactions: txs
+      totalLiquidity: Number(summary.total_liquidity || 0),
+      pendingFundingEstimate: Number(summary.pending_withdrawal_total || 0),
+      pendingWithdrawalCount: Number(summary.pending_withdrawal_count || 0),
+      users: profilesResult.data || [],
+      transactions: transactionsResult.data || [],
+      pageSize: ADMIN_DASHBOARD_PAGE_SIZE,
     });
 
   } catch {

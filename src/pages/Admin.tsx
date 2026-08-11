@@ -271,6 +271,7 @@ export default function Admin() {
   const [financialData, setFinancialData] = useState<{
     totalLiquidity: number;
     pendingFundingEstimate: number;
+    pendingWithdrawalCount: number;
     users: any[];
     transactions: any[];
   } | null>(null);
@@ -298,6 +299,7 @@ export default function Admin() {
       setFinancialData({
         totalLiquidity: data.totalLiquidity,
         pendingFundingEstimate: data.pendingFundingEstimate,
+        pendingWithdrawalCount: data.pendingWithdrawalCount || 0,
         users: data.users || [],
         transactions: data.transactions || []
       });
@@ -2339,7 +2341,7 @@ export default function Admin() {
                           <h3 className="text-3xl font-black text-brand-text text-yellow-500">
                             ₦{(financialData?.pendingFundingEstimate || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </h3>
-                          <p className="text-[10px] text-brand-text-secondary mt-1">Total value of {financialData?.transactions?.filter(t => t.type === 'withdraw' && t.status === 'pending').length || 0} currently pending payouts</p>
+                          <p className="text-[10px] text-brand-text-secondary mt-1">Total value of {financialData?.pendingWithdrawalCount || 0} currently pending payouts</p>
                         </div>
                         <div className="w-12 h-12 bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded-xl flex items-center justify-center">
                           <TrendingUp size={24} />
@@ -2362,6 +2364,7 @@ export default function Admin() {
                           />
                         </div>
                       </div>
+                      <p className="text-[10px] text-brand-text-secondary">Showing the most recent {financialData?.users?.length || 0} wallet accounts.</p>
                       <div className="overflow-x-auto rounded-2xl border border-brand-border bg-brand-surface">
                         <table className="w-full text-left">
                           <thead className="border-b border-brand-border bg-brand-text/5 text-brand-text-secondary">
@@ -2415,6 +2418,7 @@ export default function Admin() {
                     {/* General Transaction History */}
                     <div className="space-y-4">
                       <h3 className="text-xl font-bold uppercase tracking-tight">Unified Wallet Ledger</h3>
+                      <p className="text-[10px] text-brand-text-secondary">Showing the most recent {financialData?.transactions?.length || 0} ledger entries.</p>
                       <div className="overflow-x-auto rounded-2xl border border-brand-border bg-brand-surface">
                         <table className="w-full text-left">
                           <thead className="border-b border-brand-border bg-brand-text/5 text-brand-text-secondary">
