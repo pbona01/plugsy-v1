@@ -398,12 +398,38 @@ export default function PersonalChat() {
     }
   };
 
-  // Removed broadcast channel setup for typing
+  const applyTypingBroadcast = (payload: { user_id?: string; name?: string; is_typing?: boolean }) => {
+    const typingUserId = String(payload?.user_id || "");
+    if (!typingUserId || typingUserId === userId) return;
+    setTypingUsers((previous) => {
+      const next = new Map(previous);
+      if (payload.is_typing) next.set(typingUserId, payload.name || "Someone");
+      else next.delete(typingUserId);
+      return next;
+    });
+    if (payload.is_typing) {
+      window.setTimeout(() => {
+        setTypingUsers((previous) => {
+          const next = new Map(previous);
+          next.delete(typingUserId);
+          return next;
+        });
+      }, 4_500);
+    }
+  };
 
-  
   const updateTypingStatus = async (isTyping: boolean) => {
     try {
       if (!chatId || !userId) return;
+      // Broadcast is the primary delivery path; it does not depend on the
+      // chats table being included in Supabase's Postgres Changes publication.
+      void sendBroadcastSafely(`chat-presence:${chatId}`, "typing", {
+        user_id: userId,
+        name: currentUserName,
+        is_typing: isTyping,
+      });
+
+      // Keep the stored state as a compatibility fallback for older clients.
       const { data: chat } = await supabase
         .from("chats")
         .select("typing_users")
@@ -421,10 +447,11 @@ export default function PersonalChat() {
         delete current[userId];
       }
 
-      await supabase
+      const { error } = await supabase
         .from("chats")
         .update({ typing_users: current })
         .eq("id", chatId);
+      if (error) console.warn("[typing] fallback state update failed:", error.message);
     } catch (e) {
       console.error("[typing] update error:", e);
     }
@@ -819,7 +846,11 @@ export default function PersonalChat() {
 
     // Realtime is the primary delivery path; retain a low-frequency visible
     // fallback for missed events and reconnects.
-    const interval = setInterval(fetchNewMessages, 5 * 60_000);
+    // Only an active, visible conversation polls. This remains a bounded
+    // fallback when broadcasts or database replication reconnect.
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") void fetchNewMessages();
+    }, 15_000);
     const onVisibility = () => { if (document.visibilityState === "visible") void fetchNewMessages(); };
     document.addEventListener("visibilitychange", onVisibility);
 
@@ -1229,6 +1260,9 @@ export default function PersonalChat() {
         setMessages(prev => mergeIncomingMessage(prev, payload));
         if (wasNearBottom) setTimeout(() => scrollToBottom(), 100);
         else setShowNewMessagePill(true);
+      })
+      .on("broadcast", { event: "typing" }, ({ payload }: any) => {
+        applyTypingBroadcast(payload);
       })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {

@@ -289,7 +289,8 @@ export default function RealtimeNotifications() {
     };
 
     const chatMsgChannel = supabase
-      .channel('user-events-' + userId + '-' + uniqueSuffix);
+      // This topic must match the sender's `user-events-${userId}` target.
+      .channel('user-events-' + userId);
 
     if (!isSubscribed.current) {
       chatMsgChannel
