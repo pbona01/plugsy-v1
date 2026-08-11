@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto"
 import { resolveOrCreateSupportChat } from "./_supportChats.js"
 import { deterministicEventUuid, sendOneSignal } from "../api/_oneSignal.js";
 import { resolveCanonicalClerkId } from "../api/_recipient.js";
+import { requireVerifiedClerkAdmin } from "../api/_clerkAuth.js";
 
 const resend = new Resend(process.env.RESEND_API_KEY || "re_mock_key")
 
@@ -36,7 +37,10 @@ export default async function handler(req, res) {
   
   try {
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(503).json({ success: false, code: "BOOKINGS_CONFIG_REQUIRED" })
+    }
     const supabase = createClient(supabaseUrl, supabaseKey, {
       db: {
         schema: "public"
@@ -45,11 +49,32 @@ export default async function handler(req, res) {
         headers: { "x-connection-encrypted": "true" }
       }
     })
+
+    // The non-cron operation sends internal booking alerts and mutates the
+    // booking notification state. It must never be a public trigger.
+    if (action !== "notify-expiring") {
+      if (req.method !== "POST") return res.status(405).end()
+      const actor = await requireVerifiedClerkAdmin(req, res, supabase)
+      if (!actor) return
+    }
+
+    if (action === "notify-expiring") {
+      const { data: lease, error: leaseError } = await supabase.rpc("claim_scheduled_job_lease", {
+        p_job_name: "booking-notify-expiring",
+        p_lease_seconds: 900,
+      })
+      if (leaseError) throw new Error("CRON_LEASE_UNAVAILABLE")
+      if (!lease) return res.status(202).json({ success: true, skipped: "JOB_ALREADY_RUNNING" })
+    }
     
     const tomorrow = new Date()
     tomorrow.setHours(tomorrow.getHours() + 24)
     
-    const { data: bookings, error } = await supabase.from("bookings").select("*").eq("status", "scheduled").is("notified_admin_at", null).lte("delivery_date", tomorrow.toISOString())
+    // The subscription-expiry cron has its own query below; do not also scan
+    // booking reminders on every scheduled expiry run.
+    const { data: bookings, error } = action === "notify-expiring"
+      ? { data: [], error: null }
+      : await supabase.from("bookings").select("*").eq("status", "scheduled").is("notified_admin_at", null).lte("delivery_date", tomorrow.toISOString()).order("delivery_date", { ascending: true }).limit(100)
     if (error) return res.status(500).json({ error: error.message })
     
     // Add new notify-expiring action
@@ -73,6 +98,8 @@ export default async function handler(req, res) {
           .eq("status", "completed")
           .gte("subscription_expires_at", windowStart.toISOString())
           .lte("subscription_expires_at", windowEnd.toISOString())
+          .order("subscription_expires_at", { ascending: true })
+          .limit(100)
         if (expiringOrdersError) throw new Error("EXPIRING_ORDERS_LOOKUP_FAILED")
 
         console.log("[expiry-notify] expiring in 3 days:", expiringOrders?.length)

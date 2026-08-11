@@ -24,6 +24,10 @@ Make sure you have Node.js (v18+) and npm installed.
    Create a `.env` file in the root directory by copying `.env.example` and filling in the required credentials:
    - `VITE_CLERK_PUBLISHABLE_KEY`: Clerk Auth frontend key.
    - `CLERK_SECRET_KEY`: Clerk Auth backend secret key.
+   - `CLERK_JWT_ISSUER` and `CLERK_AUTHORIZED_PARTIES`: required for every
+     authenticated API route, including notification registration and delivery.
+     Use the issuer and allowed production origins from Clerk; deployments
+     without them return `AUTH_CONFIG_REQUIRED` by design.
    - `VITE_SUPABASE_URL`: Supabase project URL.
    - `VITE_SUPABASE_ANON_KEY`: Supabase anonymous key for public access.
    - `SUPABASE_SERVICE_ROLE_KEY`: Supabase service role key for bypassing RLS in admin functions/webhooks.
@@ -46,6 +50,23 @@ fallback during migration, then remove it after production verification.
 The scheduled `/api/bookings?action=notify-expiring` path also requires the
 server-only variable `CRON_SECRET`. Store it in Vercel Production and Preview
 without placing its value in source control.
+
+## Notification verification
+
+Web push requires a browser permission grant; signing in alone cannot grant it.
+After deployment, sign in with a test account, choose **Enable Alerts**, and
+then use **Admin → Broadcast → Send Test to Myself**. If registration fails,
+check the browser Network response for `/api/notifications?action=register-subscription`:
+
+- `AUTH_CONFIG_REQUIRED`: add the Clerk variables above to that Vercel
+  environment and redeploy.
+- `ONESIGNAL_CONFIGURATION_UNAVAILABLE`: add `ONESIGNAL_APP_ID` and the
+  server-only `ONESIGNAL_APP_API_KEY`.
+- `REGISTRATION_WARNING`: browser permission is active but the authenticated
+  registration request failed; re-authenticate and use **Repair Alerts**.
+
+The deployed service worker is `/sw.js`; it must be reachable at
+`https://www.plugsy.ng/sw.js` and return JavaScript, not the SPA HTML fallback.
 
 3. **Running the Application**:
    To start the development server:

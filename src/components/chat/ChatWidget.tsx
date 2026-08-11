@@ -4,15 +4,11 @@ import { Sparkles, Paperclip, ArrowUp, X, Loader2, RefreshCw, MessageSquare } fr
 import { useLocation } from 'react-router-dom';
 import { useUser } from '@clerk/clerk-react';
 import toast, { Toaster } from 'react-hot-toast';
-import { GoogleGenAI } from "@google/genai";
 import { optimizeCloudinaryUrl } from '../../lib/cloudinary';
 import { compressAndUpload } from '../../utils/uploadMedia';
 import { useUnreadMessages } from '../../hooks/useUnreadMessages';
 
 import { LiquidGlass } from '../ui/LiquidGlass';
-
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_GEMINI_API_KEY : undefined);
-const genAI = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 interface Message {
   id: string;

@@ -1,4 +1,5 @@
 import { google } from "googleapis";
+import { requireVerifiedClerkUser } from "./_clerkAuth.js";
 
 export const config = {
   api: {
@@ -15,6 +16,8 @@ async function handleVideoUpload(req, res) {
   }
 
   try {
+    const actor = await requireVerifiedClerkUser(req, res);
+    if (!actor) return;
     let bodyData = req.body;
     if (typeof bodyData === "string") {
       try {
@@ -30,7 +33,12 @@ async function handleVideoUpload(req, res) {
     }
 
     const { title, description, mimeType } = bodyData || {};
-    console.log("[video-upload] creating resumable session:", title);
+    const safeTitle = String(title || "Uploaded Portfolio Video").trim().slice(0, 100);
+    const safeDescription = String(description || "").trim().slice(0, 5000);
+    const safeMimeType = ["video/mp4", "video/webm", "video/quicktime"].includes(String(mimeType))
+      ? String(mimeType)
+      : "video/mp4";
+    console.log("[video-upload] creating resumable session for authenticated user", actor.userId);
 
     if (
       !process.env.YOUTUBE_CLIENT_ID ||
@@ -64,12 +72,12 @@ async function handleVideoUpload(req, res) {
         headers: {
           Authorization: "Bearer " + token,
           "Content-Type": "application/json",
-          "X-Upload-Content-Type": mimeType || "video/mp4",
+          "X-Upload-Content-Type": safeMimeType,
         },
         body: JSON.stringify({
           snippet: {
-            title: title || "Portfolio Video",
-            description: description || "",
+            title: safeTitle,
+            description: safeDescription,
             categoryId: "22",
             tags: ["portfolio", "plugsy"],
           },
@@ -115,9 +123,8 @@ async function handleVideoUpload(req, res) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const urlObj = new URL(req.originalUrl || req.url, `http://${req.headers?.host || 'localhost'}`);
@@ -128,8 +135,10 @@ export default async function handler(req, res) {
 
   if (action === "status") {
     try {
+      const actor = await requireVerifiedClerkUser(req, res);
+      if (!actor) return;
       const videoId = urlObj.searchParams.get("videoId") || req.query?.videoId;
-      if (!videoId) return res.status(400).json({ error: "Missing videoId" });
+      if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(String(videoId))) return res.status(400).json({ error: "Invalid video ID" });
       const oauth2Client = new google.auth.OAuth2(
         process.env.YOUTUBE_CLIENT_ID,
         process.env.YOUTUBE_CLIENT_SECRET,

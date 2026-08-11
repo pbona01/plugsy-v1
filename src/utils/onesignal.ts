@@ -35,7 +35,10 @@ export const initOneSignal = (): Promise<OneSignalState> => {
       window.OneSignalDeferred = window.OneSignalDeferred || [];
       window.OneSignalDeferred.push(async (OneSignal: any) => {
         try {
-          if (!OneSignal.initialized) await OneSignal.init({ appId, notifyButton: { enable: false }, allowLocalhostAsSecureOrigin: true, serviceWorkerParam: { scope: "/" }, serviceWorkerPath: "sw.js" });
+          // This must be absolute. A relative `sw.js` resolves to
+          // `/dashboard/sw.js` (or another SPA route) and prevents browser push
+          // registration outside the homepage.
+          if (!OneSignal.initialized) await OneSignal.init({ appId, notifyButton: { enable: false }, allowLocalhostAsSecureOrigin: true, serviceWorkerParam: { scope: "/" }, serviceWorkerPath: "/sw.js" });
           window.clearTimeout(timeout);
           if (settled) return;
           pushSubscription()?.addEventListener?.("change", () => {

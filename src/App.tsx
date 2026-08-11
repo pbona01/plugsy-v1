@@ -188,11 +188,16 @@ export default function App() {
     document.addEventListener("touchstart", unlockAudio, { once: true })
   }, [])
 
-  // Online Heartbeat: update profiles.last_login_at
+  // Presence is the primary source of live online state. This timestamp is a
+  // deliberately coarse fallback for clients that cannot join Realtime; a
+  // 30-second write per open tab becomes a significant database workload.
   useEffect(() => {
     if (!userId) return;
 
+    let inFlight = false;
     const updateHeartbeat = async () => {
+      if (inFlight || document.visibilityState !== "visible") return;
+      inFlight = true;
       try {
         await supabase
           .from("profiles")
@@ -200,15 +205,24 @@ export default function App() {
           .or(`id.eq.${userId},clerk_id.eq.${userId}`);
       } catch (e) {
         console.warn("[heartbeat] Failed to update user heartbeat:", e);
+      } finally {
+        inFlight = false;
       }
     };
 
-    // Update immediately on mount/load
-    updateHeartbeat();
+    // Update on a visible session start and at most once every five minutes.
+    // Also refresh when the tab returns to the foreground.
+    void updateHeartbeat();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void updateHeartbeat();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
-    // Set interval to update every 30 seconds
-    const interval = setInterval(updateHeartbeat, 30000);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => void updateHeartbeat(), 5 * 60 * 1000);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [userId]);
 
   // Synchronize and clear PWA home-screen app icon badges on load and visibility change

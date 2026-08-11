@@ -23,14 +23,15 @@ async function handleValidate(req, res) {
     if (profile.clerk_id === actor.userId) return res.status(200).json({ valid: false, message: "You cannot use your own purchase code" })
     
     const displayName = profile.full_name || profile.email || "Unknown"
-    return res.status(200).json({ valid: true, ownerName: profile.full_name, ownerEmail: profile.email, ownerId: profile.clerk_id, message: "Code applied: " + displayName })
+    // The checkout needs a stable referral owner ID and a display name, but
+    // must not turn a purchase-code lookup into a customer-email directory.
+    return res.status(200).json({ valid: true, ownerName: profile.full_name || "Supportive User", ownerId: profile.clerk_id, message: "Code applied: " + displayName })
   } catch (e) {
     return res.status(500).json({ valid: false, message: "Server error: " + e.message })
   }
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*")
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
   if (req.method === "OPTIONS") return res.status(200).end()

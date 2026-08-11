@@ -58,16 +58,16 @@ const upload = multer({ storage: multer.memoryStorage() });
 const resend = new Resend(process.env.RESEND_API_KEY || "re_mock_key");
 let supabaseUrl = (
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
-  process.env.VITE_SUPABASE_URL ||
-  "https://vnilkycbtxxcyoynakge.supabase.co"
+  process.env.SUPABASE_URL ||
+  process.env.VITE_SUPABASE_URL || ""
 ).trim();
 if (supabaseUrl.endsWith("/")) supabaseUrl = supabaseUrl.slice(0, -1);
 const supabaseKey = (
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  process.env.VITE_SUPABASE_ANON_KEY ||
-  "sb_publishable_6krQD2xCzjSLtaol0F0YNg_bCk3ZpNa"
+  process.env.SUPABASE_SERVICE_ROLE_KEY || ""
 ).trim();
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required by the standalone server");
+}
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -203,6 +203,26 @@ async function startServer() {
       console.error(`[MIDDLEWARE] ERROR:`, e);
       return res.status(500).json({ error: "Auth verification failed" });
     }
+  };
+
+  // These generic admin helpers are used by the admin UI.  Keeping the list
+  // explicit prevents an otherwise-valid admin session from being used as a
+  // service-role proxy for arbitrary database tables.
+  const adminMutableCollections = new Set([
+    "chats",
+    "orders",
+    "plans",
+    "profiles",
+    "site_settings",
+    "subscriptions",
+  ]);
+
+  const requireAdminMutableCollection = (collection: unknown, res: any) => {
+    if (typeof collection !== "string" || !adminMutableCollections.has(collection)) {
+      res.status(400).json({ error: "Unsupported admin collection" });
+      return false;
+    }
+    return true;
   };
 
   app.post(
@@ -661,7 +681,7 @@ async function startServer() {
     },
   );
 
-  app.get("/api/v1/profiles", ClerkExpressWithAuth(), async (req: any, res) => {
+  app.get("/api/v1/profiles", ClerkExpressWithAuth(), adminProtectionMiddleware, async (req: any, res) => {
     try {
       if (!req.auth || !req.auth.userId)
         return res.status(401).json({ error: "Unauthorized" });
@@ -678,7 +698,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/v1/messages", ClerkExpressWithAuth(), async (req: any, res) => {
+  app.get("/api/v1/messages", ClerkExpressWithAuth(), adminProtectionMiddleware, async (req: any, res) => {
     try {
       if (!req.auth || !req.auth.userId)
         return res.status(401).json({ error: "Unauthorized" });
@@ -695,7 +715,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/v1/plans", ClerkExpressWithAuth(), async (req: any, res) => {
+  app.get("/api/v1/plans", ClerkExpressWithAuth(), adminProtectionMiddleware, async (req: any, res) => {
     try {
       if (!req.auth || !req.auth.userId)
         return res.status(401).json({ error: "Unauthorized" });
@@ -751,6 +771,7 @@ async function startServer() {
         if (!collection || !data) {
           return res.status(400).json({ error: "Missing required fields" });
         }
+        if (!requireAdminMutableCollection(collection, res)) return;
 
         const { data: result, error } = await supabase
           .from(collection)
@@ -790,6 +811,7 @@ async function startServer() {
         if (!collection || !id || !data) {
           return res.status(400).json({ error: "Missing required fields" });
         }
+        if (!requireAdminMutableCollection(collection, res)) return;
 
         // Telegram Bot execution FIRST
         if (collection === "orders" && data.status === "confirmed") {
@@ -834,6 +856,7 @@ async function startServer() {
         if (!collection || !id) {
           return res.status(400).json({ error: "Missing required fields" });
         }
+        if (!requireAdminMutableCollection(collection, res)) return;
 
         const { error } = await supabase.from(collection).delete().eq("id", id);
         if (error) throw error;
@@ -1726,12 +1749,20 @@ async function startServer() {
   app.post(
     "/api/email/trigger",
     ClerkExpressWithAuth(),
+    adminProtectionMiddleware,
     async (req: any, res) => {
       try {
         if (!req.auth || !req.auth.userId)
           return res.status(401).json({ error: "Unauthorized" });
 
         const { type, email, userId } = req.body;
+        if (
+          !["payment_confirmed", "plan_expiring", "plan_expired"].includes(type) ||
+          typeof userId !== "string" || userId.length > 128 ||
+          typeof email !== "string" || email.length > 320
+        ) {
+          return res.status(400).json({ error: "Invalid email request" });
+        }
         const {
           sendPaymentConfirmedEmail,
           sendPlanExpiringEmail,
@@ -1748,8 +1779,6 @@ async function startServer() {
           case "plan_expired":
             await sendPlanExpiredEmail(userId, email);
             break;
-          default:
-            return res.status(400).json({ error: "Invalid email type" });
         }
 
         res.json({ success: true });
@@ -1760,57 +1789,17 @@ async function startServer() {
     },
   );
 
-  // Resend Email API - Legacy support
-  app.post("/api/email/send", ClerkExpressWithAuth(), async (req: any, res) => {
-    try {
-      if (!req.auth || !req.auth.userId)
-        return res.status(401).json({ error: "Unauthorized" });
-
-      const { to, subject, html, type } = req.body;
-      if (!to || !subject || !html) {
-        return res.status(400).json({ error: "Missing required fields" });
-      }
-
-      // Check admin for some types
-      if (type === "payment_confirmed") {
-      }
-
-      const resendKey = process.env.RESEND_API_KEY;
-      const isMockKey = resendKey === "re_mock_key" || !resendKey;
-
-      if (isMockKey) {
-        console.warn(
-          "RESEND_API_KEY is not configured or using mock key. Simulating email send:",
-          { to, subject },
-        );
-        return res.json({ success: true, simulated: true });
-      }
-
-      console.log(
-        `Sending email via Resend to ${to} using key: ${resendKey.substring(0, 7)}...`,
-      );
-
-      const { data, error } = await resend.emails.send({
-        from: "Plugsy <hello@plugsyapp.com>",
-        to: [to],
-        subject: subject,
-        html: html,
-      });
-
-      if (error) {
-        console.error("Resend send error:", error);
-        return res.status(400).json({ error });
-      }
-
-      res.json({ success: true, data });
-    } catch (error: any) {
-      console.error("Email send error:", error);
-      res.status(500).json({ error: error.message });
-    }
+  // This legacy endpoint accepted arbitrary recipients and HTML from any signed-in
+  // user, effectively making the Resend account an authenticated open relay.
+  // Use the audited, admin-only template endpoints above instead.
+  app.post("/api/email/send", (_req, res) => {
+    return res.status(410).json({
+      error: "Legacy email endpoint retired. Use an approved server-side template.",
+    });
   });
 
   // Category Update Endpoint
-  app.post("/api/categories/update", async (req: any, res) => {
+  app.post("/api/categories/update", ClerkExpressWithAuth(), adminProtectionMiddleware, async (req: any, res) => {
     try {
       const { id, name, description } = req.body;
       console.log("[category-update] id:", id, "name:", name);
@@ -1852,7 +1841,7 @@ async function startServer() {
   });
 
   // Category Delete Endpoint
-  app.post("/api/categories/delete", async (req: any, res) => {
+  app.post("/api/categories/delete", ClerkExpressWithAuth(), adminProtectionMiddleware, async (req: any, res) => {
     try {
       const { id } = req.body;
       console.log("[category-delete] id:", id);

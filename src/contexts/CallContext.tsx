@@ -48,6 +48,7 @@ export const useCall = () => {
 }
 
 const RING_TIMEOUT_MS = 45000 // auto-miss after 45 seconds
+const INCOMING_CALL_FALLBACK_POLL_MS = 15_000
 
 export const CallProvider = ({ children }: { children: ReactNode }) => {
   const { getToken } = useAuth()
@@ -60,6 +61,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
   const seenCallIdsRef = useRef<Set<string>>(new Set())
   const currentUserIdRef = useRef<string | null>(null)
   const startingCallRef = useRef(false)
+  const memberChatIdsRef = useRef<string[]>([])
 
   const recoverActiveCall = (call: any) => {
     if (!call?.id || !call.chat_id || !call.room_url || !call.room_name) return
@@ -143,8 +145,35 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     if (!user?.id) return
 
+    let disposed = false
+    const refreshMemberships = async () => {
+      const currentUserId = currentUserIdRef.current
+      if (!currentUserId) return
+      const { data, error } = await supabase
+        .from("chat_members")
+        .select("chat_id")
+        .eq("user_id", currentUserId)
+      if (error) {
+        console.warn("[call-memberships] refresh failed", error.message)
+        return
+      }
+      if (!disposed) {
+        memberChatIdsRef.current = [...new Set((data || []).map((membership) => membership.chat_id).filter(Boolean))]
+      }
+    }
+    void refreshMemberships()
+    const membershipChannel = supabase
+      .channel(`call-memberships-${user.id}`)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "chat_members",
+        filter: `user_id=eq.${user.id}`,
+      }, () => void refreshMemberships())
+      .subscribe()
+
     const pollForIncomingCalls = async () => {
-      if (incomingCall || activeCall || outgoingCall) return
+      if (document.visibilityState !== "visible" || incomingCall || activeCall || outgoingCall) return
       if (!currentUserIdRef.current) {
         console.log("[call-poll] no current user yet, skipping")
         return
@@ -152,14 +181,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
       console.log("[call-poll] checking for incoming calls, user:", currentUserIdRef.current)
 
-      const { data: memberships, error: memErr } = await supabase
-        .from("chat_members")
-        .select("chat_id")
-        .eq("user_id", currentUserIdRef.current)
-
-      console.log("[call-poll] chat memberships found:", memberships?.length, memErr?.message)
-
-      const chatIds = (memberships || []).map(m => m.chat_id)
+      const chatIds = memberChatIdsRef.current
       if (chatIds.length === 0) {
         console.log("[call-poll] user has no chats, cannot receive calls")
         return
@@ -223,11 +245,19 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     const interval = setInterval(() => {
       console.log("[call-poll] tick")
       pollForIncomingCalls()
-    }, 3000)
+    }, INCOMING_CALL_FALLBACK_POLL_MS)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void pollForIncomingCalls()
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
 
     return () => {
       console.log("[call-poll] 🛑 stopping poll interval")
       clearInterval(interval)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+      disposed = true
+      void supabase.removeChannel(membershipChannel)
+      memberChatIdsRef.current = []
     }
   }, [user?.id, incomingCall, activeCall, outgoingCall])
 

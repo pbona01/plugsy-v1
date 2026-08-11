@@ -60,6 +60,12 @@ const getCleanMessageText = (content: string | null): string => {
   return content;
 };
 
+// Support conversations can be long-lived. Keep the initial/fallback sync
+// bounded; realtime delivers new rows and the personal-chat UI owns the full
+// cursor-pagination experience for high-volume conversations.
+const SUPPORT_CHAT_PAGE_SIZE = 100;
+const SUPPORT_CHAT_MESSAGE_COLUMNS = "id,chat_id,user_id,sender_id,sender_name,sender_role,content,attachment_url,attachment_type,message_type,audio_url,read_by_user,created_at,event";
+
 export default function Chat() {
   const renderMessageTextWithLinks = (text: string, isUser: boolean) => {
     if (!text) return "";
@@ -388,16 +394,18 @@ export default function Chat() {
         const [canonicalResult, legacyResult] = await Promise.all([
           supabase
             .from("messages")
-            .select("*")
+            .select(SUPPORT_CHAT_MESSAGE_COLUMNS)
             .in("chat_id", supportChatIds)
-            .order("created_at", { ascending: true }),
+            .order("created_at", { ascending: false })
+            .limit(SUPPORT_CHAT_PAGE_SIZE),
           supabase
             .from("messages")
-            .select("*")
+            .select(SUPPORT_CHAT_MESSAGE_COLUMNS)
             .is("chat_id", null)
             .eq("user_id", canonicalUserId)
             .in("sender_role", [...LEGACY_SUPPORT_MESSAGE_ROLES])
-            .order("created_at", { ascending: true }),
+            .order("created_at", { ascending: false })
+            .limit(SUPPORT_CHAT_PAGE_SIZE),
         ]);
 
         if (canonicalResult.error || legacyResult.error) {
@@ -409,7 +417,7 @@ export default function Chat() {
         }
 
         const chatRows = filterSupportChatRows(
-          [...(canonicalResult.data || []), ...(legacyResult.data || [])],
+          [...(canonicalResult.data || [])].reverse().concat([...(legacyResult.data || [])].reverse()),
           supportChatIds,
           canonicalUserId,
         );
@@ -466,25 +474,19 @@ export default function Chat() {
           return prev;
         });
 
-        // Mark only messages in this chat that were not sent by this user.
-        if (canonicalUserId) {
-          const [canonicalReadResult, legacyReadResult] = await Promise.all([
-            supabase
-              .from("messages")
-              .update({ read_by_user: true })
-              .in("chat_id", supportChatIds)
-              .eq("read_by_user", false)
-              .neq("sender_role", "user"),
-            supabase
-              .from("messages")
-              .update({ read_by_user: true })
-              .is("chat_id", null)
-              .eq("user_id", canonicalUserId)
-              .in("sender_role", [...LEGACY_SUPPORT_MESSAGE_ROLES])
-              .eq("read_by_user", false),
-          ]);
-
-          if (canonicalReadResult.error || legacyReadResult.error) {
+        // Update only unread rows that were actually delivered to this client.
+        // This avoids repeatedly writing an entire support-chat history while a
+        // fallback poll is active.
+        const unreadMessageIds = chatRows
+          .filter((message: any) => !message.read_by_user && message.sender_role !== "user")
+          .map((message: any) => message.id)
+          .filter(Boolean);
+        if (unreadMessageIds.length) {
+          const { error: readError } = await supabase
+            .from("messages")
+            .update({ read_by_user: true })
+            .in("id", unreadMessageIds);
+          if (readError) {
             console.error("Failed to mark support messages as read");
           }
         }

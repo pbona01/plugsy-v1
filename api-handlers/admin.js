@@ -18,18 +18,19 @@ import {
   collectPublishedOneLinks,
 } from "../shared/admin-overview.js";
 
-const getClient = () => createClient(
-  process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "",
-  {
+const getClient = () => {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) throw new Error("ADMIN_API_CONFIG_REQUIRED");
+  return createClient(url, serviceRoleKey, {
     db: {
       schema: "public"
     },
     global: {
       headers: { "x-connection-encrypted": "true" }
     }
-  }
-);
+  });
+};
 
 const textValue = (value) => String(value || "").trim();
 const normalizeEmail = (value) => textValue(value).toLowerCase();

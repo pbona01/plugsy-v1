@@ -13,15 +13,13 @@ const getEnv = (key: string) => {
 const rawUrl = (
   getEnv('NEXT_PUBLIC_SUPABASE_URL') ||
   (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_SUPABASE_URL) ||
-  getEnv('VITE_SUPABASE_URL') || 
-  'https://vnilkycbtxxcyoynakge.supabase.co'
+  getEnv('VITE_SUPABASE_URL') || ''
 ).trim();
 const supabaseUrl = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
 const supabaseAnonKey = (
   getEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY') ||
   (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) ||
-  getEnv('VITE_SUPABASE_ANON_KEY') || 
-  'sb_publishable_6krQD2xCzjSLtaol0F0YNg_bCk3ZpNa'
+  getEnv('VITE_SUPABASE_ANON_KEY') || ''
 ).trim();
 
 if (!supabaseUrl || !supabaseAnonKey) {
@@ -43,13 +41,12 @@ let supabaseToken: string | null = null;
 let lastTokenUpdate = 0;
 let getTokenFn: ((options?: { template?: string }) => Promise<string | null>) | null = null;
 
-console.log("[supabase-init] URL:", JSON.stringify(supabaseUrl));
-console.log("[supabase-init] URL length:", supabaseUrl?.length);
-console.log("[supabase-init] Anon key length:", supabaseAnonKey?.length);
-console.log("[supabase-init] URL starts with https:", supabaseUrl?.startsWith("https://"));
-console.log("[supabase-init] URL ends with slash:", supabaseUrl?.endsWith("/"));
+// Fail closed when the build is misconfigured. The placeholder is deliberately
+// non-routable so a preview or local build can never silently talk to production.
+const clientUrl = supabaseUrl || "https://invalid.supabase.local";
+const clientAnonKey = supabaseAnonKey || "missing-supabase-anon-key";
 
-export const supabase = (globalThis as any).supabaseInstance || createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = (globalThis as any).supabaseInstance || createClient(clientUrl, clientAnonKey, {
   realtime: {
     params: {
       eventsPerSecond: 10
@@ -65,7 +62,7 @@ export const supabase = (globalThis as any).supabaseInstance || createClient(sup
   },
   global: {
     headers: {
-      apikey: supabaseAnonKey,
+      apikey: clientAnonKey,
     },
     fetch: async (url, options: any = {}) => {
       // Auto-refresh token if it's nearing expiry or missing, and we have the getToken function
@@ -100,7 +97,7 @@ export const supabase = (globalThis as any).supabaseInstance || createClient(sup
       // CRITICAL: Always ensure apikey is present
       const finalHeaders: Record<string, string> = {
         ...incomingHeaders,
-        'apikey': supabaseAnonKey,
+        'apikey': clientAnonKey,
       };
 
       // Helper to check for valid Supabase-compatible JWT (for Clerk user tokens) with expiration check
@@ -128,7 +125,7 @@ export const supabase = (globalThis as any).supabaseInstance || createClient(sup
         delete finalHeaders['authorization'];
       } else {
         // Fallback to anon key if JWT absent, expired, or malformed
-        finalHeaders['Authorization'] = `Bearer ${supabaseAnonKey}`;
+        finalHeaders['Authorization'] = `Bearer ${clientAnonKey}`;
         delete finalHeaders['authorization'];
       }
 
@@ -169,20 +166,20 @@ export const setSupabaseAuth = async (getToken: (options?: { template?: string }
       
       if ((supabase as any).rest) {
         const headers = (supabase as any).rest.headers || {};
-        headers['apikey'] = supabaseAnonKey;
+        headers['apikey'] = clientAnonKey;
         
         if (isUserJWT(token)) {
           headers['Authorization'] = `Bearer ${token}`;
           delete headers['authorization'];
         } else {
-          headers['Authorization'] = `Bearer ${supabaseAnonKey}`;
+          headers['Authorization'] = `Bearer ${clientAnonKey}`;
           delete headers['authorization'];
         }
       }
       
       // Update realtime connection auth
       if ((supabase as any).realtime) {
-         (supabase as any).realtime.setAuth(isUserJWT(token) ? token : supabaseAnonKey);
+         (supabase as any).realtime.setAuth(isUserJWT(token) ? token : clientAnonKey);
       }
     }
   } catch (error: any) {
@@ -194,12 +191,12 @@ export const setSupabaseAuth = async (getToken: (options?: { template?: string }
 
       if ((supabase as any).rest) {
         const restHeaders = (supabase as any).rest.headers || {};
-        restHeaders['apikey'] = supabaseAnonKey;
-        restHeaders['Authorization'] = `Bearer ${supabaseAnonKey}`;
+        restHeaders['apikey'] = clientAnonKey;
+        restHeaders['Authorization'] = `Bearer ${clientAnonKey}`;
         delete restHeaders['authorization'];
       }
       if ((supabase as any).realtime) {
-         (supabase as any).realtime.setAuth(supabaseAnonKey);
+         (supabase as any).realtime.setAuth(clientAnonKey);
       }
     } else {
       console.error("Error setting Supabase auth:", error);

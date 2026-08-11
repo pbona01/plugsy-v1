@@ -2,7 +2,6 @@ import { LiquidGlass } from "../components/ui/LiquidGlass";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Logo } from '../components/ui/Logo';
 import { motion, AnimatePresence } from 'motion/react';
-import { createClient } from "@supabase/supabase-js";
 import { supabase, setSupabaseAuth } from '../lib/supabase';
 import { useClerk, useUser, useAuth } from '@clerk/clerk-react';
 import { optimizeCloudinaryUrl } from '../lib/cloudinary';
@@ -512,35 +511,12 @@ export default function Admin() {
                 if (error) {
                   console.error(`[ADMIN] Supabase error for ${table}:`, error);
                   
-                  // Clean anonymous client fallback for tables affected by Clerk JWT RLS errors
-                  if (collection === 'profiles') {
-                    console.log(`[executeFetch] Trying fallback for profiles using clean anonymous client`);
-                    try {
-                      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co';
-                      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_6krQD2xCzjSLtaol0F0YNg_bCk3ZpNa';
-                      const cleanClient = createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
-                      const { data: fallback, error: fallbackErr } = await cleanClient.from('profiles').select('*').order('created_at', { ascending: false }).limit(1000);
-                      if (fallbackErr) throw fallbackErr;
-                      console.log(`[executeFetch] Clean anonymous fallback for profiles succeeded:`, fallback?.length);
-                      return safeArray(fallback);
-                    } catch (fallbackE) {
-                      console.error(`[executeFetch] Clean anonymous fallback for profiles failed:`, fallbackE);
-                    }
-                  }
-
                   if (collection === 'orders') {
                     console.log(`[executeFetch] Trying fallback for orders`);
                     try {
                       const { data: fallback, error: fallbackErr } = await supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(500);
                       if (!fallbackErr) return safeArray(fallback);
                       
-                      // Also try clean anonymous client for orders if standard failed
-                      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co';
-                      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_6krQD2xCzjSLtaol0F0YNg_bCk3ZpNa';
-                      const cleanClient = createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
-                      const { data: fallbackAnon, error: fallbackAnonErr } = await cleanClient.from('orders').select('*').order('created_at', { ascending: false }).limit(500);
-                      if (fallbackAnonErr) throw fallbackAnonErr;
-                      return safeArray(fallbackAnon);
                     } catch (fallbackE) {
                       console.error(`[executeFetch] Fallbacks for orders failed:`, fallbackE);
                     }

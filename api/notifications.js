@@ -57,7 +57,7 @@ async function verifiedSegmentRecipients(supabase, segment) {
     if (!data || data.length < pageSize) break;
   }
   const candidates = [...new Set((await canonicalizeChatMembers(supabase, rows)).filter(Boolean))];
-  if (candidates.length > AUDIENCE_LIMIT) return { error: true, code: "AUDIENCE_LIMIT_EXCEEDED", ids: [] };
+  if (candidates.length > AUDIENCE_LIMIT) return { error: true, code: "AUDIENCE_LIMIT_EXCEEDED", ids: [], adminIds: [], userIds: [] };
   const profiles = new Map();
   for (let offset = 0; offset < candidates.length; offset += 500) {
     const batch = candidates.slice(offset, offset + 500);
@@ -76,15 +76,21 @@ async function verifiedSegmentRecipients(supabase, segment) {
     return { error: true, code: "CLERK_AUDIENCE_LOOKUP_FAILED", ids: [] };
   }
   const classified = classifyVerifiedAudience(candidates, new Set([...profiles].filter(([, admin]) => admin).map(([id]) => id)), new Set([...clerkAdmins].filter(([, admin]) => admin).map(([id]) => id)), AUDIENCE_LIMIT);
-  if (classified.error) return { error: true, code: classified.code, ids: [] };
-  const ids = segment === "admin" ? classified.admin : classified.user;
-  return { error: false, code: "OK", ids };
+  if (classified.error) return { error: true, code: classified.code, ids: [], adminIds: [], userIds: [] };
+  const ids = segment === "admin"
+    ? classified.admin
+    : segment === "user"
+      ? classified.user
+      : [...classified.admin, ...classified.user];
+  return { error: false, code: "OK", ids, adminIds: classified.admin, userIds: classified.user };
 }
 
 export async function collectVerifiedAudience(supabase) {
-  const [admins, users] = await Promise.all([verifiedSegmentRecipients(supabase, "admin"), verifiedSegmentRecipients(supabase, "user")]);
-  if (admins.error || users.error) return { error: true, code: admins.code || users.code, admin: [], user: [] };
-  return { error: false, admin: admins.ids, user: users.ids };
+  // Classify once. The old implementation scanned every push subscription and
+  // every Clerk user twice just to render the admin subscriber counts.
+  const audience = await verifiedSegmentRecipients(supabase, "all");
+  if (audience.error) return { error: true, code: audience.code, admin: [], user: [] };
+  return { error: false, admin: audience.adminIds, user: audience.userIds };
 }
 
 async function notifyMessage(req, res, supabase) {

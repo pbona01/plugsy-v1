@@ -2,14 +2,15 @@ import { Resend } from "resend";
 import { createClient } from "@supabase/supabase-js";
 
 const resend = new Resend(process.env.RESEND_API_KEY || 're_mock_key');
-const supabase = createClient(
-  process.env.VITE_SUPABASE_URL || 'https://vnilkycbtxxcyoynakge.supabase.co', 
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_6krQD2xCzjSLtaol0F0YNg_bCk3ZpNa'
-);
+const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabase = supabaseUrl && supabaseServiceRoleKey
+  ? createClient(supabaseUrl, supabaseServiceRoleKey)
+  : null;
 
 async function logNotification(type: string, userId: string, details: any) {
   try {
-    if (!process.env.VITE_SUPABASE_URL) return;
+    if (!supabase) return;
     
     await supabase.from('notification_logs').insert([{
       type,
