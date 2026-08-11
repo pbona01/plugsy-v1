@@ -8,6 +8,13 @@ import {
 
 export const sendBroadcastSafely = async (channelName: string, eventName: string, payload: any = {}) => {
   console.log(`[broadcast-safely] attempting to send '${eventName}' to '${channelName}'`);
+
+  // The notification listener and inbox refresh listener deliberately use
+  // separate channel instances. Relay unread events before any early return
+  // below so both channels receive the event regardless of connection state.
+  if (eventName === "new_unread" && channelName.startsWith("user-events-") && !channelName.endsWith("-inbox")) {
+    void sendBroadcastSafely(`${channelName}-inbox`, eventName, payload);
+  }
   
   // Look for any existing channel matching the name or topic
   const existingChannel = supabase.getChannels().find(
@@ -47,6 +54,7 @@ export const sendBroadcastSafely = async (channelName: string, eventName: string
       }, 2000);
     }
   });
+
 };
 
 export interface ChatMessage {

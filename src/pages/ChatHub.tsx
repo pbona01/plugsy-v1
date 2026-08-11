@@ -284,12 +284,12 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
 
   useEffect(() => {
     if (!userId) return;
-    const channel = supabase.channel('user-events-' + userId)
+    // Keep inbox updates on their own channel. RealtimeNotifications owns the
+    // user-events topic, and Supabase channels cannot be modified after
+    // subscription.
+    const channel = supabase.channel('user-events-' + userId + '-inbox')
       .on('broadcast', { event: 'new_unread' }, () => {
         if (shouldScheduleChatHubRefresh("new_unread", userId)) scheduleFetchChats();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_members', filter: `user_id=eq.${userId}` }, (payload: any) => {
-        if (shouldScheduleChatHubRefresh("chat_members", userId, payload)) scheduleFetchChats();
       })
       .subscribe();
 
