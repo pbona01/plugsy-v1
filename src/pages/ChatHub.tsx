@@ -360,7 +360,11 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
             .select(CHAT_PROFILE_COLUMNS)
             .in("clerk_id", otherUserIds);
 
-          if (profErr) throw profErr;
+          // A profile enrichment failure must never hide a user's inbox.
+          // chat_members already contains a safe display-name fallback.
+          if (profErr) {
+            console.error("Error loading chat profiles:", profErr);
+          }
           (profilesData || []).forEach((p: Profile) => {
             profilesMap[p.clerk_id] = p;
           });

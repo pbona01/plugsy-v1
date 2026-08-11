@@ -54,7 +54,8 @@ select
   one_link_wallpaper_url,
   one_link_wallpaper_text_mode,
   one_link_settings,
-  one_link_updated_at
+  one_link_updated_at,
+  last_login_at
 from public.profiles;
 
 revoke all on public.profile_directory_v1 from public;
