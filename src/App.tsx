@@ -31,24 +31,44 @@ import Dashboard from "./pages/Dashboard";
 import ComingSoon from "./pages/ComingSoon";
 import Chat from "./pages/Chat";
 import Learn from "./pages/Learn";
-const ChatHub = lazy(() => import("./pages/ChatHub"));
+const DYNAMIC_IMPORT_RELOAD_KEY = "plugsy-dynamic-import-reload";
+const lazyWithDeploymentRecovery = <T extends React.ComponentType<any>>(
+  load: () => Promise<{ default: T }>,
+) => lazy(async () => {
+  try {
+    const module = await load();
+    sessionStorage.removeItem(DYNAMIC_IMPORT_RELOAD_KEY);
+    return module;
+  } catch (error) {
+    // A deploy can replace hashed chunks while a previous HTML shell remains
+    // open. Reload once to retrieve a matching shell and asset manifest.
+    if (typeof window !== "undefined" && sessionStorage.getItem(DYNAMIC_IMPORT_RELOAD_KEY) !== window.location.href) {
+      sessionStorage.setItem(DYNAMIC_IMPORT_RELOAD_KEY, window.location.href);
+      window.location.reload();
+      return new Promise<never>(() => {});
+    }
+    throw error;
+  }
+});
+
+const ChatHub = lazyWithDeploymentRecovery(() => import("./pages/ChatHub"));
 import JoinInvite from "./pages/JoinInvite";
 import PublicProfile from "./pages/PublicProfile";
-const PersonalChat = lazy(() => import("./pages/PersonalChat"));
+const PersonalChat = lazyWithDeploymentRecovery(() => import("./pages/PersonalChat"));
 import OrderHistory from "./pages/OrderHistory";
-const Admin = lazy(() => import("./pages/Admin"));
-const AdminChats = lazy(() => import("./pages/AdminChats"));
-const AdminPortfolioSales = lazy(() => import("./pages/AdminPortfolioSales"));
-const AdminBroadcast = lazy(() => import("./pages/AdminBroadcast"));
+const Admin = lazyWithDeploymentRecovery(() => import("./pages/Admin"));
+const AdminChats = lazyWithDeploymentRecovery(() => import("./pages/AdminChats"));
+const AdminPortfolioSales = lazyWithDeploymentRecovery(() => import("./pages/AdminPortfolioSales"));
+const AdminBroadcast = lazyWithDeploymentRecovery(() => import("./pages/AdminBroadcast"));
 import PaymentCallback from "./pages/PaymentCallback";
 import PortfolioCallback from "./pages/PortfolioCallback";
-const PortfolioDashboard = lazy(() => import("./pages/PortfolioDashboard"));
-const OneLinkPage = lazy(() => import("./pages/OneLinkPage"));
-const CreatePortfolio = lazy(() => import("./pages/CreatePortfolio").then((module) => ({ default: module.CreatePortfolio })));
-const EditPortfolio = lazy(() => import("./pages/EditPortfolio").then((module) => ({ default: module.EditPortfolio })));
-const PublicPortfolio = lazy(() => import("./pages/PublicPortfolio").then((module) => ({ default: module.PublicPortfolio })));
-const Wallet = lazy(() => import("./pages/Wallet").then((module) => ({ default: module.Wallet })));
-const WalletCallback = lazy(() => import("./pages/WalletCallback").then((module) => ({ default: module.WalletCallback })));
+const PortfolioDashboard = lazyWithDeploymentRecovery(() => import("./pages/PortfolioDashboard"));
+const OneLinkPage = lazyWithDeploymentRecovery(() => import("./pages/OneLinkPage"));
+const CreatePortfolio = lazyWithDeploymentRecovery(() => import("./pages/CreatePortfolio").then((module) => ({ default: module.CreatePortfolio })));
+const EditPortfolio = lazyWithDeploymentRecovery(() => import("./pages/EditPortfolio").then((module) => ({ default: module.EditPortfolio })));
+const PublicPortfolio = lazyWithDeploymentRecovery(() => import("./pages/PublicPortfolio").then((module) => ({ default: module.PublicPortfolio })));
+const Wallet = lazyWithDeploymentRecovery(() => import("./pages/Wallet").then((module) => ({ default: module.Wallet })));
+const WalletCallback = lazyWithDeploymentRecovery(() => import("./pages/WalletCallback").then((module) => ({ default: module.WalletCallback })));
 import { TermsOfService } from "./pages/TermsOfService";
 import { PrivacyPolicy } from "./pages/PrivacyPolicy";
 import { BackgroundGradientAnimationDemo } from "./components/effects/background-gradient-animation-demo";

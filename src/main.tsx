@@ -7,6 +7,18 @@ import './index.css';
 import { ThemeProvider, useTheme } from './lib/ThemeContext';
 import { HelmetProvider } from 'react-helmet-async';
 
+// Vite emits this event when a preloaded hashed module is no longer available
+// after a deployment. Reloading once obtains a matching HTML shell and avoids
+// presenting a blank route to the user.
+window.addEventListener("vite:preloadError", (event) => {
+  event.preventDefault();
+  const key = "plugsy-vite-preload-reload";
+  if (sessionStorage.getItem(key) !== window.location.href) {
+    sessionStorage.setItem(key, window.location.href);
+    window.location.reload();
+  }
+});
+
 function ThemedClerkProvider({ children }: { children: React.ReactNode }) {
   const { theme } = useTheme();
 
