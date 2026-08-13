@@ -25,6 +25,13 @@ const absoluteUrl = (req, path) => {
   const proto = text(req.headers?.["x-forwarded-proto"]) || "https";
   return `${proto}://${host}${path}`;
 };
+const firstValidUrl = (...values) => {
+  for (const value of values) {
+    const normalized = normalizeExternalUrl(value);
+    if (normalized) return normalized;
+  }
+  return null;
+};
 
 function renderHtml({ title, description, image, url, type }) {
   const safeTitle = escapeHtml(title || DEFAULT_TITLE);
@@ -142,7 +149,15 @@ async function portfolioPreview(req, res, slug, dependencies = {}) {
     .eq("slug", cleanSlug)
     .maybeSingle();
   if (error) return sendError(res, 503);
-  if (!portfolio || portfolio.status !== "published") return sendError(res, 404);
+  if (!portfolio || portfolio.status === "draft") return sendError(res, 404);
+
+  const itemsResult = await supabase
+    .from("vp_portfolio_items")
+    .select("cover_image_url,custom_thumbnail_url,image_url")
+    .eq("portfolio_id", portfolio.id)
+    .order("order_index")
+    .limit(1);
+  const firstItem = itemsResult.error ? null : itemsResult.data?.[0] || null;
 
   const displayName = text(portfolio.full_name || portfolio.username) || "Portfolio";
   const category = text(portfolio.category);
@@ -154,13 +169,17 @@ async function portfolioPreview(req, res, slug, dependencies = {}) {
       (category ? `${displayName}'s ${category} portfolio.` : `Check out ${displayName}'s portfolio.`),
     180,
   );
-  const image =
+  const image = firstValidUrl(
     portfolio.profile_image_url ||
     portfolio.avatarUrl ||
     portfolio.profileImage ||
     portfolio.profile_image ||
-    portfolio.bio_graphic_url ||
-    DEFAULT_IMAGE;
+    portfolio.bio_graphic_url,
+    firstItem?.cover_image_url,
+    firstItem?.custom_thumbnail_url,
+    firstItem?.image_url,
+    DEFAULT_IMAGE,
+  );
 
   return res.status(200).send(renderHtml({
     title,

@@ -70,6 +70,21 @@ function fakeSupabase() {
           state.value = value;
           return builder;
         },
+        order() {
+          return builder;
+        },
+        limit() {
+          return state.table === "vp_portfolio_items"
+            ? Promise.resolve({
+                data: [{
+                  cover_image_url: "https://images.example/work-cover.png",
+                  custom_thumbnail_url: null,
+                  image_url: null,
+                }],
+                error: null,
+              })
+            : builder;
+        },
         async maybeSingle() {
           if (state.table === "profiles" && state.value === "creator") {
             return { data: profile, error: null };
@@ -77,8 +92,9 @@ function fakeSupabase() {
           if (state.table === "vp_portfolios" && state.value === "portfolio-slug") {
             return {
               data: {
+                id: "portfolio-1",
                 slug: "portfolio-slug",
-                status: "published",
+                status: null,
                 full_name: "Portfolio Owner",
                 username: "portfolio_owner",
                 tagline: "Motion designer and visual storyteller",
@@ -106,6 +122,8 @@ test("crawler rewrites are configured for OneLink and portfolio URLs", async () 
   assert.match(vercel, /"destination": "\/api\/link-preview\?kind=onelink&username=:username"/);
   assert.match(vercel, /"destination": "\/api\/link-preview\?kind=portfolio&slug=:slug"/);
   assert.match(vercel, /user-agent/);
+  assert.match(vercel, /WhatsApp/);
+  assert.doesNotMatch(vercel, /\(\?i\)/);
 });
 
 test("OneLink preview uses creator-owned metadata", async () => {
