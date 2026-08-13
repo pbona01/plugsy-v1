@@ -1460,7 +1460,7 @@ export default function Admin() {
                       { icon: AlertCircle, label: 'Action Required', val: overviewMetrics ? Number(dbStats.actionRequiredChats).toLocaleString() : '—', color: 'text-red-500', tab: 'chats' },
                       { icon: Inbox, label: 'Total Orders', val: overviewMetrics ? Number(dbStats.totalOrders).toLocaleString() : '—', color: 'text-brand-text-secondary' },
                       { icon: Globe, label: 'Published One Links', val: overviewMetrics ? Number(dbStats.publishedOneLinks).toLocaleString() : '—', color: 'text-purple-500', tab: 'onelinks' },
-                      { icon: UsersIcon, label: 'Signed-in Users Online Now', val: presenceStatus === 'confirmed' ? onlineSignedInCount.toLocaleString() : (presenceStatus === 'connecting' ? 'Connecting…' : 'Unavailable'), color: 'text-emerald-500' }
+                      { icon: UsersIcon, label: 'Signed-in Users Online Now', val: Math.max(onlineSignedInCount, Number(overviewMetrics?.recentlyActiveUsers || 0)).toLocaleString(), color: 'text-emerald-500' }
                     ].map((stat, i) => (
                     <button 
                       key={i} 
@@ -1485,7 +1485,7 @@ export default function Admin() {
                   <button onClick={() => void refreshOverview()} disabled={overviewLoading} className="btn-primary h-10 px-4 flex items-center gap-2"><RefreshCw size={14} className={overviewLoading ? 'animate-spin' : ''} /> Refresh</button>
                   <span>{overviewMetrics?.updatedAt ? `Last updated ${new Date(overviewMetrics.updatedAt).toLocaleString()}` : 'Overview unavailable'}</span>
                   {overviewError && <span className="text-orange-500">Refresh failed; showing the last confirmed overview data.</span>}
-                  <span>Anonymous visitors are not included. Presence {presenceStatus}; updated {presenceUpdatedAt ? new Date(presenceUpdatedAt).toLocaleString() : '—'}.</span>
+                  <span>Anonymous visitors are not included. Realtime presence {presenceStatus}; server fallback covers visible sessions active in the last 3 minutes.</span>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">

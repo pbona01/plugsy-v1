@@ -45,6 +45,21 @@ test("profile-only legacy records cannot inflate registeredUsers", () => {
   assert.equal(metrics.registeredUsers, 524);
 });
 
+test("overview has a database heartbeat fallback for online signed-in users", () => {
+  const now = new Date("2026-08-13T08:00:00.000Z");
+  const metrics = buildOverviewMetrics({
+    clerkCount: 4,
+    now,
+    profiles: [
+      { id: "1", clerk_id: "user_recent", last_login_at: "2026-08-13T07:58:30.000Z" },
+      { id: "2", clerk_id: "user_old", last_login_at: "2026-08-13T07:56:59.000Z" },
+      { id: "3", clerk_id: "user_recent", last_login_at: "2026-08-13T07:59:30.000Z" },
+    ],
+    orders: [], portfolioPurchases: [], chats: [],
+  });
+  assert.equal(metrics.recentlyActiveUsers, 1);
+});
+
 test("overview definitions preserve paid volume, subscriptions, pending deliveries and canonical chats", () => {
   const metrics = buildOverviewMetrics({
     clerkCount: 2,
@@ -192,7 +207,7 @@ test("overview endpoint uses injected Clerk count and returns allowlisted metric
   assert.equal(res.out.statusCode, 200);
   assert.equal(res.out.body.metrics.registeredUsers, 524);
   assert.equal(res.out.body.metrics.syncedProfiles, 1);
-  assert.deepEqual(Object.keys(res.out.body.metrics).sort(), ["actionRequiredChats", "activeSubscriptions", "openSupportChats", "paidVolume", "pendingOrders", "portfolioPaidVolume", "publishedOneLinks", "registeredUsers", "subscriptionPaidVolume", "syncedProfiles", "totalOrders"].sort());
+  assert.deepEqual(Object.keys(res.out.body.metrics).sort(), ["actionRequiredChats", "activeSubscriptions", "openSupportChats", "paidVolume", "pendingOrders", "portfolioPaidVolume", "publishedOneLinks", "recentlyActiveUsers", "registeredUsers", "subscriptionPaidVolume", "syncedProfiles", "totalOrders"].sort());
 });
 
 test("published One Link compatibility includes legacy and independent pages only once", () => {

@@ -124,6 +124,18 @@ export function collectPublishedOneLinks(profiles) {
   }).sort((left, right) => left.username.localeCompare(right.username));
 }
 
+export function countRecentlyActiveProfiles(profiles, now = new Date(), windowMs = 3 * 60 * 1000) {
+  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  if (!Number.isFinite(nowMs) || !Array.isArray(profiles)) return 0;
+  const seen = new Set();
+  for (const profile of profiles) {
+    const id = String(profile?.clerk_id || profile?.id || "").trim();
+    const timestamp = new Date(profile?.last_login_at || "").getTime();
+    if (id && Number.isFinite(timestamp) && timestamp <= nowMs && nowMs - timestamp <= windowMs) seen.add(id);
+  }
+  return seen.size;
+}
+
 export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPurchases, chats, totalOrders = orders?.length, syncedProfiles = profiles?.length, now = new Date(), publishedOneLinks = null }) {
   if (!Number.isSafeInteger(clerkCount) || clerkCount < 0) {
     throw new AdminOverviewFailure("ADMIN_OVERVIEW_CLERK_COUNT_FAILED");
@@ -169,6 +181,7 @@ export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPu
     openSupportChats: support.openSupportChats,
     actionRequiredChats: support.actionRequiredChats,
     publishedOneLinks: publishedRecords.length,
+    recentlyActiveUsers: countRecentlyActiveProfiles(profiles, now),
   };
   const countMetrics = [
     result.registeredUsers,
@@ -179,6 +192,7 @@ export function buildOverviewMetrics({ clerkCount, profiles, orders, portfolioPu
     result.openSupportChats,
     result.actionRequiredChats,
     result.publishedOneLinks,
+    result.recentlyActiveUsers,
   ];
   if (countMetrics.some((value) => !Number.isSafeInteger(value) || value < 0)) {
     throw new AdminOverviewFailure("ADMIN_OVERVIEW_RESPONSE_INVALID");

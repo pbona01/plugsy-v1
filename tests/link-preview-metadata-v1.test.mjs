@@ -150,3 +150,21 @@ test("portfolio preview uses published portfolio details", async () => {
   assert.match(res.body, /https:\/\/images\.example\/portfolio\.png/);
   assert.match(res.body, /https:\/\/www\.plugsy\.ng\/vp\/portfolio-slug/);
 });
+
+test("portfolio preview optimizes Cloudinary images for social crawlers", async () => {
+  const res = makeResponse();
+  const supabase = fakeSupabase();
+  const original = supabase.from;
+  supabase.from = (table) => {
+    const builder = original(table);
+    const maybeSingle = builder.maybeSingle;
+    builder.maybeSingle = async () => {
+      const result = await maybeSingle();
+      if (table === "vp_portfolios" && result.data) result.data.profile_image_url = "https://res.cloudinary.com/demo/image/upload/v1/example.png";
+      return result;
+    };
+    return builder;
+  };
+  await handler(makeRequest({ kind: "portfolio", slug: "portfolio-slug" }), res, { supabase });
+  assert.match(res.body, /image\/upload\/f_auto,q_auto,w_1200,c_limit\/v1\/example\.png/);
+});

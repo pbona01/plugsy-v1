@@ -32,6 +32,19 @@ const firstValidUrl = (...values) => {
   }
   return null;
 };
+const optimizeSocialImage = (value) => {
+  const url = normalizeExternalUrl(value);
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "res.cloudinary.com" && parsed.pathname.includes("/image/upload/")) {
+      parsed.pathname = parsed.pathname.replace("/image/upload/", "/image/upload/f_auto,q_auto,w_1200,c_limit/");
+    }
+    return parsed.href;
+  } catch {
+    return url;
+  }
+};
 const collectImageCandidates = (value, output = [], depth = 0) => {
   if (depth > 3 || value == null) return output;
   if (typeof value === "string") {
@@ -52,7 +65,7 @@ const collectImageCandidates = (value, output = [], depth = 0) => {
 function renderHtml({ title, description, image, url, type }) {
   const safeTitle = escapeHtml(title || DEFAULT_TITLE);
   const safeDescription = escapeHtml(description || DEFAULT_DESCRIPTION);
-  const safeImage = escapeHtml(normalizeExternalUrl(image) || DEFAULT_IMAGE);
+  const safeImage = escapeHtml(optimizeSocialImage(image) || DEFAULT_IMAGE);
   const safeUrl = escapeHtml(url || "https://www.plugsy.ng");
   const safeType = escapeHtml(type || "website");
   return `<!doctype html>

@@ -1102,7 +1102,7 @@ export async function handleOverviewMetrics(req, res, dependencies = {}) {
     }
     const profiles = await fetchBoundedRows((from, to) => supabase
       .from("profiles")
-      .select("id,clerk_id,email,full_name,username,bio,profile_pic_url,image_url,one_link_username,one_link_display_name,one_link_avatar_url,one_link_settings,one_link_updated_at,updated_at")
+      .select("id,clerk_id,email,full_name,username,bio,profile_pic_url,image_url,last_login_at,one_link_username,one_link_display_name,one_link_avatar_url,one_link_settings,one_link_updated_at,updated_at")
       .order("id", { ascending: true })
       .range(from, to), { expectedCount: profileCountResult.count });
     const orders = await fetchBoundedRows((from, to) => supabase

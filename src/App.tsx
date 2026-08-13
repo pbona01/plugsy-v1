@@ -230,7 +230,8 @@ export default function App() {
       }
     };
 
-    // Update on a visible session start and at most once every five minutes.
+    // Keep the server-side admin fallback accurate even when the browser cannot
+    // join Supabase Presence. This only runs for visible tabs.
     // Also refresh when the tab returns to the foreground.
     void updateHeartbeat();
     const onVisibilityChange = () => {
@@ -238,7 +239,7 @@ export default function App() {
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
 
-    const interval = setInterval(() => void updateHeartbeat(), 5 * 60 * 1000);
+    const interval = setInterval(() => void updateHeartbeat(), 90 * 1000);
     return () => {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibilityChange);
