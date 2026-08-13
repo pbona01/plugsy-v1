@@ -3,6 +3,10 @@ import { useAuth, useUser } from "@clerk/clerk-react";
 import toast from "react-hot-toast";
 import { isSubscribed, requestNotificationPermission, getOneSignalState, initOneSignal } from "@/utils/onesignal";
 
+const SUPPRESS_KEY = "notif_push_unavailable_until";
+const SUPPRESS_MS = 24 * 60 * 60 * 1000;
+const suppressed = () => Number(localStorage.getItem(SUPPRESS_KEY) || "0") > Date.now();
+const suppressPrompt = () => localStorage.setItem(SUPPRESS_KEY, String(Date.now() + SUPPRESS_MS));
 const withEnableTimeout = async <T,>(operation: Promise<T>, timeoutMs = 15_000): Promise<T> => {
   let timer: number | undefined;
   try {
@@ -31,11 +35,12 @@ export default function NotificationBell() {
 
   const refresh = async () => {
     if (!user) return;
+    if (suppressed()) { setVisible(false); return; }
     const currentGeneration = ++generation.current;
     const resolved = await initOneSignal();
     if (disposed.current || currentGeneration !== generation.current) return;
     setSdkState(resolved);
-    if (resolved === "unsupported") { setVisible(true); return; }
+    if (resolved === "unsupported" || resolved === "failed") { suppressPrompt(); setVisible(false); return; }
     if (await isSubscribed()) {
       const token = await getToken().catch(() => null);
       const response = await fetch("/api/notifications?action=subscription-status", {
@@ -50,6 +55,7 @@ export default function NotificationBell() {
     }
     if (disposed.current || currentGeneration !== generation.current) return;
     setBlocked(typeof Notification !== "undefined" && Notification.permission === "denied");
+    if (typeof Notification !== "undefined" && Notification.permission === "denied") { suppressPrompt(); setVisible(false); return; }
     setVisible(!localStorage.getItem("notif_dismissed_onesignal"));
   };
   useEffect(() => { disposed.current = false; generation.current += 1; enableAttempt.current += 1; setLoading(false); setRegistrationWarning(false); setBlocked(false); setSdkState("loading"); setVisible(false); refresh(); const handler = () => refresh(); window.addEventListener("onesignal_subscribed_state_changed", handler); return () => { disposed.current = true; generation.current += 1; enableAttempt.current += 1; window.removeEventListener("onesignal_subscribed_state_changed", handler); }; }, [user?.id]);
@@ -66,13 +72,14 @@ export default function NotificationBell() {
       const result = await withEnableTimeout(requestNotificationPermission(userId, getToken));
       if (disposed.current || currentAttempt !== enableAttempt.current || !user) return;
       if (result.active) { setRegistrationWarning(!result.registered); setVisible(!result.registered); toast.success(result.registered ? "Notifications enabled." : "Notifications active; account registration needs repair."); }
-      else if (typeof Notification !== "undefined" && Notification.permission === "denied") { setBlocked(true); toast.error("Notifications are blocked. Change the browser site setting to enable them."); }
-      else if (getOneSignalState() === "unsupported") toast.error("This browser or device does not support web push alerts.");
-      else if (getOneSignalState() === "failed") toast.error("Alerts could not be initialized. Please try again later.");
+      else if (typeof Notification !== "undefined" && Notification.permission === "denied") { setBlocked(true); suppressPrompt(); setVisible(false); }
+      else if (getOneSignalState() === "unsupported") { suppressPrompt(); setVisible(false); }
+      else if (getOneSignalState() === "failed") { suppressPrompt(); setVisible(false); }
       else toast.error(result.code === "AUTH_REQUIRED" ? "Your session expired. Sign in again to enable alerts." : "No active push subscription was confirmed. Try Repair Alerts.");
     } catch (error: any) {
       if (!disposed.current && currentAttempt === enableAttempt.current) {
-        toast.error(error?.message === "PUSH_ENABLE_TIMEOUT" ? "Alert setup timed out. Please try Repair Alerts again." : "Your session could not be verified. Sign in again to enable alerts.");
+        if (error?.message === "PUSH_ENABLE_TIMEOUT") { suppressPrompt(); setVisible(false); }
+        else toast.error("Your session could not be verified. Sign in again to enable alerts.");
       }
     } finally {
       if (!disposed.current && currentAttempt === enableAttempt.current) setLoading(false);

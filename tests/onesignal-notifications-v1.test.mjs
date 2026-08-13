@@ -322,6 +322,14 @@ test("NotificationBell enable loading is not coupled to background refresh gener
   assert.match(bell, /currentAttempt === enableAttempt\.current\) setLoading\(false\)/);
 });
 
+test("NotificationBell suppresses unavailable push prompts instead of looping", async () => {
+  const bell = await readFile(new URL("../src/components/NotificationBell.tsx", import.meta.url), "utf8");
+  assert.match(bell, /SUPPRESS_KEY/);
+  assert.match(bell, /resolved === "unsupported" \|\| resolved === "failed"/);
+  assert.match(bell, /suppressPrompt\(\); setVisible\(false\)/);
+  assert.doesNotMatch(bell, /Alerts could not be initialized/);
+});
+
 test("subscription mutations bind the expected actor before any row mutation", () => {
   assert.equal(subscriptionActorCode("user_actor", "user_actor"), "OK");
   assert.equal(subscriptionActorCode("user_other", "user_actor"), "SUBSCRIPTION_ACTOR_CHANGED");
