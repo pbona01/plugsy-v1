@@ -26,6 +26,7 @@ export default function NotificationBell() {
   const [sdkState, setSdkState] = useState("loading");
   const [registrationWarning, setRegistrationWarning] = useState(false);
   const generation = useRef(0);
+  const enableAttempt = useRef(0);
   const disposed = useRef(false);
 
   const refresh = async () => {
@@ -51,29 +52,30 @@ export default function NotificationBell() {
     setBlocked(typeof Notification !== "undefined" && Notification.permission === "denied");
     setVisible(!localStorage.getItem("notif_dismissed_onesignal"));
   };
-  useEffect(() => { disposed.current = false; generation.current += 1; setLoading(false); setRegistrationWarning(false); setBlocked(false); setSdkState("loading"); setVisible(false); refresh(); const handler = () => refresh(); window.addEventListener("onesignal_subscribed_state_changed", handler); return () => { disposed.current = true; generation.current += 1; window.removeEventListener("onesignal_subscribed_state_changed", handler); }; }, [user?.id]);
+  useEffect(() => { disposed.current = false; generation.current += 1; enableAttempt.current += 1; setLoading(false); setRegistrationWarning(false); setBlocked(false); setSdkState("loading"); setVisible(false); refresh(); const handler = () => refresh(); window.addEventListener("onesignal_subscribed_state_changed", handler); return () => { disposed.current = true; generation.current += 1; enableAttempt.current += 1; window.removeEventListener("onesignal_subscribed_state_changed", handler); }; }, [user?.id]);
 
   const enable = async () => {
     if (!user || loading) return;
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
     const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as any).standalone === true;
     if (isIOS && !standalone) { toast.error("Add Plugsy to your Home Screen before enabling alerts on iOS."); return; }
-    const requestGeneration = generation.current;
+    const currentAttempt = ++enableAttempt.current;
+    const userId = user.id;
     setLoading(true);
     try {
-      const result = await withEnableTimeout(requestNotificationPermission(user.id, getToken));
-      if (disposed.current || requestGeneration !== generation.current || !user) return;
+      const result = await withEnableTimeout(requestNotificationPermission(userId, getToken));
+      if (disposed.current || currentAttempt !== enableAttempt.current || !user) return;
       if (result.active) { setRegistrationWarning(!result.registered); setVisible(!result.registered); toast.success(result.registered ? "Notifications enabled." : "Notifications active; account registration needs repair."); }
       else if (typeof Notification !== "undefined" && Notification.permission === "denied") { setBlocked(true); toast.error("Notifications are blocked. Change the browser site setting to enable them."); }
       else if (getOneSignalState() === "unsupported") toast.error("This browser or device does not support web push alerts.");
       else if (getOneSignalState() === "failed") toast.error("Alerts could not be initialized. Please try again later.");
       else toast.error(result.code === "AUTH_REQUIRED" ? "Your session expired. Sign in again to enable alerts." : "No active push subscription was confirmed. Try Repair Alerts.");
     } catch (error: any) {
-      if (!disposed.current && requestGeneration === generation.current) {
+      if (!disposed.current && currentAttempt === enableAttempt.current) {
         toast.error(error?.message === "PUSH_ENABLE_TIMEOUT" ? "Alert setup timed out. Please try Repair Alerts again." : "Your session could not be verified. Sign in again to enable alerts.");
       }
     } finally {
-      if (!disposed.current && requestGeneration === generation.current) setLoading(false);
+      if (!disposed.current && currentAttempt === enableAttempt.current) setLoading(false);
     }
   };
   if (!user || !visible) return null;

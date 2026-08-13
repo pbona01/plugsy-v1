@@ -272,8 +272,8 @@ test("identity reconciliation captures generation and fresh token boundaries", a
 
 test("NotificationBell guards enable completion and resets actor warnings", async () => {
   const bell = await readFile(new URL("../src/components/NotificationBell.tsx", import.meta.url), "utf8");
-  assert.match(bell, /const requestGeneration = generation\.current/);
-  assert.match(bell, /requestGeneration !== generation\.current/);
+  assert.match(bell, /const currentAttempt = \+\+enableAttempt\.current/);
+  assert.match(bell, /currentAttempt !== enableAttempt\.current/);
   assert.match(bell, /setRegistrationWarning\(false\)/);
 });
 
@@ -312,7 +312,14 @@ test("identity APIs retain token providers and queued actor-scoped cleanup", asy
 test("NotificationBell finally releases loading and ignores stale actor completion", async () => {
   const bell = await readFile(new URL("../src/components/NotificationBell.tsx", import.meta.url), "utf8");
   assert.match(bell, /try \{/); assert.match(bell, /finally \{/); assert.match(bell, /setLoading\(false\)/);
-  assert.match(bell, /disposed\.current \|\| requestGeneration !== generation\.current/);
+  assert.match(bell, /currentAttempt !== enableAttempt\.current/);
+});
+
+test("NotificationBell enable loading is not coupled to background refresh generation", async () => {
+  const bell = await readFile(new URL("../src/components/NotificationBell.tsx", import.meta.url), "utf8");
+  assert.match(bell, /enableAttempt = useRef\(0\)/);
+  assert.match(bell, /const currentAttempt = \+\+enableAttempt\.current/);
+  assert.match(bell, /currentAttempt === enableAttempt\.current\) setLoading\(false\)/);
 });
 
 test("subscription mutations bind the expected actor before any row mutation", () => {
