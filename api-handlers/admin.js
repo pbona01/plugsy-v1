@@ -669,7 +669,7 @@ async function handleBroadcastEmail(req, res) {
     }
     parsedBody = parsedBody || {};
 
-    const { subject, html, recipientEmails } = parsedBody;
+    const { subject, html, recipientEmails, broadcastAll } = parsedBody;
 
     const supabase = getClient();
     const writer = await requireVerifiedAdmin(req, res, supabase);
@@ -788,7 +788,22 @@ async function handleBroadcastEmail(req, res) {
 </html>
 `;
 
-    const recipients = recipientEmails || [];
+    let recipients = Array.isArray(recipientEmails) ? recipientEmails : [];
+    if (broadcastAll === true) {
+      const allEmails = [];
+      const pageSize = 1000;
+      for (let from = 0; from < 100000; from += pageSize) {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("email")
+          .not("email", "is", null)
+          .range(from, from + pageSize - 1);
+        if (error) throw error;
+        allEmails.push(...(data || []).map((row) => normalizeEmail(row.email)).filter(Boolean));
+        if (!data || data.length < pageSize) break;
+      }
+      recipients = [...new Set(allEmails)];
+    }
     if (recipients.length === 0) {
       return res.status(400).json({ success: false, error: "No recipients provided" });
     }
@@ -822,6 +837,7 @@ async function handleBroadcastEmail(req, res) {
 
     return res.status(200).json({
       success: true,
+      recipientCount: recipients.length,
       resultsCount: results.length,
       errorCount: errors.length
     });

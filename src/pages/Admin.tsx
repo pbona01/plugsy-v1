@@ -948,6 +948,7 @@ export default function Admin() {
           subject: broadcastSubject,
           html: broadcastContent,
           recipientEmails: recipients,
+          broadcastAll: broadcastTarget === 'all',
         })
       });
 
@@ -956,7 +957,7 @@ export default function Admin() {
         throw new Error(data.error || "Failed to send broadcast");
       }
 
-      toast.success(`Broadcast sent successfully to ${recipients.length} users!`);
+      toast.success(`Broadcast sent successfully to ${data.recipientCount || recipients.length} users!`);
       setBroadcastSubject('');
       setBroadcastContent('');
       setSelectedUserEmails([]);

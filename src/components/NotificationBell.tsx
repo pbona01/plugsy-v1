@@ -49,8 +49,11 @@ export default function NotificationBell() {
       const status = response?.ok ? await response.json().catch(() => null) : null;
       if (disposed.current || currentGeneration !== generation.current) return;
       const needsRepair = status?.registered !== true;
-      setRegistrationWarning(needsRepair);
-      setVisible(needsRepair);
+      // A failed background registration must never trap users in a repair modal.
+      // Keep push state passive; the server can reconcile registration on the next
+      // authenticated notification attempt.
+      setRegistrationWarning(false);
+      setVisible(false);
       return;
     }
     if (disposed.current || currentGeneration !== generation.current) return;
@@ -71,7 +74,12 @@ export default function NotificationBell() {
     try {
       const result = await withEnableTimeout(requestNotificationPermission(userId, getToken));
       if (disposed.current || currentAttempt !== enableAttempt.current || !user) return;
-      if (result.active) { setRegistrationWarning(!result.registered); setVisible(!result.registered); toast.success(result.registered ? "Notifications enabled." : "Notifications active; account registration needs repair."); }
+      if (result.active) {
+        setRegistrationWarning(false);
+        setVisible(false);
+        localStorage.setItem("notif_dismissed_onesignal", "true");
+        if (result.registered) toast.success("Notifications enabled.");
+      }
       else if (typeof Notification !== "undefined" && Notification.permission === "denied") { setBlocked(true); suppressPrompt(); setVisible(false); }
       else if (getOneSignalState() === "unsupported") { suppressPrompt(); setVisible(false); }
       else if (getOneSignalState() === "failed") { suppressPrompt(); setVisible(false); }

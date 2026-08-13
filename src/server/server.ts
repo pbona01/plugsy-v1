@@ -471,7 +471,7 @@ async function startServer() {
     adminProtectionMiddleware,
     async (req: any, res) => {
       try {
-        const { subject, html, recipientEmails } = req.body;
+        const { subject, html, recipientEmails, broadcastAll } = req.body;
         
         if (!subject || !html) {
           return res.status(400).json({ error: "Missing subject or content" });
@@ -586,7 +586,22 @@ async function startServer() {
 </html>
 `;
 
-        const recipients = recipientEmails || [];
+        let recipients = Array.isArray(recipientEmails) ? recipientEmails : [];
+        if (broadcastAll === true) {
+          const allEmails: string[] = [];
+          const pageSize = 1000;
+          for (let from = 0; from < 100000; from += pageSize) {
+            const { data, error } = await supabase
+              .from("profiles")
+              .select("email")
+              .not("email", "is", null)
+              .range(from, from + pageSize - 1);
+            if (error) throw error;
+            allEmails.push(...(data || []).map((row: any) => String(row.email || "").trim().toLowerCase()).filter(Boolean));
+            if (!data || data.length < pageSize) break;
+          }
+          recipients = [...new Set(allEmails)];
+        }
         if (recipients.length === 0) {
           return res.status(400).json({ error: "No recipients provided" });
         }
@@ -612,7 +627,7 @@ async function startServer() {
           console.error("[BROADCAST] Some emails failed:", errors);
         }
 
-        res.json({ success: true, resultsCount: results.length, errorCount: errors.length });
+        res.json({ success: true, recipientCount: recipients.length, resultsCount: results.length, errorCount: errors.length });
       } catch (error: any) {
         console.error("[BROADCAST] Error:", error);
         res.status(500).json({ error: error.message || "Failed to send broadcast" });

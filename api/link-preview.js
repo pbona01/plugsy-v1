@@ -153,7 +153,7 @@ async function portfolioPreview(req, res, slug, dependencies = {}) {
 
   const itemsResult = await supabase
     .from("vp_portfolio_items")
-    .select("cover_image_url,custom_thumbnail_url,image_url")
+    .select("*")
     .eq("portfolio_id", portfolio.id)
     .order("order_index")
     .limit(1);
@@ -171,13 +171,23 @@ async function portfolioPreview(req, res, slug, dependencies = {}) {
   );
   const image = firstValidUrl(
     portfolio.profile_image_url ||
+    portfolio.profile_pic_url ||
+    portfolio.avatar_url ||
     portfolio.avatarUrl ||
     portfolio.profileImage ||
     portfolio.profile_image ||
-    portfolio.bio_graphic_url,
+    portfolio.bio_graphic_url ||
+    portfolio.cover_image_url ||
+    portfolio.thumbnail_url ||
+    portfolio.hero_image_url ||
+    portfolio.banner_url ||
+    portfolio.portfolio_image_url,
     firstItem?.cover_image_url,
     firstItem?.custom_thumbnail_url,
     firstItem?.image_url,
+    firstItem?.image,
+    firstItem?.thumbnail_url,
+    firstItem?.media_url,
     DEFAULT_IMAGE,
   );
 
