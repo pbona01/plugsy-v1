@@ -32,6 +32,22 @@ const firstValidUrl = (...values) => {
   }
   return null;
 };
+const collectImageCandidates = (value, output = [], depth = 0) => {
+  if (depth > 3 || value == null) return output;
+  if (typeof value === "string") {
+    const url = normalizeExternalUrl(value);
+    if (url) output.push(url);
+    return output;
+  }
+  if (Array.isArray(value)) {
+    value.slice(0, 30).forEach((entry) => collectImageCandidates(entry, output, depth + 1));
+    return output;
+  }
+  if (typeof value === "object") Object.entries(value).forEach(([key, entry]) => {
+    if (/image|avatar|photo|thumbnail|cover|media|url/i.test(key)) collectImageCandidates(entry, output, depth + 1);
+  });
+  return output;
+};
 
 function renderHtml({ title, description, image, url, type }) {
   const safeTitle = escapeHtml(title || DEFAULT_TITLE);
@@ -52,6 +68,9 @@ function renderHtml({ title, description, image, url, type }) {
   <meta property="og:description" content="${safeDescription}">
   <meta property="og:url" content="${safeUrl}">
   <meta property="og:image" content="${safeImage}">
+  <meta property="og:image:secure_url" content="${safeImage}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
   <meta property="og:site_name" content="Plugsy">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="${safeTitle}">
@@ -158,6 +177,14 @@ async function portfolioPreview(req, res, slug, dependencies = {}) {
     .order("order_index")
     .limit(1);
   const firstItem = itemsResult.error ? null : itemsResult.data?.[0] || null;
+  let ownerProfile = null;
+  if (portfolio.user_id || portfolio.user_email) {
+    const ownerQuery = supabase.from("profiles").select("profile_pic_url,image_url,avatar_url,clerk_id,email").limit(1);
+    const ownerResult = portfolio.user_id
+      ? await ownerQuery.eq("clerk_id", portfolio.user_id).maybeSingle()
+      : await ownerQuery.eq("email", portfolio.user_email).maybeSingle();
+    ownerProfile = ownerResult.error ? null : ownerResult.data;
+  }
 
   const displayName = text(portfolio.full_name || portfolio.username) || "Portfolio";
   const category = text(portfolio.category);
@@ -188,8 +215,10 @@ async function portfolioPreview(req, res, slug, dependencies = {}) {
     firstItem?.image,
     firstItem?.thumbnail_url,
     firstItem?.media_url,
-    DEFAULT_IMAGE,
-  );
+    ownerProfile?.profile_pic_url,
+    ownerProfile?.image_url,
+    ownerProfile?.avatar_url,
+  ) || collectImageCandidates(portfolio).concat(collectImageCandidates(firstItem), collectImageCandidates(ownerProfile))[0] || DEFAULT_IMAGE;
 
   return res.status(200).send(renderHtml({
     title,
