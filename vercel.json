@@ -28,6 +28,45 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/one/:username",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": {
+            "re": "(?i)(facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|whatsapp|telegrambot|discordbot|applebot|googlebot|bingbot|bot|crawler|spider)"
+          }
+        }
+      ],
+      "destination": "/api/link-preview?kind=onelink&username=:username"
+    },
+    {
+      "source": "/u/:username",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": {
+            "re": "(?i)(facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|whatsapp|telegrambot|discordbot|applebot|googlebot|bingbot|bot|crawler|spider)"
+          }
+        }
+      ],
+      "destination": "/api/link-preview?kind=onelink&username=:username"
+    },
+    {
+      "source": "/vp/:slug",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": {
+            "re": "(?i)(facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|whatsapp|telegrambot|discordbot|applebot|googlebot|bingbot|bot|crawler|spider)"
+          }
+        }
+      ],
+      "destination": "/api/link-preview?kind=portfolio&slug=:slug"
+    },
     { "source": "/api/sync-user", "destination": "/api/wallet?action=sync-user" },
     { "source": "/api/admin(.*)", "destination": "/api/misc?route=admin" },
     { "source": "/api/bookings(.*)", "destination": "/api/misc?route=bookings" },

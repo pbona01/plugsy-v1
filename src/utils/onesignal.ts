@@ -19,6 +19,28 @@ const activeSubscription = () => {
   return state === "initialized" && supported() && window.OneSignal?.Notifications?.permission === true && current?.optedIn === true && typeof current?.id === "string" && current.id.length > 0 ? current : null;
 };
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const withTimeout = async <T>(operation: Promise<T>, timeoutMs = 10_000): Promise<T> => {
+  let timer: number | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error("PUSH_OPERATION_TIMEOUT")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer);
+  }
+};
+const notificationFetch = async (url: string, options: RequestInit) => {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 10_000);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+};
 
 export const getOneSignalState = () => state;
 export const isCurrentIdentity = (generation: number, userId?: string) => generation === identityGeneration && (!userId || desiredIdentity?.id === userId);
@@ -67,7 +89,7 @@ export const syncSubscriptionToDatabase = async (userId: string, explicitToken?:
   if (!current || !userId) return false;
   try {
     const token = explicitToken === undefined ? await clerkToken() : explicitToken;
-    const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ expectedUserId: userId, subscriptionId: current.id }) });
+    const response = await notificationFetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ expectedUserId: userId, subscriptionId: current.id }) });
     return response.ok;
   } catch { return false; }
 };
@@ -76,7 +98,7 @@ export const unregisterSubscription = async (userId: string, tokenProvider: Toke
   if (!userId) return false;
   try {
     const authToken = await tokenProvider();
-    const response = await fetch("/api/notifications?action=unregister-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) }, body: JSON.stringify({ expectedUserId: userId }) });
+    const response = await notificationFetch("/api/notifications?action=unregister-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) }, body: JSON.stringify({ expectedUserId: userId }) });
     return response.ok;
   } catch { return false; }
 };
@@ -111,7 +133,7 @@ const serializedLogin = (userId: string, role: string, tokenProvider: TokenProvi
     if (generation !== identityGeneration) return;
     if (linkedIdentity && linkedIdentity !== userId) await window.OneSignal.logout?.();
     if (generation !== identityGeneration) return;
-    await window.OneSignal.login(userId);
+    await withTimeout(window.OneSignal.login(userId));
     if (generation === identityGeneration) linkedIdentity = userId;
   }).catch(() => undefined);
   return { generation, operation: identityQueue };
@@ -123,7 +145,7 @@ const queueRegisterSubscription = async (generation: number, userId: string, tok
   identityQueue = identityQueue.then(async () => {
     const token = await tokenProvider();
     if (!isCurrentIdentity(generation, userId) || linkedIdentity !== userId || activeSubscription()?.id !== subscriptionId) return;
-    const response = await fetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ expectedUserId: userId, subscriptionId }) });
+    const response = await notificationFetch("/api/notifications?action=register-subscription", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ expectedUserId: userId, subscriptionId }) });
     if (!isCurrentIdentity(generation, userId) || linkedIdentity !== userId || activeSubscription()?.id !== subscriptionId) return;
     registered = response.ok;
   }).catch(() => undefined);

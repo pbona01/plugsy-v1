@@ -3,6 +3,20 @@ import { useAuth, useUser } from "@clerk/clerk-react";
 import toast from "react-hot-toast";
 import { isSubscribed, requestNotificationPermission, getOneSignalState, initOneSignal } from "@/utils/onesignal";
 
+const withEnableTimeout = async <T,>(operation: Promise<T>, timeoutMs = 15_000): Promise<T> => {
+  let timer: number | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error("PUSH_ENABLE_TIMEOUT")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer);
+  }
+};
+
 export default function NotificationBell() {
   const { user } = useUser();
   const { getToken } = useAuth();
@@ -47,15 +61,17 @@ export default function NotificationBell() {
     const requestGeneration = generation.current;
     setLoading(true);
     try {
-      const result = await requestNotificationPermission(user.id, getToken);
+      const result = await withEnableTimeout(requestNotificationPermission(user.id, getToken));
       if (disposed.current || requestGeneration !== generation.current || !user) return;
       if (result.active) { setRegistrationWarning(!result.registered); setVisible(!result.registered); toast.success(result.registered ? "Notifications enabled." : "Notifications active; account registration needs repair."); }
       else if (typeof Notification !== "undefined" && Notification.permission === "denied") { setBlocked(true); toast.error("Notifications are blocked. Change the browser site setting to enable them."); }
       else if (getOneSignalState() === "unsupported") toast.error("This browser or device does not support web push alerts.");
       else if (getOneSignalState() === "failed") toast.error("Alerts could not be initialized. Please try again later.");
       else toast.error(result.code === "AUTH_REQUIRED" ? "Your session expired. Sign in again to enable alerts." : "No active push subscription was confirmed. Try Repair Alerts.");
-    } catch {
-      if (!disposed.current && requestGeneration === generation.current) toast.error("Your session could not be verified. Sign in again to enable alerts.");
+    } catch (error: any) {
+      if (!disposed.current && requestGeneration === generation.current) {
+        toast.error(error?.message === "PUSH_ENABLE_TIMEOUT" ? "Alert setup timed out. Please try Repair Alerts again." : "Your session could not be verified. Sign in again to enable alerts.");
+      }
     } finally {
       if (!disposed.current && requestGeneration === generation.current) setLoading(false);
     }
