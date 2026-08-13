@@ -64,7 +64,18 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
               return;
             }
             if (status === 'SUBSCRIBED') {
-              await channel.track({ clerk_id: userId, online_at: new Date().toISOString() });
+              const tracked = await channel.track({ clerk_id: userId, online_at: new Date().toISOString() });
+              // A presence sync can be delayed (especially on a freshly opened
+              // admin tab). Mark the connection usable immediately and count the
+              // current signed-in user; the sync handler replaces this with the
+              // authoritative set as soon as it arrives.
+              if (generation !== generationRef.current) return;
+              if (tracked === 'ok' || tracked === undefined) {
+                setOnlineUserIds(new Set([userId]));
+                setOnlineClerkUserIds(new Set([userId]));
+                setPresenceUpdatedAt(new Date().toISOString());
+                setPresenceStatus('confirmed');
+              }
             }
           });
       } catch (err) {
