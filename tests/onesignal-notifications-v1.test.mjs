@@ -198,6 +198,13 @@ test("only the serialized identity coordinator performs SDK login", async () => 
   assert.equal((onesignal.match(/OneSignal\.login\(/g) || []).length, 1); assert.match(onesignal, /serializedLogin/); assert.match(onesignal, /identityGeneration/);
 });
 
+test("client initialization uses the dedicated OneSignal worker and SDK fallback", async () => {
+  const onesignal = await readFile(new URL("../src/utils/onesignal.ts", import.meta.url), "utf8");
+  assert.match(onesignal, /serviceWorkerPath: "\/OneSignalSDKWorker\.js"/);
+  assert.match(onesignal, /OneSignalSDK\.page\.js/);
+  assert.doesNotMatch(onesignal, /serviceWorkerPath: "\/sw\.js"/);
+});
+
 test("broadcast operation does not overlap and keeps ambiguous ownership", async () => {
   const broadcast = await readFile(new URL("../src/pages/AdminBroadcast.tsx", import.meta.url), "utf8");
   assert.match(broadcast, /if \(sending/); assert.match(broadcast, /AbortController/); assert.match(broadcast, /operation\.current\.begin/); assert.match(broadcast, /requestKey/);

@@ -19,6 +19,20 @@ const activeSubscription = () => {
   return state === "initialized" && supported() && window.OneSignal?.Notifications?.permission === true && current?.optedIn === true && typeof current?.id === "string" && current.id.length > 0 ? current : null;
 };
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const loadOneSignalPageSdk = async () => {
+  if (typeof document === "undefined" || window.OneSignal || window.OneSignalDeferred?.length) return;
+  const existing = document.querySelector('script[src*="OneSignalSDK.page.js"]');
+  if (existing) return;
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("ONESIGNAL_SDK_LOAD_FAILED"));
+    document.head.appendChild(script);
+  });
+};
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs = 10_000): Promise<T> => {
   let timer: number | undefined;
   try {
@@ -53,14 +67,20 @@ export const initOneSignal = (): Promise<OneSignalState> => {
     let settled = false;
     const finish = (next: OneSignalState) => { if (settled) return; settled = true; state = next; if (next === "failed") initialization = null; resolve(next); };
     const timeout = window.setTimeout(() => finish("failed"), 8000);
-    const start = () => {
+    const start = async () => {
+      try {
+        await loadOneSignalPageSdk();
+      } catch (error) {
+        window.clearTimeout(timeout);
+        console.error("[OneSignal] SDK load failed", error instanceof Error ? error.message : "unknown error");
+        finish("failed");
+        return;
+      }
+      if (settled) return;
       window.OneSignalDeferred = window.OneSignalDeferred || [];
       window.OneSignalDeferred.push(async (OneSignal: any) => {
         try {
-          // This must be absolute. A relative `sw.js` resolves to
-          // `/dashboard/sw.js` (or another SPA route) and prevents browser push
-          // registration outside the homepage.
-          if (!OneSignal.initialized) await OneSignal.init({ appId, notifyButton: { enable: false }, allowLocalhostAsSecureOrigin: true, serviceWorkerParam: { scope: "/" }, serviceWorkerPath: "/sw.js" });
+          if (!OneSignal.initialized) await OneSignal.init({ appId, notifyButton: { enable: false }, allowLocalhostAsSecureOrigin: true, serviceWorkerParam: { scope: "/" }, serviceWorkerPath: "/OneSignalSDKWorker.js" });
           window.clearTimeout(timeout);
           if (settled) return;
           pushSubscription()?.addEventListener?.("change", () => {
