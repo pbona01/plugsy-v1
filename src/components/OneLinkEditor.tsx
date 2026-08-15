@@ -5,11 +5,13 @@ import React, {
   useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTheme } from "../lib/ThemeContext";
 import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
   BarChart3,
+  ChevronDown,
   Copy,
   ExternalLink,
   Eye,
@@ -187,6 +189,7 @@ export default function OneLinkEditor({
   onUploadImage,
 }: OneLinkEditorProps) {
   const navigate = useNavigate();
+  const { theme: appTheme } = useTheme();
   const [activeSection, setActiveSection] =
     useState<SectionId>("page");
   const [draft, setDraft] = useState<OneLinkDraft>(() =>
@@ -203,6 +206,7 @@ export default function OneLinkEditor({
   const [checkingPublication, setCheckingPublication] = useState(false);
   const [publicationFailed, setPublicationFailed] = useState(false);
   const [socialPickerOpen, setSocialPickerOpen] = useState(false);
+  const [openPlatformMenuId, setOpenPlatformMenuId] = useState<string | null>(null);
   const addSocialButtonRef = useRef<HTMLButtonElement>(null);
   const socialPickerRef = useRef<HTMLDivElement>(null);
   const socialOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -285,6 +289,18 @@ export default function OneLinkEditor({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [socialPickerOpen]);
+
+  useEffect(() => {
+    if (!openPlatformMenuId) return;
+    const closePlatformMenu = (event: PointerEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest("[data-platform-menu]")) {
+        setOpenPlatformMenuId(null);
+      }
+    };
+    document.addEventListener("pointerdown", closePlatformMenu);
+    return () => document.removeEventListener("pointerdown", closePlatformMenu);
+  }, [openPlatformMenuId]);
 
   useEffect(() => {
     if (!showMobilePreview) return;
@@ -682,8 +698,8 @@ export default function OneLinkEditor({
   };
 
   return (
-    <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-[#08080b] text-white lg:flex-row">
-      <aside className="order-2 flex min-h-0 flex-1 flex-col border-white/10 bg-[#0d0d11] lg:order-1 lg:h-screen lg:w-[430px] lg:flex-none lg:border-r">
+    <div className={`onelink-editor-shell ${appTheme === "light" ? "onelink-editor-light" : "onelink-editor-dark"} flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-brand-bg text-brand-text lg:flex-row`}>
+      <aside className="onelink-editor-controls order-2 flex min-h-0 flex-1 flex-col border-brand-border bg-brand-surface lg:order-1 lg:h-screen lg:w-[430px] lg:flex-none lg:border-r">
         <header className="border-b border-white/10 p-5">
           <div className="flex items-center justify-between gap-4">
             <button
@@ -1055,7 +1071,7 @@ export default function OneLinkEditor({
                         ref={socialPickerRef}
                         role="listbox"
                         aria-label="Choose a social platform"
-                        className="absolute right-0 z-30 mt-2 grid max-h-80 w-64 grid-cols-1 overflow-y-auto rounded-2xl border border-white/15 bg-[#17171d] p-2 shadow-2xl sm:grid-cols-2 sm:w-80"
+                        className="absolute left-0 right-auto z-30 mt-2 grid max-h-[min(20rem,calc(100dvh-10rem))] w-[min(20rem,calc(100vw-2rem))] grid-cols-1 overflow-y-auto rounded-2xl border border-brand-border bg-brand-card p-2 text-brand-text shadow-2xl sm:left-auto sm:right-0 sm:grid-cols-2"
                       >
                         {ONE_LINK_PLATFORMS.map((platform, index) => {
                           const Icon = platform.icon;
@@ -1075,11 +1091,11 @@ export default function OneLinkEditor({
                                 handleSocialPickerKeyDown(event, index)
                               }
                               onClick={() => selectSocialPlatform(platform.id)}
-                              className="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-bold text-white/80 outline-none transition hover:bg-white/10 focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-red-400"
+                              className="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-bold text-brand-text-secondary outline-none transition hover:bg-brand-text/5 hover:text-brand-text focus-visible:bg-brand-text/5 focus-visible:ring-2 focus-visible:ring-brand-accent"
                             >
                               <Icon size={18} className="shrink-0" />
                               {platform.label}
-                              {alreadyAdded && <span className="ml-auto text-[10px] text-white/45">Added</span>}
+                              {alreadyAdded && <span className="ml-auto text-[10px] text-brand-text-secondary/70">Added</span>}
                             </button>
                           );
                         })}
@@ -1146,30 +1162,52 @@ export default function OneLinkEditor({
                               ONE_LINK_PLATFORMS[14].icon,
                             { size: 18, className: "shrink-0 text-white/60" },
                           )}
-                          <select
-                            value={social.platform}
-                            onChange={(event) =>
-                              selectExistingSocialPlatform(social.id, event.target.value)
-                            }
-                            aria-label="Social platform"
-                            className="min-h-11 w-full bg-transparent text-sm outline-none"
-                          >
-                            {!ONE_LINK_PLATFORMS.some(
-                              (platform) => platform.id === social.platform,
-                            ) && (
-                              <option value={social.platform}>
-                                {getOneLinkPlatformLabel(social.platform)} (legacy)
-                              </option>
+                          <div className="relative min-w-0 flex-1" data-platform-menu>
+                            <button
+                              type="button"
+                              aria-haspopup="listbox"
+                              aria-expanded={openPlatformMenuId === social.id}
+                              aria-label="Social platform"
+                              onClick={() => setOpenPlatformMenuId((current) => current === social.id ? null : social.id)}
+                              className="flex min-h-11 w-full items-center justify-between gap-2 text-left text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                            >
+                              <span className="truncate">{getOneLinkPlatformLabel(social.platform)}</span>
+                              <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-white/50" />
+                            </button>
+                            {openPlatformMenuId === social.id && (
+                              <div
+                                role="listbox"
+                                aria-label="Choose a social platform"
+                                className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-40 max-h-[min(18rem,50dvh)] min-w-[12rem] overflow-y-auto rounded-2xl border border-white/15 bg-[#17171d] p-2 shadow-2xl"
+                              >
+                                {!ONE_LINK_PLATFORMS.some((platform) => platform.id === social.platform) && (
+                                  <button type="button" role="option" aria-selected="true" className="flex min-h-10 w-full items-center rounded-xl px-3 text-left text-xs font-bold text-white/60" disabled>
+                                    {getOneLinkPlatformLabel(social.platform)} (legacy)
+                                  </button>
+                                )}
+                                {ONE_LINK_PLATFORMS.map((platform) => {
+                                  const addedByOther = draft.settings.socials.some((entry) => entry.id !== social.id && entry.platform === platform.id);
+                                  return (
+                                    <button
+                                      key={platform.id}
+                                      type="button"
+                                      role="option"
+                                      aria-selected={social.platform === platform.id}
+                                      disabled={addedByOther}
+                                      onClick={() => {
+                                        selectExistingSocialPlatform(social.id, platform.id);
+                                        setOpenPlatformMenuId(null);
+                                      }}
+                                      className="flex min-h-10 w-full items-center justify-between gap-2 rounded-xl px-3 text-left text-xs font-bold text-white/80 outline-none transition hover:bg-white/10 focus-visible:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                      <span className="truncate">{platform.label}</span>
+                                      {addedByOther && <span className="shrink-0 text-[10px] text-white/45">Added</span>}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             )}
-                            {ONE_LINK_PLATFORMS.map((platform) => {
-                              const addedByOther = draft.settings.socials.some((entry) => entry.id !== social.id && entry.platform === platform.id);
-                              return (
-                                <option key={platform.id} value={platform.id} disabled={addedByOther}>
-                                  {platform.label}{addedByOther ? " (Added)" : ""}
-                                </option>
-                              );
-                            })}
-                          </select>
+                          </div>
                         </div>
                         {social.invalid && (
                           <p id={`social-error-${social.id}`} role="alert" className="text-xs text-amber-300">
