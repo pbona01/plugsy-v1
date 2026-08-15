@@ -337,12 +337,15 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         <div className="absolute inset-0 opacity-5 bg-[radial-gradient(#0066ff_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none z-0" />
 
         <button
+          type="button"
+          onPointerDown={() => setIsMinimized(true)}
           onClick={() => setIsMinimized(true)}
-          className="absolute right-5 top-5 z-40 rounded-xl border border-white/10 bg-black/35 p-3 text-white/75 shadow-lg backdrop-blur-xl transition hover:bg-white/10 hover:text-white"
+          className="pointer-events-auto absolute right-5 top-5 z-[100] flex items-center gap-2 rounded-xl border border-white/15 bg-black/60 px-3 py-2.5 text-white/85 shadow-lg backdrop-blur-xl transition hover:border-brand-accent/50 hover:bg-brand-accent/15 hover:text-white"
           title="Minimize call"
           aria-label="Minimize call and continue browsing"
         >
           <Minimize2 size={18} />
+          <span className="hidden text-[10px] font-black uppercase tracking-widest md:inline">Minimize</span>
         </button>
 
         {/* TOP STATUS BAR: Encryption status and room details */}

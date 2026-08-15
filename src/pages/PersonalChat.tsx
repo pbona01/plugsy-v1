@@ -2685,6 +2685,7 @@ export default function PersonalChat() {
                   <>
                     <button
                       onClick={() => startCall("voice")}
+                      aria-label="Start voice call"
                       className="p-2.5 rounded-xl bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white transition-all cursor-pointer hover:scale-105 active:scale-95"
                       title="Start Voice Call"
                     >
@@ -2692,6 +2693,7 @@ export default function PersonalChat() {
                     </button>
                     <button
                       onClick={() => startCall("video")}
+                      aria-label="Start video call"
                       className="p-2.5 rounded-xl bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white transition-all cursor-pointer hover:scale-105 active:scale-95"
                       title="Start Video Call"
                     >
@@ -2706,6 +2708,7 @@ export default function PersonalChat() {
               <div className="relative">
                 <button
                   onClick={() => setInfoOpen(!infoOpen)}
+                  aria-label="Open chat details"
                   className={`p-2.5 rounded-xl transition-all cursor-pointer hover:scale-105 active:scale-95 ${
                     infoOpen
                       ? "bg-blue-500 text-white shadow-md shadow-blue-500/10"
@@ -3385,6 +3388,7 @@ export default function PersonalChat() {
             <div className="relative">
               <button
                 disabled={uploadingImage || loading}
+                aria-label="Attach image"
                 className="p-3.5 bg-slate-100 hover:bg-slate-200 dark:bg-white/5 dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl transition-all flex items-center justify-center cursor-pointer relative shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {uploadingImage ? (
@@ -3415,6 +3419,7 @@ export default function PersonalChat() {
             <button
               onClick={() => !loading && setStickerOpen(!stickerOpen)}
               disabled={loading}
+              aria-label="Open stickers"
               className={`p-3.5 bg-slate-100 hover:bg-slate-200 dark:bg-white/5 dark:hover:bg-white/10 rounded-xl transition-all flex items-center justify-center cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
                 stickerOpen ? "text-blue-500" : "text-slate-600 dark:text-slate-300"
               }`}
@@ -3538,6 +3543,7 @@ export default function PersonalChat() {
                     type="button"
                     onClick={startRecording}
                     disabled={loading || isUploadingVoice}
+                    aria-label="Record voice note"
                     className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 bg-slate-200 hover:bg-slate-300 dark:bg-white/[0.05] dark:hover:bg-white/[0.1] text-slate-600 dark:text-slate-300 active:scale-95 rounded-xl transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Record Voice Note"
                   >
