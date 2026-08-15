@@ -126,7 +126,7 @@ export default function Navbar() {
   return (
     <>
     <div className="fixed inset-x-0 z-[9999] top-2 sm:top-6 px-4 sm:px-6">
-      <LiquidGlassNav className={cn("w-full max-w-7xl mx-auto rounded-full overflow-hidden", isDarkMode ? "bg-[#0A0A0C]/75 border-white/10" : "bg-white/40 border-white/60 text-slate-900")}>
+      <LiquidGlassNav className="liquid-glass w-full max-w-7xl mx-auto rounded-full overflow-hidden shadow-[0_20px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.5)]">
         <div className="flex items-center justify-between px-6 py-2">
           <div className="flex items-center gap-4">
             {(location.pathname === "/chat" || location.pathname === "/support") && (

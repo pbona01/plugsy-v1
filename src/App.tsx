@@ -362,10 +362,10 @@ export default function App() {
       <Toaster position="top-center" containerStyle={{ zIndex: 99999 }} />
       <RealtimeNotifications />
       <Helmet>
-        <title>Plugsy</title>
+        <title>Plugsy | smart, low cost &amp; for all.</title>
         <meta
           name="description"
-          content="Smart, lower-cost access for creators and students. Plugsy connects you to premium tools and LUTs without the high price tag."
+          content="Simple digital solution built around what you actually need."
         />
       </Helmet>
       <SplashScreen />

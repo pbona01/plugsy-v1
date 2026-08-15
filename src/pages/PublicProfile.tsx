@@ -146,13 +146,13 @@ export default function PublicProfile() {
 
   if (state === "loading") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#08080b] px-4 text-white">
+      <div className="flex min-h-screen items-center justify-center bg-brand-bg px-4 text-brand-text">
         <div className="flex flex-col items-center gap-3 text-center">
           <Loader2
             aria-hidden="true"
-            className="h-7 w-7 animate-spin text-red-400"
+            className="h-7 w-7 animate-spin text-brand-accent"
           />
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-brand-text-secondary">
             Loading this One Link…
           </p>
         </div>
@@ -164,8 +164,8 @@ export default function PublicProfile() {
     const notFound = state === "not-found";
     const unpublished = state === "unpublished";
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#08080b] px-4 text-white">
-        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center shadow-2xl">
+      <div className="flex min-h-screen items-center justify-center bg-brand-bg px-4 text-brand-text">
+        <div className="w-full max-w-md rounded-3xl border border-brand-border bg-brand-card p-8 text-center shadow-2xl">
           <UserX
             aria-hidden="true"
             className="mx-auto mb-5 h-10 w-10 text-slate-500"
@@ -188,7 +188,7 @@ export default function PublicProfile() {
             <button
               type="button"
               onClick={loadProfile}
-              className="mx-auto mt-6 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-bold text-black transition hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            className="mx-auto mt-6 inline-flex items-center gap-2 rounded-xl bg-brand-text px-4 py-3 text-sm font-bold text-brand-bg transition hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
             >
               <RefreshCw aria-hidden="true" size={16} />
               Try again
