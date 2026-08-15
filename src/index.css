@@ -196,6 +196,30 @@
     box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
   }
 
+  :root:not(.dark) .onelink-editor-controls {
+    color: var(--brand-text);
+  }
+
+  :root:not(.dark) .onelink-editor-controls [class*="text-white"] {
+    color: var(--brand-text) !important;
+  }
+
+  :root:not(.dark) .onelink-editor-controls [class*="border-white"] {
+    border-color: var(--brand-border) !important;
+  }
+
+  :root:not(.dark) .onelink-editor-controls [class*="bg-white/"] {
+    background-color: color-mix(in srgb, var(--brand-text) 4%, transparent) !important;
+  }
+
+  :root:not(.dark) .onelink-editor-controls [class*="bg-[#"] {
+    background-color: var(--brand-surface) !important;
+  }
+
+  :root:not(.dark) .onelink-editor-controls [class*="bg-black/"] {
+    background-color: color-mix(in srgb, var(--brand-text) 4%, transparent) !important;
+  }
+
   .dark .liquid-glass {
     border: 0.5px solid rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(var(--blur, 40px)) saturate(180%);
