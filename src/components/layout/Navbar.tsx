@@ -125,7 +125,7 @@ export default function Navbar() {
   return (
     <>
     <div className="fixed inset-x-0 z-[9999] top-2 sm:top-6 px-4 sm:px-6 pointer-events-none flex justify-center">
-      <GlassBottomNav className="liquid-glass pointer-events-auto w-full max-w-[360px] md:max-w-7xl grid items-center px-3 py-3 rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.5)] overflow-hidden">
+      <GlassBottomNav className="nav-bottom-match pointer-events-auto w-full max-w-[360px] md:max-w-7xl grid items-center px-3 py-3 rounded-full overflow-hidden">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-4">
             {(location.pathname === "/chat" || location.pathname === "/support") && (
@@ -248,7 +248,7 @@ export default function Navbar() {
     {/* Immersive Mobile Bottom Navigation */}
     <div className="md:hidden fixed bottom-6 inset-x-0 z-40 px-4 pointer-events-none flex justify-center">
       <GlassBottomNav
-        className="liquid-glass pointer-events-auto flex-1 max-w-[360px] grid items-center px-3 py-3 rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.5)] overflow-hidden"
+        className="nav-bottom-match pointer-events-auto flex-1 max-w-[360px] grid items-center px-3 py-3 rounded-full overflow-hidden"
         style={{ gridTemplateColumns: `repeat(${mobileLinks.length}, minmax(0, 1fr))` }}
       >
         {mobileLinks.map((link) => {
