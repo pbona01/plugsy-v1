@@ -5,8 +5,8 @@ import {
 } from "../shared/onelink.js";
 
 const DEFAULT_IMAGE = "https://i.postimg.cc/4dHFwnzr/IMG-1987.png";
-const DEFAULT_TITLE = "Plugsy";
-const DEFAULT_DESCRIPTION = "Smart, lower-cost access for creators and students.";
+const DEFAULT_TITLE = "Plugsy | smart, low cost & for all.";
+const DEFAULT_DESCRIPTION = "Simple digital solution built around what you actually need.";
 
 const text = (value) => String(value || "").trim();
 const truncate = (value, length) => {

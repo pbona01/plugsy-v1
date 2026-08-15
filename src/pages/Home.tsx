@@ -40,8 +40,8 @@ export default function Home() {
   return (
     <div className="flex flex-col w-full overflow-hidden">
       <Helmet>
-        <title>Plugsy</title>
-        <meta name="description" content="Get premium access without the premium price. Plugsy provides smart, lower-cost access to CapCut Pro and other digital tools tailored for creators and students in the Nigerian market. Pay securely with Paystack for instant activation." />
+        <title>Plugsy | smart, low cost &amp; for all.</title>
+        <meta name="description" content="Simple digital solution built around what you actually need." />
       </Helmet>
       
       {/* Hero Section */}

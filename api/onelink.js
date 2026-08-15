@@ -385,6 +385,12 @@ export async function handlePublic(req, res, dependencies = {}) {
     );
   }
 
+  // Public profiles are safe to cache briefly at the edge during campaigns;
+  // private editor and analytics actions remain no-store.
+  res.setHeader(
+    "Cache-Control",
+    "public, max-age=30, s-maxage=120, stale-while-revalidate=300",
+  );
   return res.status(200).json({
     success: true,
     profile: toPublicResponse(result.profile),

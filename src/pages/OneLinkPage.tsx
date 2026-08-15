@@ -219,13 +219,13 @@ export default function OneLinkPage() {
 
   if (state === "loading") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#08080b] px-4 text-white">
+      <div className="flex min-h-screen items-center justify-center bg-brand-bg px-4 text-brand-text">
         <div className="flex flex-col items-center gap-3 text-center">
           <Loader2
             aria-hidden="true"
-            className="h-7 w-7 animate-spin text-red-400"
+            className="h-7 w-7 animate-spin text-brand-accent"
           />
-          <p className="text-sm text-white/50">
+          <p className="text-sm text-brand-text-secondary">
             Loading your One Link editor…
           </p>
         </div>
@@ -235,19 +235,19 @@ export default function OneLinkPage() {
 
   if (state === "error" || !ownerState) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#08080b] px-4 text-white">
-        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
+      <div className="flex min-h-screen items-center justify-center bg-brand-bg px-4 text-brand-text">
+        <div className="w-full max-w-md rounded-3xl border border-brand-border bg-brand-card p-8 text-center">
           <h1 className="text-2xl font-black">
             One Link could not be loaded
           </h1>
-          <p className="mt-3 text-sm leading-6 text-white/45">
+          <p className="mt-3 text-sm leading-6 text-brand-text-secondary">
             Your existing settings were not changed. Retry when your
             connection is available.
           </p>
           <button
             type="button"
             onClick={loadOwnerProfile}
-            className="mx-auto mt-6 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-bold text-black transition hover:bg-slate-200"
+            className="mx-auto mt-6 inline-flex items-center gap-2 rounded-xl bg-brand-text px-4 py-3 text-sm font-bold text-brand-bg transition hover:opacity-80"
           >
             <RefreshCw aria-hidden="true" size={16} />
             Try again
