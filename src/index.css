@@ -180,6 +180,22 @@
       inset 0 -1px 2px 0px rgba(0, 0, 0, 0.05);
   }
 
+  /* Shared compact navigation surface. Keep the desktop top bar identical to
+     the mobile bottom bar and independent from the heavier liquid-glass card. */
+  .nav-bottom-match {
+    background: rgba(20, 20, 22, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+  }
+
+  :root:not(.dark) .nav-bottom-match {
+    background: rgba(255, 255, 255, 0.72);
+    border-color: rgba(15, 23, 42, 0.08);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+  }
+
   .dark .liquid-glass {
     border: 0.5px solid rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(var(--blur, 40px)) saturate(180%);
