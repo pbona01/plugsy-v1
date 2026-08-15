@@ -19,8 +19,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { ThemeToggle } from "../ui/curtain-theme-toggle";
 import { Logo } from "../ui/Logo";
 import { isAdmin } from "../../lib/authUtils";
-import { GlassTopNav, GlassNavItem, GlassBottomNav } from "apple-liquid-glass-ui";
-import { LiquidGlassNav } from "../ui/LiquidGlassNav";
+import { GlassBottomNav } from "apple-liquid-glass-ui";
 
 export default function Navbar() {
   const { user } = useUser();
@@ -125,9 +124,9 @@ export default function Navbar() {
 
   return (
     <>
-    <div className="fixed inset-x-0 z-[9999] top-2 sm:top-6 px-4 sm:px-6">
-      <LiquidGlassNav className="liquid-glass w-full max-w-7xl mx-auto rounded-full overflow-hidden shadow-[0_20px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.5)]">
-        <div className="flex items-center justify-between px-6 py-2">
+    <div className="fixed inset-x-0 z-[9999] top-2 sm:top-6 px-4 sm:px-6 pointer-events-none flex justify-center">
+      <GlassBottomNav className="liquid-glass pointer-events-auto w-full max-w-[360px] md:max-w-7xl grid items-center px-3 py-3 rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.5)] overflow-hidden">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-4">
             {(location.pathname === "/chat" || location.pathname === "/support") && (
               <motion.button 
@@ -243,7 +242,7 @@ export default function Navbar() {
             </div>
           </div>
         </div>
-      </LiquidGlassNav>
+      </GlassBottomNav>
     </div>
 
     {/* Immersive Mobile Bottom Navigation */}
