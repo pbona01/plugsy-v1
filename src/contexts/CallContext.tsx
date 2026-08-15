@@ -22,6 +22,8 @@ export interface CallState {
   calleeName?: string | null
   calleeAvatar?: string | null
   currentUserId?: string | null
+  currentUserName?: string | null
+  currentUserAvatar?: string | null
 }
 
 export interface CallActionResult { ok: boolean; code: string }
@@ -77,6 +79,8 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
       callType: call.call_type === "voice" ? "voice" : "video",
       status: call.status || "active",
       currentUserId: user?.id || null,
+      currentUserName: user?.fullName || user?.firstName || "Plugsy User",
+      currentUserAvatar: user?.imageUrl || null,
     })
   }
   const clearRecoveredActiveCall = (chatId: string) => {
@@ -279,7 +283,8 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
         ringtonePlayer.stop()
         setActiveCall({
           ...outgoingCall,
-          currentUserName: user?.fullName || user?.firstName || "Plugsy User"
+          currentUserName: user?.fullName || user?.firstName || "Plugsy User",
+          currentUserAvatar: user?.imageUrl || null,
         })
         setOutgoingCall(null)
       } else if (call.status === "declined") {
@@ -375,7 +380,8 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
     setActiveCall({
       ...incomingCall,
-      currentUserName: user?.fullName || user?.firstName || "Plugsy User"
+      currentUserName: user?.fullName || user?.firstName || "Plugsy User",
+      currentUserAvatar: user?.imageUrl || null,
     })
     setIncomingCall(null)
   }

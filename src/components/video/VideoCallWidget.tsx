@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import DailyIframe, { DailyCall, DailyParticipant } from '@daily-co/daily-js';
 import { 
   PhoneOff, Mic, MicOff, Video, VideoOff, Volume2, VolumeX, 
-  Lock, Shield, User, Users, Camera, Sparkles, Loader2, MonitorUp
+  Lock, Shield, User, Users, Camera, Sparkles, Loader2, MonitorUp,
+  Minimize2, Maximize2, Signal
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -13,6 +14,8 @@ interface VideoCallWidgetProps {
   title?: string;
   userName?: string;
   userAvatar?: string;
+  remoteName?: string;
+  remoteAvatar?: string;
   initialVideoOff?: boolean;
 }
 
@@ -81,7 +84,21 @@ function DailyAudio({ participant, isMuted }: DailyAudioProps) {
   return <audio ref={audioRef} autoPlay playsInline />;
 }
 
-export default function VideoCallWidget({ roomUrl, onClose, title, userName, userAvatar, initialVideoOff = false }: VideoCallWidgetProps) {
+function ParticipantIdentity({ name, avatar, local = false }: { name: string; avatar?: string; local?: boolean }) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-black/55 px-2.5 py-2 backdrop-blur-xl">
+      <div className="h-8 w-8 shrink-0 overflow-hidden rounded-lg bg-[#182234] ring-1 ring-white/10">
+        {avatar ? <img src={avatar} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" /> : <User className="m-auto h-4 w-4 text-white/60" />}
+      </div>
+      <div className="min-w-0 text-left">
+        <p className="max-w-[150px] truncate text-xs font-bold text-white">{name}</p>
+        <p className="text-[10px] font-medium text-white/55">{local ? "You" : "Contact"}</p>
+      </div>
+    </div>
+  );
+}
+
+export default function VideoCallWidget({ roomUrl, onClose, title, userName, userAvatar, remoteName, remoteAvatar, initialVideoOff = false }: VideoCallWidgetProps) {
   const onCloseRef = useRef(onClose);
   const [callFrame, setCallFrame] = useState<DailyCall | null>(null);
   const [participants, setParticipants] = useState<Record<string, DailyParticipant>>({});
@@ -91,6 +108,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
   const [isVideoOff, setIsVideoOff] = useState(initialVideoOff);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
   
   // Call lifecycle states
   const [callState, setCallState] = useState<'connecting' | 'ringing' | 'connected' | 'failed' | 'disconnected'>('connecting');
@@ -230,6 +248,41 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
   const participantList = Object.values(participants) as DailyParticipant[];
   const localParticipant = participantList.find((p) => p.local);
   const remoteParticipant = participantList.find((p) => !p.local);
+  const getParticipantName = (participant: DailyParticipant | undefined, fallback: string) =>
+    ((participant as (DailyParticipant & { user_name?: string }) | undefined)?.user_name || fallback);
+
+  const remoteDisplayName = getParticipantName(remoteParticipant, remoteName || title || "Contact");
+  const localDisplayName = getParticipantName(localParticipant, userName || "You");
+
+  const handleEndCall = () => {
+    if (callFrame) {
+      callFrame.leave();
+    }
+    triggerClose();
+  };
+
+  if (isMinimized) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 24, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        className="fixed bottom-24 right-5 z-[10000] w-[min(360px,calc(100vw-2rem))] rounded-2xl border border-white/15 bg-[#101722]/95 p-3 text-white shadow-2xl shadow-black/40 backdrop-blur-2xl md:bottom-5"
+      >
+        <div className="flex items-center gap-3">
+          <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-[#182234] ring-1 ring-white/10">
+            {remoteAvatar ? <img src={remoteAvatar} alt="" className="h-full w-full object-cover" /> : <User className="m-auto h-5 w-5 text-white/60" />}
+            {callState === "connected" && <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-[#101722]" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-bold">{remoteDisplayName}</p>
+            <p className="flex items-center gap-1.5 text-[11px] text-white/55"><Signal size={12} className="text-brand-accent" /> {callState === "connected" ? formatTime(duration) : "Connecting…"}</p>
+          </div>
+          <button onClick={() => setIsMinimized(false)} className="rounded-xl p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white" title="Open call" aria-label="Open call"><Maximize2 size={18} /></button>
+          <button onClick={handleEndCall} className="rounded-xl p-2.5 text-red-300 transition hover:bg-red-500/15 hover:text-red-200" title="End call" aria-label="End call"><PhoneOff size={18} /></button>
+        </div>
+      </motion.div>
+    );
+  }
 
   // Toggle Mute / Camera via CallObject
   const toggleMute = () => {
@@ -272,13 +325,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
     }
   };
 
-  const handleEndCall = () => {
-    if (callFrame) {
-      callFrame.leave();
-    }
-    triggerClose();
-  };
-
   return (
     <AnimatePresence>
       <motion.div 
@@ -289,6 +335,15 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
       >
         {/* Subtle Plugsy texture behind the call surface */}
         <div className="absolute inset-0 opacity-5 bg-[radial-gradient(#0066ff_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none z-0" />
+
+        <button
+          onClick={() => setIsMinimized(true)}
+          className="absolute right-5 top-5 z-40 rounded-xl border border-white/10 bg-black/35 p-3 text-white/75 shadow-lg backdrop-blur-xl transition hover:bg-white/10 hover:text-white"
+          title="Minimize call"
+          aria-label="Minimize call and continue browsing"
+        >
+          <Minimize2 size={18} />
+        </button>
 
         {/* TOP STATUS BAR: Encryption status and room details */}
         <div className="relative z-20 flex flex-col items-center pt-8 px-6 text-center pointer-events-none">
@@ -348,8 +403,9 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
 
                 {/* Central Contact Icon */}
                 <div className="relative w-36 h-36 rounded-full bg-[#101722] border-4 border-white/10 shadow-2xl flex items-center justify-center overflow-hidden">
-                  <User size={56} className="text-gray-400 animate-pulse" />
+                  {remoteAvatar ? <img src={remoteAvatar} alt={`${remoteDisplayName} profile`} className="h-full w-full object-cover" referrerPolicy="no-referrer" /> : <User size={56} className="text-gray-400 animate-pulse" />}
                 </div>
+                <p className="absolute top-[calc(100%+1rem)] max-w-[220px] truncate text-base font-bold text-white">{remoteDisplayName}</p>
               </div>
             )}
 
@@ -358,8 +414,8 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
               <div className="absolute inset-0 w-full h-full z-10 bg-slate-950 rounded-2xl overflow-hidden my-4 border border-white/10">
                 <DailyVideo participant={remoteParticipant} isLocal={false} />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/40 pointer-events-none" />
-                <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-xl text-xs font-bold text-white/90">
-                  {title || "Contact"}
+                <div className="absolute bottom-4 left-4">
+                  <ParticipantIdentity name={remoteDisplayName} avatar={remoteAvatar} />
                 </div>
               </div>
             )}
@@ -373,8 +429,8 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                 className="absolute bottom-6 right-2 w-28 h-40 rounded-2xl overflow-hidden border-2 border-white/20 shadow-2xl z-40 bg-slate-950 cursor-grab active:cursor-grabbing hover:border-brand-accent/60 transition-colors"
               >
                 <DailyVideo participant={localParticipant} isLocal={true} />
-                <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-black uppercase text-white/80">
-                  You
+                <div className="absolute top-2 left-2">
+                  <ParticipantIdentity name={localDisplayName} avatar={userAvatar} local />
                 </div>
               </motion.div>
             )}
@@ -388,6 +444,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                 <div className="absolute inset-0 w-full h-full">
                   <DailyVideo participant={remoteParticipant} isLocal={false} />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none" />
+                  <div className="absolute bottom-4 left-4"><ParticipantIdentity name={remoteDisplayName} avatar={remoteAvatar} /></div>
                 </div>
               ) : (
                 <div className="relative flex flex-col items-center gap-4 text-center">
@@ -407,15 +464,15 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                       />
                     )}
                     <div className="w-28 h-28 rounded-full bg-[#101722] border-4 border-white/10 flex items-center justify-center overflow-hidden shadow-xl">
-                      <User size={40} className="text-gray-400 animate-pulse" />
+                      {remoteAvatar ? <img src={remoteAvatar} alt={`${remoteDisplayName} profile`} className="h-full w-full object-cover" referrerPolicy="no-referrer" /> : <User size={40} className="text-gray-400 animate-pulse" />}
                     </div>
                   </div>
                   <div>
                     <h4 className="text-lg font-bold tracking-tight text-white">
-                      {title || "Contact"}
+                      {remoteDisplayName}
                     </h4>
                     <p className="text-xs text-gray-400 mt-1 uppercase tracking-widest font-mono">
-                      {callState === 'connected' ? (remoteParticipant?.audio ? "🎙️ Speaking" : "🔇 Muted") : "Secure Handshake..."}
+                      {callState === 'connected' ? (remoteParticipant?.audio ? <span className="inline-flex items-center gap-1"><Mic size={12} /> Speaking</span> : <span className="inline-flex items-center gap-1"><MicOff size={12} /> Muted</span>) : "Secure Handshake..."}
                     </p>
                   </div>
                 </div>
@@ -433,6 +490,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                 <div className="absolute inset-0 w-full h-full">
                   <DailyVideo participant={localParticipant} isLocal={true} />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none" />
+                  <div className="absolute bottom-4 left-4"><ParticipantIdentity name={localDisplayName} avatar={userAvatar} local /></div>
                 </div>
               ) : (
                 <div className="relative flex flex-col items-center gap-4 text-center">
@@ -456,10 +514,10 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                   </div>
                   <div>
                     <h4 className="text-lg font-bold tracking-tight text-white">
-                      {userName || "You"}
+                      {localDisplayName}
                     </h4>
                     <p className="text-xs text-gray-400 mt-1 uppercase tracking-widest font-mono">
-                      {isMuted ? "🔇 Muted" : "🎙️ Microphone Live"}
+                      {isMuted ? <span className="inline-flex items-center gap-1"><MicOff size={12} /> Muted</span> : <span className="inline-flex items-center gap-1"><Mic size={12} /> Microphone Live</span>}
                     </p>
                   </div>
                 </div>
