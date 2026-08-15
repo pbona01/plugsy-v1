@@ -1,5 +1,6 @@
 import React from "react"
 import { motion } from "framer-motion"
+import { Phone, PhoneOff, Video } from "lucide-react"
 import { useCall } from "@/contexts/CallContext"
 
 const IncomingCallScreen = ({ call }: { call: any }) => {
@@ -14,7 +15,7 @@ const IncomingCallScreen = ({ call }: { call: any }) => {
         position: "fixed",
         inset: 0,
         zIndex: 99999,
-        background: "linear-gradient(180deg, #1a0a0a 0%, #0a0a0c 100%)",
+        background: "linear-gradient(180deg, #07152d 0%, #080b12 100%)",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -61,7 +62,7 @@ const IncomingCallScreen = ({ call }: { call: any }) => {
               }}
               style={{
                 position: "absolute", inset: 0,
-                border: "2px solid #EF4444",
+                border: "2px solid #0066ff",
                 borderRadius: "50%"
               }}
             />
@@ -69,7 +70,7 @@ const IncomingCallScreen = ({ call }: { call: any }) => {
           <div style={{
             width: "140px", height: "140px", borderRadius: "50%",
             overflow: "hidden", border: "3px solid rgba(255,255,255,0.1)",
-            background: "#222", display: "flex",
+            background: "#101722", display: "flex",
             alignItems: "center", justifyContent: "center"
           }}>
             {call.hostAvatar ? (
@@ -115,9 +116,7 @@ const IncomingCallScreen = ({ call }: { call: any }) => {
               cursor: "pointer", boxShadow: "0 4px 20px rgba(239,68,68,0.4)"
             }}
           >
-            <span style={{ fontSize: "26px", transform: "rotate(135deg)" }}>
-              📞
-            </span>
+            <PhoneOff size={25} />
           </motion.button>
           <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px" }}>
             Decline
@@ -133,12 +132,12 @@ const IncomingCallScreen = ({ call }: { call: any }) => {
             onClick={acceptCall}
             style={{
               width: "68px", height: "68px", borderRadius: "50%",
-              background: "#22c55e", border: "none",
+              background: "#0066ff", border: "none",
               display: "flex", alignItems: "center", justifyContent: "center",
-              cursor: "pointer", boxShadow: "0 4px 20px rgba(34,197,94,0.4)"
+              cursor: "pointer", boxShadow: "0 4px 20px rgba(0,102,255,0.4)"
             }}
           >
-            <span style={{ fontSize: "26px" }}>📞</span>
+            {call.callType === "voice" ? <Phone size={25} /> : <Video size={25} />}
           </motion.button>
           <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px" }}>
             Accept

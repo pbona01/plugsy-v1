@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import DailyIframe, { DailyCall, DailyParticipant } from '@daily-co/daily-js';
 import { 
   PhoneOff, Mic, MicOff, Video, VideoOff, Volume2, VolumeX, 
-  Lock, Shield, User, Users, Camera, Sparkles, Loader2 
+  Lock, Shield, User, Users, Camera, Sparkles, Loader2, MonitorUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -13,6 +13,7 @@ interface VideoCallWidgetProps {
   title?: string;
   userName?: string;
   userAvatar?: string;
+  initialVideoOff?: boolean;
 }
 
 // Subcomponent to render a remote participant's video stream using standard WebRTC video elements
@@ -80,15 +81,16 @@ function DailyAudio({ participant, isMuted }: DailyAudioProps) {
   return <audio ref={audioRef} autoPlay playsInline />;
 }
 
-export default function VideoCallWidget({ roomUrl, onClose, title, userName, userAvatar }: VideoCallWidgetProps) {
+export default function VideoCallWidget({ roomUrl, onClose, title, userName, userAvatar, initialVideoOff = false }: VideoCallWidgetProps) {
   const onCloseRef = useRef(onClose);
   const [callFrame, setCallFrame] = useState<DailyCall | null>(null);
   const [participants, setParticipants] = useState<Record<string, DailyParticipant>>({});
   
   // Call Controls State
   const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(initialVideoOff);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   
   // Call lifecycle states
   const [callState, setCallState] = useState<'connecting' | 'ringing' | 'connected' | 'failed' | 'disconnected'>('connecting');
@@ -127,7 +129,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         // Create a headless custom Call Object rather than standard iframe
         callObject = DailyIframe.createCallObject({
           audioSource: true,
-          videoSource: true,
+          videoSource: !initialVideoOff,
         });
 
         setCallFrame(callObject);
@@ -183,7 +185,8 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         if (!isMounted) return;
         await callObject.join({ 
           url: roomUrl,
-          userName: userName || "Plugsy Member"
+          userName: userName || "Plugsy Member",
+          videoSource: !initialVideoOff,
         });
 
       } catch (err: any) {
@@ -203,7 +206,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         callObject.destroy();
       }
     };
-  }, [roomUrl, userName]);
+  }, [roomUrl, userName, initialVideoOff]);
 
   // Duration Timer increments every second during active call connection
   useEffect(() => {
@@ -251,6 +254,24 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
     toast.success(nextSpeakerState ? "Speakers muted ✓" : "Speakers unmuted ✓", { id: 'spk-toast' });
   };
 
+  const toggleScreenShare = async () => {
+    if (!callFrame) return;
+    try {
+      if (isScreenSharing) {
+        await callFrame.stopScreenShare();
+        setIsScreenSharing(false);
+        toast.success("Screen sharing stopped", { id: "screen-share-toast" });
+      } else {
+        await callFrame.startScreenShare();
+        setIsScreenSharing(true);
+        toast.success("Screen sharing started", { id: "screen-share-toast" });
+      }
+    } catch (error) {
+      console.warn("[VideoCallWidget] screen share unavailable:", error);
+      toast.error("Screen sharing was not enabled", { id: "screen-share-toast" });
+    }
+  };
+
   const handleEndCall = () => {
     if (callFrame) {
       callFrame.leave();
@@ -264,14 +285,14 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[9999] bg-[#0b141a] text-white flex flex-col font-sans overflow-hidden select-none"
+        className="fixed inset-0 z-[9999] bg-[#080b12] text-white flex flex-col font-sans overflow-hidden select-none"
       >
-        {/* Background WhatsApp style wallpaper when video is off */}
-        <div className="absolute inset-0 opacity-5 bg-[radial-gradient(#128c7e_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none z-0" />
+        {/* Subtle Plugsy texture behind the call surface */}
+        <div className="absolute inset-0 opacity-5 bg-[radial-gradient(#0066ff_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none z-0" />
 
         {/* TOP STATUS BAR: Encryption status and room details */}
         <div className="relative z-20 flex flex-col items-center pt-8 px-6 text-center pointer-events-none">
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/30 backdrop-blur-md border border-white/5 text-[10px] font-bold uppercase tracking-widest text-[#128c7e] mb-4">
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/30 backdrop-blur-md border border-white/5 text-[10px] font-bold uppercase tracking-widest text-brand-accent mb-4">
             <Lock size={10} />
             <span>End-to-End Encrypted</span>
           </div>
@@ -302,18 +323,18 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             {/* Large pulsing avatar overlay when remote video is off */}
             {(!remoteParticipant || !remoteParticipant.video) && (
               <div className="relative flex items-center justify-center">
-                {/* WhatsApp green concentric glowing waves */}
+                {/* Plugsy blue concentric connection waves */}
                 {callState === 'ringing' && (
                   <>
                     <motion.div 
                       animate={{ scale: [1, 1.8], opacity: [0.6, 0] }}
                       transition={{ repeat: Infinity, duration: 2, ease: "easeOut" }}
-                      className="absolute w-44 h-44 rounded-full border-2 border-[#128c7e]/30"
+                      className="absolute w-44 h-44 rounded-full border-2 border-brand-accent/30"
                     />
                     <motion.div 
                       animate={{ scale: [1, 2.2], opacity: [0.4, 0] }}
                       transition={{ repeat: Infinity, duration: 2, delay: 0.6, ease: "easeOut" }}
-                      className="absolute w-44 h-44 rounded-full border border-[#128c7e]/20"
+                      className="absolute w-44 h-44 rounded-full border border-brand-accent/20"
                     />
                   </>
                 )}
@@ -321,12 +342,12 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                   <motion.div 
                     animate={{ scale: [1, 1.3, 1] }}
                     transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
-                    className="absolute w-44 h-44 rounded-full bg-[#128c7e]/10 blur-xl"
+                    className="absolute w-44 h-44 rounded-full bg-brand-accent/10 blur-xl"
                   />
                 )}
 
                 {/* Central Contact Icon */}
-                <div className="relative w-36 h-36 rounded-full bg-[#111b21] border-4 border-white/10 shadow-2xl flex items-center justify-center overflow-hidden">
+                <div className="relative w-36 h-36 rounded-full bg-[#101722] border-4 border-white/10 shadow-2xl flex items-center justify-center overflow-hidden">
                   <User size={56} className="text-gray-400 animate-pulse" />
                 </div>
               </div>
@@ -349,7 +370,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                 drag
                 dragConstraints={{ left: -150, right: 150, top: -250, bottom: 250 }}
                 whileDrag={{ scale: 1.05 }}
-                className="absolute bottom-6 right-2 w-28 h-40 rounded-2xl overflow-hidden border-2 border-white/20 shadow-2xl z-40 bg-slate-950 cursor-grab active:cursor-grabbing hover:border-[#128c7e]/60 transition-colors"
+                className="absolute bottom-6 right-2 w-28 h-40 rounded-2xl overflow-hidden border-2 border-white/20 shadow-2xl z-40 bg-slate-950 cursor-grab active:cursor-grabbing hover:border-brand-accent/60 transition-colors"
               >
                 <DailyVideo participant={localParticipant} isLocal={true} />
                 <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-black uppercase text-white/80">
@@ -362,7 +383,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
           {/* DESKTOP/PC VIEW (Premium Side-by-Side balanced layout) */}
           <div className="hidden md:grid grid-cols-2 gap-8 w-full max-w-5xl h-[52vh] items-stretch justify-center py-4">
             {/* CARD 1: Remote Participant */}
-            <div className="relative rounded-3xl overflow-hidden border-2 border-white/10 bg-[#0e171e]/90 shadow-2xl flex flex-col items-center justify-center transition-all duration-300 hover:border-[#128c7e]/40 group">
+            <div className="relative rounded-3xl overflow-hidden border-2 border-white/10 bg-[#0d111a]/90 shadow-2xl flex flex-col items-center justify-center transition-all duration-300 hover:border-brand-accent/40 group">
               {remoteParticipant && remoteParticipant.video ? (
                 <div className="absolute inset-0 w-full h-full">
                   <DailyVideo participant={remoteParticipant} isLocal={false} />
@@ -375,17 +396,17 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                       <motion.div 
                         animate={{ scale: [1, 1.6], opacity: [0.5, 0] }}
                         transition={{ repeat: Infinity, duration: 2, ease: "easeOut" }}
-                        className="absolute -inset-4 rounded-full border-2 border-[#128c7e]/30"
+                        className="absolute -inset-4 rounded-full border-2 border-brand-accent/30"
                       />
                     )}
                     {callState === 'connected' && remoteParticipant?.audio && (
                       <motion.div 
                         animate={{ scale: [1, 1.25, 1] }}
                         transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
-                        className="absolute -inset-4 rounded-full bg-[#128c7e]/10 blur-md"
+                        className="absolute -inset-4 rounded-full bg-brand-accent/10 blur-md"
                       />
                     )}
-                    <div className="w-28 h-28 rounded-full bg-[#111b21] border-4 border-white/10 flex items-center justify-center overflow-hidden shadow-xl">
+                    <div className="w-28 h-28 rounded-full bg-[#101722] border-4 border-white/10 flex items-center justify-center overflow-hidden shadow-xl">
                       <User size={40} className="text-gray-400 animate-pulse" />
                     </div>
                   </div>
@@ -401,13 +422,13 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
               )}
               {/* Card Tag */}
               <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 z-20">
-                <Users size={12} className="text-[#128c7e]" />
+                <Users size={12} className="text-brand-accent" />
                 <span>Contact</span>
               </div>
             </div>
 
             {/* CARD 2: Local Participant (You) */}
-            <div className="relative rounded-3xl overflow-hidden border-2 border-white/10 bg-[#0e171e]/90 shadow-2xl flex flex-col items-center justify-center transition-all duration-300 hover:border-[#128c7e]/40 group">
+            <div className="relative rounded-3xl overflow-hidden border-2 border-white/10 bg-[#0d111a]/90 shadow-2xl flex flex-col items-center justify-center transition-all duration-300 hover:border-brand-accent/40 group">
               {localParticipant && !isVideoOff ? (
                 <div className="absolute inset-0 w-full h-full">
                   <DailyVideo participant={localParticipant} isLocal={true} />
@@ -420,14 +441,14 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                       <motion.div 
                         animate={{ scale: [1, 1.25, 1] }}
                         transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
-                        className="absolute -inset-4 rounded-full bg-[#128c7e]/10 blur-md"
+                        className="absolute -inset-4 rounded-full bg-brand-accent/10 blur-md"
                       />
                     )}
-                    <div className="w-28 h-28 rounded-full bg-[#111b21] border-4 border-white/10 flex items-center justify-center overflow-hidden shadow-xl">
+                    <div className="w-28 h-28 rounded-full bg-[#101722] border-4 border-white/10 flex items-center justify-center overflow-hidden shadow-xl">
                       {userAvatar ? (
                         <img src={userAvatar} alt="Your avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
-                        <span className="text-2xl font-black text-[#128c7e] uppercase">
+                        <span className="text-2xl font-black text-brand-accent uppercase">
                           {(userName || "U").slice(0, 1)}
                         </span>
                       )}
@@ -453,13 +474,13 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
 
         </div>
 
-        {/* BOTTOM FLOATING CONTROLS: Glassmorphic WhatsApp caller deck */}
+        {/* BOTTOM FLOATING CONTROLS: Plugsy glass caller deck */}
         <div className="relative z-30 pb-12 pt-6 px-6 flex flex-col items-center gap-4">
           
           {/* Active Callers Indicators */}
           {callState === 'connected' && (
             <p className="text-[10px] text-gray-400 font-bold tracking-widest uppercase flex items-center gap-1.5 bg-black/45 px-3 py-1.5 rounded-full border border-white/5 backdrop-blur-md shadow-md">
-              <Users size={12} className="text-[#128c7e]" />
+              <Users size={12} className="text-brand-accent" />
               <span>Participants: {participantList.length}</span>
             </p>
           )}
@@ -506,7 +527,21 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
               {isSpeakerMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
             </button>
 
-            {/* Prominent WhatsApp Hangup Trigger */}
+            {/* Screen sharing */}
+            <button
+              onClick={toggleScreenShare}
+              className={`p-3.5 rounded-2xl cursor-pointer hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-lg ${
+                isScreenSharing
+                  ? "bg-brand-accent text-white shadow-blue-500/25"
+                  : "bg-white/10 text-white hover:bg-white/20 border border-white/10"
+              }`}
+              title={isScreenSharing ? "Stop sharing" : "Share screen"}
+              aria-label={isScreenSharing ? "Stop sharing screen" : "Share screen"}
+            >
+              <MonitorUp size={20} />
+            </button>
+
+            {/* Prominent hangup trigger */}
             <button
               onClick={handleEndCall}
               className="p-4 rounded-full bg-red-600 text-white hover:bg-red-700 hover:scale-110 active:scale-95 transition-all cursor-pointer shadow-xl shadow-red-600/35 border border-red-500 flex items-center justify-center"
