@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import DailyIframe, { DailyCall, DailyParticipant } from '@daily-co/daily-js';
 import { 
   PhoneOff, Mic, MicOff, Video, VideoOff, Volume2, VolumeX, 
-  Lock, Shield, User, Users, Camera, Sparkles, Loader2, MonitorUp,
+  Lock, User, Users, MonitorUp,
   Minimize2, Maximize2, Signal
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -164,7 +164,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             setIsMuted(!parts.local.audio);
             setIsVideoOff(!parts.local.video);
           }
-          toast.success("Joined call room securely!");
         };
 
         const handleParticipantsChange = () => {
@@ -290,7 +289,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
     const nextMute = !isMuted;
     callFrame.setLocalAudio(!nextMute);
     setIsMuted(nextMute);
-    toast.success(nextMute ? "Microphone muted ✓" : "Microphone active ✓", { id: 'mute-toast' });
   };
 
   const toggleCamera = () => {
@@ -298,13 +296,11 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
     const nextVideoOff = !isVideoOff;
     callFrame.setLocalVideo(!nextVideoOff);
     setIsVideoOff(nextVideoOff);
-    toast.success(nextVideoOff ? "Camera turned off ✓" : "Camera turned on ✓", { id: 'cam-toast' });
   };
 
   const toggleSpeaker = () => {
     const nextSpeakerState = !isSpeakerMuted;
     setIsSpeakerMuted(nextSpeakerState);
-    toast.success(nextSpeakerState ? "Speakers muted ✓" : "Speakers unmuted ✓", { id: 'spk-toast' });
   };
 
   const toggleScreenShare = async () => {
@@ -313,11 +309,9 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
       if (isScreenSharing) {
         await callFrame.stopScreenShare();
         setIsScreenSharing(false);
-        toast.success("Screen sharing stopped", { id: "screen-share-toast" });
       } else {
         await callFrame.startScreenShare();
         setIsScreenSharing(true);
-        toast.success("Screen sharing started", { id: "screen-share-toast" });
       }
     } catch (error) {
       console.warn("[VideoCallWidget] screen share unavailable:", error);
@@ -331,10 +325,10 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[9999] bg-[#080b12] text-white flex flex-col font-sans overflow-hidden select-none"
+        className="fixed inset-0 z-[9999] bg-[#0b141a] text-white flex flex-col font-sans overflow-hidden select-none"
       >
         {/* Subtle Plugsy texture behind the call surface */}
-        <div className="absolute inset-0 opacity-5 bg-[radial-gradient(#0066ff_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none z-0" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#142536_0%,#0b141a_48%,#081015_100%)] pointer-events-none z-0" />
 
         <button
           type="button"
@@ -350,16 +344,16 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
 
         {/* TOP STATUS BAR: Encryption status and room details */}
         <div className="relative z-20 flex flex-col items-center pt-8 px-6 text-center pointer-events-none">
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/30 backdrop-blur-md border border-white/5 text-[10px] font-bold uppercase tracking-widest text-brand-accent mb-4">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/45 mb-3">
             <Lock size={10} />
-            <span>End-to-End Encrypted</span>
+            <span>Private call</span>
           </div>
           
-          <h2 className="text-xl md:text-2xl font-black font-display tracking-tight text-white drop-shadow-md">
+          <h2 className="text-xl md:text-2xl font-bold tracking-tight text-white">
             {title || "Plugsy Secure Caller"}
           </h2>
 
-          <p className="text-xs text-gray-300 font-medium tracking-wide mt-1.5 uppercase tracking-wider drop-shadow-md">
+          <p className="text-xs text-white/50 font-medium tracking-wide mt-1.5 uppercase tracking-wider">
             {callState === 'ringing' && "Ringing secure line..."}
             {callState === 'connecting' && "Securing encryption handshake..."}
             {callState === 'connected' && (remoteParticipant ? "Connected" : "Waiting for contact to join...")}
@@ -367,7 +361,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
           </p>
 
           {callState === 'connected' && (
-            <div className="mt-3 px-3 py-1 bg-white/10 backdrop-blur-md rounded-xl text-xs font-black tracking-widest text-emerald-400 font-mono shadow-inner">
+            <div className="mt-3 px-3 py-1 bg-white/8 rounded-lg text-xs font-semibold tracking-widest text-white/55 font-mono">
               {formatTime(duration)}
             </div>
           )}
@@ -396,17 +390,10 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                     />
                   </>
                 )}
-                {callState === 'connected' && remoteParticipant?.audio && (
-                  <motion.div 
-                    animate={{ scale: [1, 1.3, 1] }}
-                    transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
-                    className="absolute w-44 h-44 rounded-full bg-brand-accent/10 blur-xl"
-                  />
-                )}
 
                 {/* Central Contact Icon */}
                 <div className="relative w-36 h-36 rounded-full bg-[#101722] border-4 border-white/10 shadow-2xl flex items-center justify-center overflow-hidden">
-                  {remoteAvatar ? <img src={remoteAvatar} alt={`${remoteDisplayName} profile`} className="h-full w-full object-cover" referrerPolicy="no-referrer" /> : <User size={56} className="text-gray-400 animate-pulse" />}
+                  {remoteAvatar ? <img src={remoteAvatar} alt={`${remoteDisplayName} profile`} className="h-full w-full object-cover" referrerPolicy="no-referrer" /> : <User size={56} className="text-gray-400" />}
                 </div>
                 <p className="absolute top-[calc(100%+1rem)] max-w-[220px] truncate text-base font-bold text-white">{remoteDisplayName}</p>
               </div>
@@ -467,7 +454,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                       />
                     )}
                     <div className="w-28 h-28 rounded-full bg-[#101722] border-4 border-white/10 flex items-center justify-center overflow-hidden shadow-xl">
-                      {remoteAvatar ? <img src={remoteAvatar} alt={`${remoteDisplayName} profile`} className="h-full w-full object-cover" referrerPolicy="no-referrer" /> : <User size={40} className="text-gray-400 animate-pulse" />}
+                      {remoteAvatar ? <img src={remoteAvatar} alt={`${remoteDisplayName} profile`} className="h-full w-full object-cover" referrerPolicy="no-referrer" /> : <User size={40} className="text-gray-400" />}
                     </div>
                   </div>
                   <div>
@@ -527,7 +514,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
               )}
               {/* Card Tag */}
               <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 z-20">
-                <div className={`w-2 h-2 rounded-full ${isVideoOff ? 'bg-red-500' : 'bg-emerald-500 animate-pulse'}`} />
+                <div className={`w-2 h-2 rounded-full ${isVideoOff ? 'bg-red-500' : 'bg-emerald-500'}`} />
                 <span>You</span>
               </div>
             </div>
@@ -552,12 +539,14 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             {/* Toggle Microphone */}
             <button
               onClick={toggleMute}
-              className={`p-3.5 rounded-2xl cursor-pointer hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-lg ${
+              className={`p-3.5 rounded-2xl cursor-pointer active:scale-95 transition-colors flex items-center justify-center ${
                 isMuted 
-                  ? "bg-red-500 text-white shadow-red-500/20 animate-pulse" 
+                  ? "bg-red-500 text-white"
                   : "bg-white/10 text-white hover:bg-white/20 border border-white/10"
               }`}
               title={isMuted ? "Unmute Mic" : "Mute Mic"}
+              aria-label={isMuted ? "Unmute microphone" : "Mute microphone"}
+              aria-pressed={isMuted}
             >
               {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
             </button>
@@ -565,12 +554,14 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             {/* Toggle Camera */}
             <button
               onClick={toggleCamera}
-              className={`p-3.5 rounded-2xl cursor-pointer hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-lg ${
+              className={`p-3.5 rounded-2xl cursor-pointer active:scale-95 transition-colors flex items-center justify-center ${
                 isVideoOff 
                   ? "bg-slate-800 text-gray-400 border border-white/5" 
                   : "bg-white/10 text-white hover:bg-white/20 border border-white/10"
               }`}
               title={isVideoOff ? "Turn On Camera" : "Turn Off Camera"}
+              aria-label={isVideoOff ? "Turn camera on" : "Turn camera off"}
+              aria-pressed={isVideoOff}
             >
               {isVideoOff ? <VideoOff size={20} /> : <Video size={20} />}
             </button>
@@ -578,12 +569,14 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             {/* Toggle Speaker Output */}
             <button
               onClick={toggleSpeaker}
-              className={`p-3.5 rounded-2xl cursor-pointer hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-lg ${
+              className={`p-3.5 rounded-2xl cursor-pointer active:scale-95 transition-colors flex items-center justify-center ${
                 isSpeakerMuted 
                   ? "bg-red-500 text-white shadow-red-500/20" 
                   : "bg-white/10 text-white hover:bg-white/20 border border-white/10"
               }`}
               title={isSpeakerMuted ? "Unmute Audio" : "Mute Audio"}
+              aria-label={isSpeakerMuted ? "Unmute speakers" : "Mute speakers"}
+              aria-pressed={isSpeakerMuted}
             >
               {isSpeakerMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
             </button>
@@ -591,7 +584,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             {/* Screen sharing */}
             <button
               onClick={toggleScreenShare}
-              className={`p-3.5 rounded-2xl cursor-pointer hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-lg ${
+              className={`p-3.5 rounded-2xl cursor-pointer active:scale-95 transition-colors flex items-center justify-center ${
                 isScreenSharing
                   ? "bg-brand-accent text-white shadow-blue-500/25"
                   : "bg-white/10 text-white hover:bg-white/20 border border-white/10"
@@ -605,7 +598,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             {/* Prominent hangup trigger */}
             <button
               onClick={handleEndCall}
-              className="p-4 rounded-full bg-red-600 text-white hover:bg-red-700 hover:scale-110 active:scale-95 transition-all cursor-pointer shadow-xl shadow-red-600/35 border border-red-500 flex items-center justify-center"
+              className="p-4 rounded-full bg-red-600 text-white hover:bg-red-700 active:scale-95 transition-colors cursor-pointer border border-red-500 flex items-center justify-center"
               title="Hang Up"
             >
               <PhoneOff size={22} className="rotate-135" />
