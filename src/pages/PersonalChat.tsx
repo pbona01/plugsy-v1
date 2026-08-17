@@ -23,6 +23,8 @@ import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import plugsyLogo from "../assets/images/plugsy_icon.svg";
 import { useProfile } from "../hooks/useProfile";
 import { notifyPersistedMessage } from "../utils/messageNotification";
+import { parseOneLinkProfileBio } from "../../shared/onelink.js";
+import { parseOneLinkProfileBio } from "../../shared/onelink.js";
 import {
   CHAT_MESSAGE_PAGE_SIZE,
   getMessageCursor,
@@ -39,6 +41,12 @@ const CHAT_MESSAGE_COLUMNS = "id,chat_id,sender_id,sender_role,content,attachmen
 
 // Fixed set of default emojis for stickers
 const DEFAULT_STICKERS = ["🔥", "😂", "❤️", "👍", "🙌", "🎉", "✨", "💯", "🚀", "💡", "🎨", "🤩", "👑", "🍕", "👾"];
+
+const getReadableProfileBio = (rawBio: string | null | undefined) =>
+  parseOneLinkProfileBio(rawBio).biography;
+
+const getReadableProfileBio = (rawBio: string | null | undefined) =>
+  parseOneLinkProfileBio(rawBio).biography;
 
 interface Profile {
   clerk_id: string;
@@ -3715,7 +3723,7 @@ export default function PersonalChat() {
                 </h5>
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   {chat?.chat_type === "dm"
-                    ? otherMember?.bio || "No bio set by contact."
+                    ? getReadableProfileBio(otherMember?.bio) || "No bio set by contact."
                     : chat?.description || "No description set."}
                 </p>
               </div>
@@ -3966,7 +3974,7 @@ export default function PersonalChat() {
                   Bio
                 </h5>
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                  {userProfileModal.bio || "No bio written yet."}
+                  {getReadableProfileBio(userProfileModal.bio) || "No bio written yet."}
                 </p>
               </div>
             </motion.div>
@@ -4353,3 +4361,4 @@ export default function PersonalChat() {
     </div>
   );
 }
+
