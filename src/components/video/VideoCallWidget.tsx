@@ -2,8 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import DailyIframe, { DailyCall, DailyParticipant } from '@daily-co/daily-js';
 import { 
   PhoneOff, Mic, MicOff, Video, VideoOff, Volume2, VolumeX, 
-  Lock, User, Users, MonitorUp,
-  Minimize2, Maximize2, Signal
+  Lock, User, Minimize2, Maximize2, Signal
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -84,31 +83,6 @@ function DailyAudio({ participant, isMuted }: DailyAudioProps) {
   return <audio ref={audioRef} autoPlay playsInline />;
 }
 
-function DailyScreenShare({ participant }: { participant: DailyParticipant }) {
-  const screenRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    const videoElement = screenRef.current;
-    if (!videoElement) return;
-
-    const screenTrack = participant?.tracks?.screenVideo?.persistentTrack;
-    if (screenTrack) {
-      videoElement.srcObject = new MediaStream([screenTrack]);
-      videoElement.play().catch((error) => {
-        console.warn("[DailyScreenShare] screen share play failed:", error);
-      });
-    } else {
-      videoElement.srcObject = null;
-    }
-
-    return () => {
-      videoElement.srcObject = null;
-    };
-  }, [participant?.tracks?.screenVideo?.persistentTrack, participant?.tracks?.screenVideo?.state]);
-
-  return <video ref={screenRef} autoPlay playsInline className="h-full w-full object-contain" />;
-}
-
 function ParticipantIdentity({ name, avatar, local = false }: { name: string; avatar?: string; local?: boolean }) {
   return (
     <div className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-black/55 px-2.5 py-2 backdrop-blur-xl">
@@ -132,7 +106,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(initialVideoOff);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   
   // Call lifecycle states
@@ -188,7 +161,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
           if (parts.local) {
             setIsMuted(!parts.local.audio);
             setIsVideoOff(!parts.local.video);
-            setIsScreenSharing(Boolean(parts.local.tracks?.screenVideo?.persistentTrack));
           }
         };
 
@@ -200,19 +172,9 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
           if (parts.local) {
             setIsMuted(!parts.local.audio);
             setIsVideoOff(!parts.local.video);
-            setIsScreenSharing(Boolean(parts.local.tracks?.screenVideo?.persistentTrack));
           }
         };
 
-        const handleLocalScreenShareStarted = () => {
-          if (isMounted) setIsScreenSharing(true);
-        };
-        const handleLocalScreenShareStopped = () => {
-          if (isMounted) setIsScreenSharing(false);
-        };
-        const handleLocalScreenShareCanceled = () => {
-          if (isMounted) setIsScreenSharing(false);
-        };
 
         const handleLeft = () => {
           if (!isMounted) return;
@@ -231,9 +193,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         callObject.on('participant-updated', handleParticipantsChange);
         callObject.on('participant-left', handleParticipantsChange);
         callObject.on('error', handleError);
-        (callObject as any).on('local-screen-share-started', handleLocalScreenShareStarted);
-        (callObject as any).on('local-screen-share-stopped', handleLocalScreenShareStopped);
-        (callObject as any).on('local-screen-share-canceled', handleLocalScreenShareCanceled);
 
         // Ringing simulation for 1.8 seconds before joining WebRTC room
         setCallState('ringing');
@@ -243,7 +202,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         await callObject.join({ 
           url: roomUrl,
           userName: userName || "Plugsy Member",
-          videoSource: !initialVideoOff,
+          startVideoOff: initialVideoOff,
         });
 
       } catch (err: any) {
@@ -287,15 +246,12 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
   const participantList = Object.values(participants) as DailyParticipant[];
   const localParticipant = participantList.find((p) => p.local);
   const remoteParticipant = participantList.find((p) => !p.local);
-  const screenShareParticipant = participantList.find((p) => Boolean(p.tracks?.screenVideo?.persistentTrack));
   const getParticipantName = (participant: DailyParticipant | undefined, fallback: string) =>
     ((participant as (DailyParticipant & { user_name?: string }) | undefined)?.user_name || fallback);
 
   const remoteDisplayName = getParticipantName(remoteParticipant, remoteName || title || "Contact");
   const localDisplayName = getParticipantName(localParticipant, userName || "You");
-  const screenShareIsLocal = Boolean(screenShareParticipant?.local);
-  const screenShareName = screenShareIsLocal ? localDisplayName : remoteDisplayName;
-  const screenShareAvatar = screenShareIsLocal ? userAvatar : remoteAvatar;
+  const callMode = isVideoOff ? "Voice" : "Video";
 
   const handleEndCall = () => {
     if (callFrame) {
@@ -336,7 +292,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
   };
 
   const toggleCamera = () => {
-    if (!callFrame) return;
+    if (!callFrame || callState !== 'connected') return;
     const nextVideoOff = !isVideoOff;
     callFrame.setLocalVideo(!nextVideoOff);
     setIsVideoOff(nextVideoOff);
@@ -345,28 +301,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
   const toggleSpeaker = () => {
     const nextSpeakerState = !isSpeakerMuted;
     setIsSpeakerMuted(nextSpeakerState);
-  };
-
-  const toggleScreenShare = async () => {
-    if (!callFrame) return;
-    try {
-      if (isScreenSharing) {
-        await callFrame.stopScreenShare();
-        setIsScreenSharing(false);
-      } else {
-        callFrame.startScreenShare({
-          displayMediaOptions: {
-            audio: false,
-            video: true,
-            selfBrowserSurface: 'exclude',
-            surfaceSwitching: 'include',
-          },
-        });
-      }
-    } catch (error) {
-      console.warn("[VideoCallWidget] screen share unavailable:", error);
-      toast.error("Screen sharing was not enabled", { id: "screen-share-toast" });
-    }
   };
 
   return (
@@ -419,16 +353,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
 
         {/* CENTER CALL DISPLAY: Pulsing avatars and video feeds */}
         <div className="flex-grow flex flex-col items-center justify-center relative w-full z-20 px-6">
-          {screenShareParticipant && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#081015]/95 p-4 md:p-8">
-              <div className="relative h-full w-full max-w-6xl overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl">
-                <DailyScreenShare participant={screenShareParticipant} />
-                <div className="absolute bottom-4 left-4">
-                  <ParticipantIdentity name={`${screenShareName}'s screen`} avatar={screenShareAvatar} local={screenShareIsLocal} />
-                </div>
-              </div>
-            </div>
-          )}
           
           {/* MOBILE VIEW (standard single-screen + draggable PiP) */}
           <div className="flex md:hidden flex-col items-center justify-center relative w-full h-full flex-grow">
@@ -527,11 +451,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                   </div>
                 </div>
               )}
-              {/* Card Tag */}
-              <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 z-20">
-                <Users size={12} className="text-brand-accent" />
-                <span>Contact</span>
-              </div>
             </div>
 
             {/* CARD 2: Local Participant (You) */}
@@ -572,11 +491,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
                   </div>
                 </div>
               )}
-              {/* Card Tag */}
-              <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 z-20">
-                <div className={`w-2 h-2 rounded-full ${isVideoOff ? 'bg-red-500' : 'bg-emerald-500'}`} />
-                <span>You</span>
-              </div>
             </div>
           </div>
 
@@ -585,20 +499,15 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         {/* BOTTOM FLOATING CONTROLS: Plugsy glass caller deck */}
         <div className="relative z-30 pb-12 pt-6 px-6 flex flex-col items-center gap-4">
           
-          {/* Active Callers Indicators */}
-          {callState === 'connected' && (
-            <p className="text-[10px] text-gray-400 font-bold tracking-widest uppercase flex items-center gap-1.5 bg-black/45 px-3 py-1.5 rounded-full border border-white/5 backdrop-blur-md shadow-md">
-              <Users size={12} className="text-brand-accent" />
-              <span>Participants: {participantList.length}</span>
-            </p>
-          )}
-
           {/* Core Command Center Deck */}
-          <div className="flex items-center gap-4 md:gap-6 px-6 py-4 rounded-3xl bg-black/55 backdrop-blur-xl border border-white/10 shadow-2xl max-w-md w-full justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">{callMode} call</span>
+            <div className="flex items-center gap-4 md:gap-6 px-6 py-4 rounded-3xl bg-black/55 backdrop-blur-xl border border-white/10 shadow-2xl max-w-md w-full justify-center">
             
             {/* Toggle Microphone */}
             <button
               onClick={toggleMute}
+              disabled={callState !== 'connected'}
               className={`p-3.5 rounded-2xl cursor-pointer active:scale-95 transition-colors flex items-center justify-center ${
                 isMuted 
                   ? "bg-red-500 text-white"
@@ -614,13 +523,14 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             {/* Toggle Camera */}
             <button
               onClick={toggleCamera}
+              disabled={callState !== 'connected'}
               className={`p-3.5 rounded-2xl cursor-pointer active:scale-95 transition-colors flex items-center justify-center ${
                 isVideoOff 
                   ? "bg-slate-800 text-gray-400 border border-white/5" 
                   : "bg-white/10 text-white hover:bg-white/20 border border-white/10"
               }`}
-              title={isVideoOff ? "Turn On Camera" : "Turn Off Camera"}
-              aria-label={isVideoOff ? "Turn camera on" : "Turn camera off"}
+              title={isVideoOff ? "Switch to video call" : "Switch to voice call"}
+              aria-label={isVideoOff ? "Switch to video call" : "Switch to voice call"}
               aria-pressed={isVideoOff}
             >
               {isVideoOff ? <VideoOff size={20} /> : <Video size={20} />}
@@ -629,6 +539,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             {/* Toggle Speaker Output */}
             <button
               onClick={toggleSpeaker}
+              disabled={callState !== 'connected'}
               className={`p-3.5 rounded-2xl cursor-pointer active:scale-95 transition-colors flex items-center justify-center ${
                 isSpeakerMuted 
                   ? "bg-red-500 text-white shadow-red-500/20" 
@@ -641,21 +552,6 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
               {isSpeakerMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
             </button>
 
-            {/* Screen sharing */}
-            <button
-              onClick={toggleScreenShare}
-              disabled={callState !== 'connected'}
-              className={`p-3.5 rounded-2xl cursor-pointer active:scale-95 transition-colors flex items-center justify-center disabled:cursor-not-allowed disabled:opacity-40 ${
-                isScreenSharing
-                  ? "bg-brand-accent text-white shadow-blue-500/25"
-                  : "bg-white/10 text-white hover:bg-white/20 border border-white/10"
-              }`}
-              title={isScreenSharing ? "Stop sharing" : "Share screen"}
-              aria-label={isScreenSharing ? "Stop sharing screen" : "Share screen"}
-            >
-              <MonitorUp size={20} />
-            </button>
-
             {/* Prominent hangup trigger */}
             <button
               onClick={handleEndCall}
@@ -664,6 +560,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             >
               <PhoneOff size={22} className="rotate-135" />
             </button>
+            </div>
           </div>
         </div>
 

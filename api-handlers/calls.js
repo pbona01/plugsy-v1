@@ -45,7 +45,7 @@ export default async function handler(req, res) {
     let roomUrl = "", roomName = "";
     const dailyKey = String(process.env.DAILY_API_KEY || "").trim();
     if (dailyKey) {
-      const response = await fetch("https://api.daily.co/v1/rooms", { method: "POST", headers: { Authorization: `Bearer ${dailyKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ properties: { exp: Math.floor(Date.now() / 1000) + 3600, enable_chat: false, enable_screenshare: true, start_video_off: callType === "voice", start_audio_off: false, enable_prejoin_ui: false } }) });
+      const response = await fetch("https://api.daily.co/v1/rooms", { method: "POST", headers: { Authorization: `Bearer ${dailyKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ properties: { exp: Math.floor(Date.now() / 1000) + 3600, enable_chat: false, start_video_off: callType === "voice", start_audio_off: false, enable_prejoin_ui: false } }) });
       const room = await response.json().catch(() => ({}));
       if (!response.ok || !room.url || !room.name) return fail(res, 502, "CALL_PROVIDER_UNAVAILABLE");
       roomUrl = room.url; roomName = room.name;
