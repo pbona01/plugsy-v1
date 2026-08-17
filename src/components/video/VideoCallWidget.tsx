@@ -84,6 +84,31 @@ function DailyAudio({ participant, isMuted }: DailyAudioProps) {
   return <audio ref={audioRef} autoPlay playsInline />;
 }
 
+function DailyScreenShare({ participant }: { participant: DailyParticipant }) {
+  const screenRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const videoElement = screenRef.current;
+    if (!videoElement) return;
+
+    const screenTrack = participant?.tracks?.screenVideo?.persistentTrack;
+    if (screenTrack) {
+      videoElement.srcObject = new MediaStream([screenTrack]);
+      videoElement.play().catch((error) => {
+        console.warn("[DailyScreenShare] screen share play failed:", error);
+      });
+    } else {
+      videoElement.srcObject = null;
+    }
+
+    return () => {
+      videoElement.srcObject = null;
+    };
+  }, [participant?.tracks?.screenVideo?.persistentTrack, participant?.tracks?.screenVideo?.state]);
+
+  return <video ref={screenRef} autoPlay playsInline className="h-full w-full object-contain" />;
+}
+
 function ParticipantIdentity({ name, avatar, local = false }: { name: string; avatar?: string; local?: boolean }) {
   return (
     <div className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-black/55 px-2.5 py-2 backdrop-blur-xl">
@@ -163,6 +188,7 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
           if (parts.local) {
             setIsMuted(!parts.local.audio);
             setIsVideoOff(!parts.local.video);
+            setIsScreenSharing(Boolean(parts.local.tracks?.screenVideo?.persistentTrack));
           }
         };
 
@@ -174,7 +200,18 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
           if (parts.local) {
             setIsMuted(!parts.local.audio);
             setIsVideoOff(!parts.local.video);
+            setIsScreenSharing(Boolean(parts.local.tracks?.screenVideo?.persistentTrack));
           }
+        };
+
+        const handleLocalScreenShareStarted = () => {
+          if (isMounted) setIsScreenSharing(true);
+        };
+        const handleLocalScreenShareStopped = () => {
+          if (isMounted) setIsScreenSharing(false);
+        };
+        const handleLocalScreenShareCanceled = () => {
+          if (isMounted) setIsScreenSharing(false);
         };
 
         const handleLeft = () => {
@@ -194,6 +231,9 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         callObject.on('participant-updated', handleParticipantsChange);
         callObject.on('participant-left', handleParticipantsChange);
         callObject.on('error', handleError);
+        (callObject as any).on('local-screen-share-started', handleLocalScreenShareStarted);
+        (callObject as any).on('local-screen-share-stopped', handleLocalScreenShareStopped);
+        (callObject as any).on('local-screen-share-canceled', handleLocalScreenShareCanceled);
 
         // Ringing simulation for 1.8 seconds before joining WebRTC room
         setCallState('ringing');
@@ -247,11 +287,15 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
   const participantList = Object.values(participants) as DailyParticipant[];
   const localParticipant = participantList.find((p) => p.local);
   const remoteParticipant = participantList.find((p) => !p.local);
+  const screenShareParticipant = participantList.find((p) => Boolean(p.tracks?.screenVideo?.persistentTrack));
   const getParticipantName = (participant: DailyParticipant | undefined, fallback: string) =>
     ((participant as (DailyParticipant & { user_name?: string }) | undefined)?.user_name || fallback);
 
   const remoteDisplayName = getParticipantName(remoteParticipant, remoteName || title || "Contact");
   const localDisplayName = getParticipantName(localParticipant, userName || "You");
+  const screenShareIsLocal = Boolean(screenShareParticipant?.local);
+  const screenShareName = screenShareIsLocal ? localDisplayName : remoteDisplayName;
+  const screenShareAvatar = screenShareIsLocal ? userAvatar : remoteAvatar;
 
   const handleEndCall = () => {
     if (callFrame) {
@@ -310,8 +354,14 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
         await callFrame.stopScreenShare();
         setIsScreenSharing(false);
       } else {
-        await callFrame.startScreenShare();
-        setIsScreenSharing(true);
+        callFrame.startScreenShare({
+          displayMediaOptions: {
+            audio: false,
+            video: true,
+            selfBrowserSurface: 'exclude',
+            surfaceSwitching: 'include',
+          },
+        });
       }
     } catch (error) {
       console.warn("[VideoCallWidget] screen share unavailable:", error);
@@ -369,6 +419,16 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
 
         {/* CENTER CALL DISPLAY: Pulsing avatars and video feeds */}
         <div className="flex-grow flex flex-col items-center justify-center relative w-full z-20 px-6">
+          {screenShareParticipant && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#081015]/95 p-4 md:p-8">
+              <div className="relative h-full w-full max-w-6xl overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl">
+                <DailyScreenShare participant={screenShareParticipant} />
+                <div className="absolute bottom-4 left-4">
+                  <ParticipantIdentity name={`${screenShareName}'s screen`} avatar={screenShareAvatar} local={screenShareIsLocal} />
+                </div>
+              </div>
+            </div>
+          )}
           
           {/* MOBILE VIEW (standard single-screen + draggable PiP) */}
           <div className="flex md:hidden flex-col items-center justify-center relative w-full h-full flex-grow">
@@ -584,7 +644,8 @@ export default function VideoCallWidget({ roomUrl, onClose, title, userName, use
             {/* Screen sharing */}
             <button
               onClick={toggleScreenShare}
-              className={`p-3.5 rounded-2xl cursor-pointer active:scale-95 transition-colors flex items-center justify-center ${
+              disabled={callState !== 'connected'}
+              className={`p-3.5 rounded-2xl cursor-pointer active:scale-95 transition-colors flex items-center justify-center disabled:cursor-not-allowed disabled:opacity-40 ${
                 isScreenSharing
                   ? "bg-brand-accent text-white shadow-blue-500/25"
                   : "bg-white/10 text-white hover:bg-white/20 border border-white/10"
