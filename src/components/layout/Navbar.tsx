@@ -28,6 +28,10 @@ export default function Navbar() {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // The portfolio editor has its own desktop toolbar and settings drawer.
+  // Keeping the global fixed navbar mounted here causes the two layers to overlap.
+  const isPortfolioEditor = /^\/portfolio\/[^/]+\/edit\/?$/.test(location.pathname);
+
   const isUserAdmin = isAdmin(user);
   const effectiveRole = isUserAdmin ? "admin" : "user";
 
@@ -101,6 +105,8 @@ export default function Navbar() {
   ];
 
   const navLinks = effectiveRole === "admin" ? adminLinks : userLinks;
+
+  if (isPortfolioEditor) return null;
 
   let mobileLinks = [];
   if (effectiveRole === "admin") {
