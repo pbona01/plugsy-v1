@@ -1654,15 +1654,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
               )}
 
               <div className="mt-4 p-4 rounded-2xl bg-white/[0.02] border border-white/5 text-left text-xs text-slate-300 max-h-24 overflow-y-auto leading-relaxed font-medium">
-                {(() => {
-                  let bioText = userProfileModal.bio || "This creator hasn't written a bio yet.";
-                  if (bioText.startsWith("{")) {
-                    try {
-                      bioText = JSON.parse(bioText).bio || "This creator hasn't written a bio yet.";
-                    } catch (e) {}
-                  }
-                  return bioText;
-                })()}
+                {parseOneLinkProfileBio(userProfileModal.bio).biography || "This creator hasn't written a bio yet."}
               </div>
 
               <div className="mt-6 flex gap-3">

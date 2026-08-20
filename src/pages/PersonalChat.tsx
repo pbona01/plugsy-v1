@@ -42,8 +42,13 @@ const CHAT_MESSAGE_COLUMNS = "id,chat_id,sender_id,sender_role,content,attachmen
 // Fixed set of default emojis for stickers
 const DEFAULT_STICKERS = ["🔥", "😂", "❤️", "👍", "🙌", "🎉", "✨", "💯", "🚀", "💡", "🎨", "🤩", "👑", "🍕", "👾"];
 
-const getReadableProfileBio = (rawBio: string | null | undefined) =>
-  parseOneLinkProfileBio(rawBio).biography;
+const getReadableProfileBio = (rawBio: string | Record<string, unknown> | null | undefined) => {
+  if (rawBio && typeof rawBio === "object") {
+    const biography = rawBio.bio;
+    return typeof biography === "string" ? biography.trim() : "";
+  }
+  return parseOneLinkProfileBio(rawBio).biography;
+};
 
 const getReadableProfileBio = (rawBio: string | null | undefined) =>
   parseOneLinkProfileBio(rawBio).biography;
