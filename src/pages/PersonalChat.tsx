@@ -24,7 +24,6 @@ import plugsyLogo from "../assets/images/plugsy_icon.svg";
 import { useProfile } from "../hooks/useProfile";
 import { notifyPersistedMessage } from "../utils/messageNotification";
 import { parseOneLinkProfileBio } from "../../shared/onelink.js";
-import { parseOneLinkProfileBio } from "../../shared/onelink.js";
 import {
   CHAT_MESSAGE_PAGE_SIZE,
   getMessageCursor,
@@ -49,9 +48,6 @@ const getReadableProfileBio = (rawBio: string | Record<string, unknown> | null |
   }
   return parseOneLinkProfileBio(rawBio).biography;
 };
-
-const getReadableProfileBio = (rawBio: string | null | undefined) =>
-  parseOneLinkProfileBio(rawBio).biography;
 
 interface Profile {
   clerk_id: string;
