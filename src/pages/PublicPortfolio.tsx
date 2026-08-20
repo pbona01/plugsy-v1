@@ -39,6 +39,8 @@ import {
   Edit2,
   Trash2,
   Plus,
+  ChevronUp,
+  ChevronDown,
   Dribbble,
   Globe,
 } from "lucide-react";
@@ -850,6 +852,34 @@ export function PublicPortfolio({
     if (mapped.length === 1) return mapped[0];
     if (mapped.length === 2) return `${mapped[0]} & ${mapped[1]}`;
     return `${mapped[0]}, ${mapped[1]} & ${mapped.length - 2} more`;
+  };
+
+  const moveCategory = async (categoryId: string, direction: "up" | "down") => {
+    const currentIndex = categories.findIndex((category) => category.id === categoryId);
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= categories.length) return;
+
+    const previousCategories = categories;
+    const reordered = [...categories];
+    [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex], reordered[currentIndex]];
+    const persisted = reordered.map((category, index) => ({ ...category, order_index: index }));
+    setCategories(persisted);
+
+    try {
+      const results = await Promise.all(
+        persisted.map((category) =>
+          supabase.from("vp_custom_categories")
+            .update({ order_index: category.order_index })
+            .eq("id", category.id),
+        ),
+      );
+      const error = results.find((result) => result.error)?.error;
+      if (error) throw error;
+    } catch (error) {
+      setCategories(previousCategories);
+      console.error("Failed to reorder portfolio categories:", error);
+      showToast("Could not save category order", "error");
+    }
   };
 
   const handleUpdateItem = async (
@@ -2155,6 +2185,28 @@ export function PublicPortfolio({
                       className="h-[1px] flex-1 opacity-20"
                       style={{ backgroundColor: "var(--vp-text)" }}
                     />
+                    {isEditMode && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => moveCategory(category.id, "up")}
+                          disabled={categories.indexOf(category) === 0}
+                          aria-label={`Move ${category.name} up`}
+                          className="p-2 rounded-lg border border-black/10 dark:border-white/10 text-[var(--vp-text-muted)] hover:text-[var(--vp-text)] hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed transition"
+                        >
+                          <ChevronUp size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveCategory(category.id, "down")}
+                          disabled={categories.indexOf(category) === categories.length - 1}
+                          aria-label={`Move ${category.name} down`}
+                          className="p-2 rounded-lg border border-black/10 dark:border-white/10 text-[var(--vp-text-muted)] hover:text-[var(--vp-text)] hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed transition"
+                        >
+                          <ChevronDown size={16} />
+                        </button>
+                      </div>
+                    )}
                     {isEditMode && (
                       <button
                         onClick={async () => {
