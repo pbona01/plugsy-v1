@@ -11,7 +11,6 @@ export default function AdminPortfolioShare() {
   const { getToken } = useAuth();
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
-  const [portfolioId, setPortfolioId] = useState("");
   const [recipientUserId, setRecipientUserId] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -41,12 +40,12 @@ export default function AdminPortfolioShare() {
 
   const sendPortfolio = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!portfolioId || !recipientUserId) return toast.error("Select a portfolio and user first.");
+    if (!portfolioCategory || portfolioCategory === "all" || !recipientUserId) return toast.error("Select a category and user first.");
     setSending(true);
     try {
-      await request({ method: "POST", body: JSON.stringify({ portfolioId, recipientUserId }) });
-      toast.success("Portfolio sent successfully.");
-      setPortfolioId("");
+      await request({ method: "POST", body: JSON.stringify({ category: portfolioCategory, recipientUserId }) });
+      toast.success("Portfolio category sent successfully.");
+      setPortfolioCategory("all");
       setRecipientUserId("");
     } catch (error: any) {
       toast.error(error.message || "Portfolio could not be sent.");
@@ -73,7 +72,6 @@ export default function AdminPortfolioShare() {
   };
 
   const categories = [...new Set(portfolios.map((portfolio) => portfolio.category).filter(Boolean) as string[])].sort();
-  const visiblePortfolios = portfolios.filter((portfolio) => portfolioCategory === "all" || portfolio.category === portfolioCategory);
   const visibleRecipients = recipients.filter((recipient) => {
     const query = userSearch.trim().toLowerCase();
     if (!query) return true;
@@ -91,23 +89,16 @@ export default function AdminPortfolioShare() {
             <div className="p-3 rounded-2xl bg-brand-accent/10 text-brand-accent"><Send size={22} /></div>
             <div>
               <h1 className="text-xl md:text-2xl font-black uppercase tracking-tight">Send a Portfolio</h1>
-              <p className="text-sm text-brand-text-secondary mt-1">Choose a portfolio and send it directly to a user’s Plugsy chat.</p>
+              <p className="text-sm text-brand-text-secondary mt-1">Choose a portfolio category and send it directly to a user’s Plugsy chat.</p>
             </div>
           </div>
           {loading ? <div className="py-12 flex justify-center"><Loader2 className="animate-spin" /></div> : (
             <form onSubmit={sendPortfolio} className="space-y-6">
               <label className="block">
                 <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-brand-text-secondary mb-2"><Briefcase size={14} /> Portfolio category</span>
-                <select value={portfolioCategory} onChange={(event) => { setPortfolioCategory(event.target.value); setPortfolioId(""); }} className="w-full rounded-xl border border-brand-border bg-brand-bg px-4 py-3 text-sm outline-none focus:border-brand-accent">
-                  <option value="all">All categories</option>
+                <select value={portfolioCategory} onChange={(event) => setPortfolioCategory(event.target.value)} className="w-full rounded-xl border border-brand-border bg-brand-bg px-4 py-3 text-sm outline-none focus:border-brand-accent">
+                  <option value="all">Select a category</option>
                   {categories.map((category) => <option key={category} value={category}>{categoryLabel(category)}</option>)}
-                </select>
-              </label>
-              <label className="block">
-                <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-brand-text-secondary mb-2"><Briefcase size={14} /> Portfolio</span>
-                <select value={portfolioId} onChange={(event) => setPortfolioId(event.target.value)} className="w-full rounded-xl border border-brand-border bg-brand-bg px-4 py-3 text-sm outline-none focus:border-brand-accent">
-                  <option value="">Select a portfolio</option>
-                  {visiblePortfolios.map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{categoryLabel(portfolio.category)} · {portfolio.full_name || "Untitled portfolio"} — {portfolio.slug}</option>)}
                 </select>
               </label>
               <label className="block">
@@ -120,7 +111,7 @@ export default function AdminPortfolioShare() {
                   })}
                 </div>
               </label>
-              <button disabled={sending || !portfolioId || !recipientUserId} className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-accent px-5 py-3.5 text-sm font-black uppercase tracking-widest text-white disabled:opacity-50">
+              <button disabled={sending || portfolioCategory === "all" || !recipientUserId} className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-accent px-5 py-3.5 text-sm font-black uppercase tracking-widest text-white disabled:opacity-50">
                 {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} Send Portfolio
               </button>
             </form>

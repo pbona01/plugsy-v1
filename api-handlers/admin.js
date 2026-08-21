@@ -418,15 +418,15 @@ async function handlePortfolioShare(req, res) {
   if (typeof body === "string") {
     try { body = JSON.parse(body); } catch { body = {}; }
   }
-  const portfolioId = textValue(body?.portfolioId);
+  const category = textValue(body?.category);
   const recipientUserId = textValue(body?.recipientUserId);
-  if (!portfolioId || !recipientUserId) return res.status(400).json({ success: false, error: "Select a portfolio and recipient." });
+  if (!category || !recipientUserId) return res.status(400).json({ success: false, error: "Select a category and recipient." });
 
   const [{ data: portfolio, error: portfolioError }, { data: recipient, error: recipientError }] = await Promise.all([
-    supabase.from("vp_portfolios").select("id,slug,full_name,status").eq("id", portfolioId).maybeSingle(),
+    supabase.from("vp_portfolios").select("id,slug,full_name,status,category").eq("category", category).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("profiles").select("clerk_id,email,full_name,username").eq("clerk_id", recipientUserId).maybeSingle(),
   ]);
-  if (portfolioError || !portfolio) return res.status(404).json({ success: false, error: "Portfolio not found." });
+  if (portfolioError || !portfolio) return res.status(404).json({ success: false, error: "No portfolio found for that category." });
   if (recipientError || !recipient) return res.status(404).json({ success: false, error: "Recipient not found." });
 
   const { data: senderProfile } = await supabase.from("profiles").select("full_name,username,email").eq("clerk_id", writer.actor.userId).maybeSingle();
@@ -454,7 +454,7 @@ async function handlePortfolioShare(req, res) {
     sender_id: writer.actor.userId,
     sender_role: "admin",
     sender_name: senderProfile?.full_name || senderProfile?.username || writer.actor.fullName || "Plugsy Admin",
-    content: `Plugsy shared a portfolio with you: ${portfolio.full_name || "View portfolio"}\n${portfolioUrl}`,
+    content: `Plugsy shared a ${category.replaceAll("_", " ")} portfolio with you: ${portfolio.full_name || "View portfolio"}\n${portfolioUrl}`,
     attachment_url: portfolioUrl,
     attachment_type: "portfolio",
     message_type: "text",
