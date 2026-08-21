@@ -423,11 +423,63 @@ async function handlePortfolioShare(req, res) {
   if (!category || !recipientUserId) return res.status(400).json({ success: false, error: "Select a category and recipient." });
 
   const [{ data: portfolio, error: portfolioError }, { data: recipient, error: recipientError }] = await Promise.all([
-    supabase.from("vp_portfolios").select("id,slug,full_name,status,category").eq("category", category).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("vp_portfolios").select("*").eq("category", category).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("profiles").select("clerk_id,email,full_name,username").eq("clerk_id", recipientUserId).maybeSingle(),
   ]);
   if (portfolioError || !portfolio) return res.status(404).json({ success: false, error: "No portfolio found for that category." });
   if (recipientError || !recipient) return res.status(404).json({ success: false, error: "Recipient not found." });
+
+  // A category send creates a real editable portfolio for the recipient by
+  // copying the selected category's portfolio template and its work.
+  const slugBase = `${recipient.username || recipient.full_name || "portfolio"}-${category}`
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  let slug = slugBase || `portfolio-${randomUUID().slice(0, 8)}`;
+  for (let attempt = 1; attempt < 100; attempt += 1) {
+    const { data: existing } = await supabase.from("vp_portfolios").select("id").eq("slug", slug).maybeSingle();
+    if (!existing) break;
+    slug = `${slugBase}-${attempt}`;
+  }
+
+  const portfolioCopy = { ...portfolio };
+  ["id", "created_at", "updated_at", "view_count", "slug", "user_id", "user_email", "full_name", "status", "is_paid", "paystack_ref"].forEach((key) => delete portfolioCopy[key]);
+  const { data: createdPortfolio, error: createPortfolioError } = await supabase.from("vp_portfolios").insert({
+    ...portfolioCopy,
+    user_id: recipientUserId,
+    user_email: recipient.email || "",
+    full_name: recipient.full_name || recipient.username || "My Portfolio",
+    status: "draft",
+    is_paid: true,
+    slug,
+  }).select("id,slug").single();
+  if (createPortfolioError || !createdPortfolio) return res.status(503).json({ success: false, error: "Could not create the recipient portfolio." });
+
+  const { data: sourceCategories } = await supabase.from("vp_custom_categories").select("*").eq("portfolio_id", portfolio.id).order("order_index");
+  const categoryIdMap = new Map();
+  if (sourceCategories?.length) {
+    const categoryRows = sourceCategories.map((sourceCategory) => {
+      const newId = randomUUID();
+      categoryIdMap.set(sourceCategory.id, newId);
+      const copy = { ...sourceCategory, id: newId, portfolio_id: createdPortfolio.id };
+      delete copy.created_at;
+      return copy;
+    });
+    const { error: categoriesError } = await supabase.from("vp_custom_categories").insert(categoryRows);
+    if (categoriesError) return res.status(503).json({ success: false, error: "Could not copy portfolio categories." });
+  }
+
+  const { data: sourceItems } = await supabase.from("vp_portfolio_items").select("*").eq("portfolio_id", portfolio.id).order("order_index");
+  if (sourceItems?.length) {
+    const itemRows = sourceItems.map((sourceItem) => {
+      const copy = { ...sourceItem, portfolio_id: createdPortfolio.id };
+      delete copy.id;
+      delete copy.created_at;
+      ["reaction_count", "fire_count", "mind_blown_count", "hire_count", "love_this_count", "clean_work_count", "stunning_count", "clean_code_count", "impressive_count", "slick_design_count", "great_writing_count", "results_count", "smart_build_count", "solid_work_count"].forEach((key) => delete copy[key]);
+      if (copy.custom_category_id) copy.custom_category_id = categoryIdMap.get(copy.custom_category_id) || null;
+      return copy;
+    });
+    const { error: itemsError } = await supabase.from("vp_portfolio_items").insert(itemRows);
+    if (itemsError) return res.status(503).json({ success: false, error: "Could not copy portfolio work." });
+  }
 
   const { data: senderProfile } = await supabase.from("profiles").select("full_name,username,email").eq("clerk_id", writer.actor.userId).maybeSingle();
   let supportChat;
@@ -452,7 +504,7 @@ async function handlePortfolioShare(req, res) {
     read_by_user: false,
   });
   if (messageError) return res.status(503).json({ success: false, error: "Portfolio could not be sent." });
-  return res.status(200).json({ success: true, chatId: supportChat.id });
+  return res.status(200).json({ success: true, chatId: supportChat.id, portfolioId: createdPortfolio.id });
 }
 
 async function authorizeAdminUsersActor(actor, res, supabase) {
