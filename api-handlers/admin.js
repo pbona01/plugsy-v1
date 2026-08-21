@@ -430,41 +430,29 @@ async function handlePortfolioShare(req, res) {
   if (recipientError || !recipient) return res.status(404).json({ success: false, error: "Recipient not found." });
 
   const { data: senderProfile } = await supabase.from("profiles").select("full_name,username,email").eq("clerk_id", writer.actor.userId).maybeSingle();
-  const { data: senderMemberships } = await supabase.from("chat_members").select("chat_id").eq("user_id", writer.actor.userId);
-  const senderChatIds = (senderMemberships || []).map((membership) => membership.chat_id).filter(Boolean);
-  let chatId = null;
-  if (senderChatIds.length) {
-    const { data: sharedMembership } = await supabase.from("chat_members").select("chat_id").in("chat_id", senderChatIds).eq("user_id", recipientUserId).limit(1);
-    chatId = sharedMembership?.[0]?.chat_id || null;
-  }
-  if (!chatId) {
-    const { data: chat, error: chatError } = await supabase.from("chats").insert({ chat_type: "dm", member_count: 2 }).select("id").single();
-    if (chatError) return res.status(503).json({ success: false, error: "Could not create delivery chat." });
-    chatId = chat.id;
-    const { error: memberError } = await supabase.from("chat_members").insert([
-      { chat_id: chatId, user_id: writer.actor.userId, user_email: senderProfile?.email || writer.actor.email || "", user_name: senderProfile?.full_name || senderProfile?.username || writer.actor.fullName || "Plugsy Admin", role: "member" },
-      { chat_id: chatId, user_id: recipientUserId, user_email: recipient.email || "", user_name: recipient.full_name || recipient.username || "User", role: "member" },
-    ]);
-    if (memberError) return res.status(503).json({ success: false, error: "Could not add delivery recipient." });
+  let supportChat;
+  try {
+    supportChat = await resolveOrCreateSupportChat(supabase, recipientUserId, recipient.email || "");
+  } catch (error) {
+    console.error("[portfolio-share] support chat resolution failed", error);
+    return res.status(503).json({ success: false, error: "Could not create the support notification." });
   }
 
-  const portfolioUrl = `/vp/${portfolio.slug}`;
   const { error: messageError } = await supabase.from("messages").insert({
-    chat_id: chatId,
+    chat_id: supportChat.id,
     sender_id: writer.actor.userId,
     sender_role: "admin",
     sender_name: senderProfile?.full_name || senderProfile?.username || writer.actor.fullName || "Plugsy Admin",
-    content: `Plugsy shared a ${category.replaceAll("_", " ")} portfolio with you: ${portfolio.full_name || "View portfolio"}\n${portfolioUrl}`,
-    attachment_url: portfolioUrl,
-    attachment_type: "portfolio",
+    content: `You have received a ${category.replaceAll("_", " ")} portfolio. Go to the Portfolio page to start editing it.`,
     message_type: "text",
-    user_id: recipientUserId,
+    user_id: supportChat.user_id,
+    user_email: recipient.email || "",
     is_bot: false,
     read_by_admin: true,
     read_by_user: false,
   });
   if (messageError) return res.status(503).json({ success: false, error: "Portfolio could not be sent." });
-  return res.status(200).json({ success: true, chatId, portfolioUrl });
+  return res.status(200).json({ success: true, chatId: supportChat.id });
 }
 
 async function authorizeAdminUsersActor(actor, res, supabase) {
