@@ -45,7 +45,8 @@ import {
   Loader2,
   Globe,
   Award,
-  Megaphone
+  Megaphone,
+  Send
 } from 'lucide-react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { chatService } from '../services/chatService';
@@ -1268,6 +1269,13 @@ export default function Admin() {
           >
             <DollarSign size={18} />
             Portfolio Sales
+          </Link>
+          <Link
+            to="/admin/portfolio-share"
+            className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-[background-color,color] duration-300 font-bold uppercase tracking-widest text-[10px] text-brand-text-secondary hover:bg-brand-text/5 hover:text-brand-text mt-1"
+          >
+            <Send size={18} />
+            Send Portfolio
           </Link>
           <Link
             to="/admin/broadcast"

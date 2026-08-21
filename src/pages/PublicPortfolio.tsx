@@ -875,6 +875,7 @@ export function PublicPortfolio({
       );
       const error = results.find((result) => result.error)?.error;
       if (error) throw error;
+      window.dispatchEvent(new CustomEvent("vp-portfolio-updated"));
     } catch (error) {
       setCategories(previousCategories);
       console.error("Failed to reorder portfolio categories:", error);

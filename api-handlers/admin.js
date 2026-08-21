@@ -399,6 +399,74 @@ const getAdminUsersClient = () => {
   });
 };
 
+async function handlePortfolioShare(req, res) {
+  const supabase = getClient();
+  const writer = await requireVerifiedAdmin(req, res, supabase);
+  if (!writer) return;
+
+  if (req.method === "GET") {
+    const [{ data: portfolios, error: portfolioError }, { data: profiles, error: profileError }] = await Promise.all([
+      supabase.from("vp_portfolios").select("id,slug,full_name,category,status,user_id").order("updated_at", { ascending: false }).limit(500),
+      supabase.from("profiles").select("clerk_id,email,full_name,username,role").order("created_at", { ascending: false }).limit(2000),
+    ]);
+    if (portfolioError || profileError) return res.status(503).json({ success: false, error: "PORTFOLIO_SHARE_OPTIONS_FAILED" });
+    return res.status(200).json({ success: true, portfolios: portfolios || [], users: (profiles || []).filter((profile) => profile.clerk_id && profile.role !== "admin") });
+  }
+
+  if (req.method !== "POST") return res.status(405).json({ success: false, error: "POST is required." });
+  let body = req.body;
+  if (typeof body === "string") {
+    try { body = JSON.parse(body); } catch { body = {}; }
+  }
+  const portfolioId = textValue(body?.portfolioId);
+  const recipientUserId = textValue(body?.recipientUserId);
+  if (!portfolioId || !recipientUserId) return res.status(400).json({ success: false, error: "Select a portfolio and recipient." });
+
+  const [{ data: portfolio, error: portfolioError }, { data: recipient, error: recipientError }] = await Promise.all([
+    supabase.from("vp_portfolios").select("id,slug,full_name,status").eq("id", portfolioId).maybeSingle(),
+    supabase.from("profiles").select("clerk_id,email,full_name,username").eq("clerk_id", recipientUserId).maybeSingle(),
+  ]);
+  if (portfolioError || !portfolio) return res.status(404).json({ success: false, error: "Portfolio not found." });
+  if (recipientError || !recipient) return res.status(404).json({ success: false, error: "Recipient not found." });
+
+  const { data: senderProfile } = await supabase.from("profiles").select("full_name,username,email").eq("clerk_id", writer.actor.userId).maybeSingle();
+  const { data: senderMemberships } = await supabase.from("chat_members").select("chat_id").eq("user_id", writer.actor.userId);
+  const senderChatIds = (senderMemberships || []).map((membership) => membership.chat_id).filter(Boolean);
+  let chatId = null;
+  if (senderChatIds.length) {
+    const { data: sharedMembership } = await supabase.from("chat_members").select("chat_id").in("chat_id", senderChatIds).eq("user_id", recipientUserId).limit(1);
+    chatId = sharedMembership?.[0]?.chat_id || null;
+  }
+  if (!chatId) {
+    const { data: chat, error: chatError } = await supabase.from("chats").insert({ chat_type: "dm", member_count: 2 }).select("id").single();
+    if (chatError) return res.status(503).json({ success: false, error: "Could not create delivery chat." });
+    chatId = chat.id;
+    const { error: memberError } = await supabase.from("chat_members").insert([
+      { chat_id: chatId, user_id: writer.actor.userId, user_email: senderProfile?.email || writer.actor.email || "", user_name: senderProfile?.full_name || senderProfile?.username || writer.actor.fullName || "Plugsy Admin", role: "member" },
+      { chat_id: chatId, user_id: recipientUserId, user_email: recipient.email || "", user_name: recipient.full_name || recipient.username || "User", role: "member" },
+    ]);
+    if (memberError) return res.status(503).json({ success: false, error: "Could not add delivery recipient." });
+  }
+
+  const portfolioUrl = `/vp/${portfolio.slug}`;
+  const { error: messageError } = await supabase.from("messages").insert({
+    chat_id: chatId,
+    sender_id: writer.actor.userId,
+    sender_role: "admin",
+    sender_name: senderProfile?.full_name || senderProfile?.username || writer.actor.fullName || "Plugsy Admin",
+    content: `Plugsy shared a portfolio with you: ${portfolio.full_name || "View portfolio"}\n${portfolioUrl}`,
+    attachment_url: portfolioUrl,
+    attachment_type: "portfolio",
+    message_type: "text",
+    user_id: recipientUserId,
+    is_bot: false,
+    read_by_admin: true,
+    read_by_user: false,
+  });
+  if (messageError) return res.status(503).json({ success: false, error: "Portfolio could not be sent." });
+  return res.status(200).json({ success: true, chatId, portfolioUrl });
+}
+
 async function authorizeAdminUsersActor(actor, res, supabase) {
   const { data: profile, error } = await supabase
     .from("profiles")
@@ -1410,6 +1478,7 @@ export default async function handler(req, res) {
   if (action === "list-published-onelinks") return await handleListPublishedOneLinks(req, res)
   if (action === "list-users") return await handleListUsers(req, res)
   if (action === "list-portfolio_purchases") return await handleListPortfolioPurchases(req, res)
+  if (action === "portfolio-share") return await handlePortfolioShare(req, res)
   if (action === "send-login-email" || action === "send-logins-email") return await handleSendLoginEmail(req, res)
   if (action === "broadcast-email") return await handleBroadcastEmail(req, res)
   if (action === "list-admins") return await handleListAdmins(req, res)

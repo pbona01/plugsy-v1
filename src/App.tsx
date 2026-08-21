@@ -59,6 +59,7 @@ import OrderHistory from "./pages/OrderHistory";
 const Admin = lazyWithDeploymentRecovery(() => import("./pages/Admin"));
 const AdminChats = lazyWithDeploymentRecovery(() => import("./pages/AdminChats"));
 const AdminPortfolioSales = lazyWithDeploymentRecovery(() => import("./pages/AdminPortfolioSales"));
+const AdminPortfolioShare = lazyWithDeploymentRecovery(() => import("./pages/AdminPortfolioShare"));
 const AdminBroadcast = lazyWithDeploymentRecovery(() => import("./pages/AdminBroadcast"));
 import PaymentCallback from "./pages/PaymentCallback";
 import PortfolioCallback from "./pages/PortfolioCallback";
@@ -668,6 +669,18 @@ function AppContent({
             element={
               userId && isUserAdmin ? (
                 <AdminPortfolioSales />
+              ) : userId ? (
+                <Navigate to="/dashboard" />
+              ) : (
+                <Navigate to="/login" />
+              )
+            }
+          />
+          <Route
+            path="/admin/portfolio-share"
+            element={
+              userId && isUserAdmin ? (
+                <AdminPortfolioShare />
               ) : userId ? (
                 <Navigate to="/dashboard" />
               ) : (
