@@ -54,7 +54,7 @@ export default function OnboardingPage() {
             transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
             className="text-base sm:text-lg text-slate-600 dark:text-white/50 leading-relaxed max-w-2xl mb-10"
           >
-            Plugsy gives individuals an affordable way to get affordable digital services while connecting them to the best valued products.
+            Plugsy gives individuals an affordable way to access digital services while connecting them to the best valued products.
           </motion.p>
 
           {/* CTA Buttons */}
@@ -68,7 +68,7 @@ export default function OnboardingPage() {
               to="/register"
               className="px-8 py-4 bg-[#0066ff] text-white font-bold rounded-xl text-center hover:bg-[#0066ff]/90 transition-all shadow-[0_8px_24px_rgba(0,102,255,0.25)] hover:shadow-[0_12px_32px_rgba(0,102,255,0.35)] hover:-translate-y-0.5"
             >
-              Get Started Free
+              Get Started Free<span className="sr-only">.</span>
             </Link>
             <Link
               to="/login"
