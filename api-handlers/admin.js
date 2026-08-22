@@ -440,46 +440,20 @@ async function handlePortfolioShare(req, res) {
     slug = `${slugBase}-${attempt}`;
   }
 
-  const portfolioCopy = { ...portfolio };
-  ["id", "created_at", "updated_at", "view_count", "slug", "user_id", "user_email", "full_name", "status", "is_paid", "paystack_ref"].forEach((key) => delete portfolioCopy[key]);
   const { data: createdPortfolio, error: createPortfolioError } = await supabase.from("vp_portfolios").insert({
-    ...portfolioCopy,
     user_id: recipientUserId,
     user_email: recipient.email || "",
     full_name: recipient.full_name || recipient.username || "My Portfolio",
+    tagline: "",
+    category,
     status: "draft",
     is_paid: true,
+    color_theme: portfolio.color_theme || "classic",
+    font_pairing: portfolio.font_pairing || "refined_editorial",
+    bio_type: "text",
     slug,
   }).select("id,slug").single();
   if (createPortfolioError || !createdPortfolio) return res.status(503).json({ success: false, error: "Could not create the recipient portfolio." });
-
-  const { data: sourceCategories } = await supabase.from("vp_custom_categories").select("*").eq("portfolio_id", portfolio.id).order("order_index");
-  const categoryIdMap = new Map();
-  if (sourceCategories?.length) {
-    const categoryRows = sourceCategories.map((sourceCategory) => {
-      const newId = randomUUID();
-      categoryIdMap.set(sourceCategory.id, newId);
-      const copy = { ...sourceCategory, id: newId, portfolio_id: createdPortfolio.id };
-      delete copy.created_at;
-      return copy;
-    });
-    const { error: categoriesError } = await supabase.from("vp_custom_categories").insert(categoryRows);
-    if (categoriesError) return res.status(503).json({ success: false, error: "Could not copy portfolio categories." });
-  }
-
-  const { data: sourceItems } = await supabase.from("vp_portfolio_items").select("*").eq("portfolio_id", portfolio.id).order("order_index");
-  if (sourceItems?.length) {
-    const itemRows = sourceItems.map((sourceItem) => {
-      const copy = { ...sourceItem, portfolio_id: createdPortfolio.id };
-      delete copy.id;
-      delete copy.created_at;
-      ["reaction_count", "fire_count", "mind_blown_count", "hire_count", "love_this_count", "clean_work_count", "stunning_count", "clean_code_count", "impressive_count", "slick_design_count", "great_writing_count", "results_count", "smart_build_count", "solid_work_count"].forEach((key) => delete copy[key]);
-      if (copy.custom_category_id) copy.custom_category_id = categoryIdMap.get(copy.custom_category_id) || null;
-      return copy;
-    });
-    const { error: itemsError } = await supabase.from("vp_portfolio_items").insert(itemRows);
-    if (itemsError) return res.status(503).json({ success: false, error: "Could not copy portfolio work." });
-  }
 
   const { data: senderProfile } = await supabase.from("profiles").select("full_name,username,email").eq("clerk_id", writer.actor.userId).maybeSingle();
   let supportChat;
