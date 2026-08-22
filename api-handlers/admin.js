@@ -429,8 +429,8 @@ async function handlePortfolioShare(req, res) {
   if (portfolioError || !portfolio) return res.status(404).json({ success: false, error: "No portfolio found for that category." });
   if (recipientError || !recipient) return res.status(404).json({ success: false, error: "Recipient not found." });
 
-  // A category send creates a real editable portfolio for the recipient by
-  // copying the selected category's portfolio template and its work.
+  // A category send creates a real editable portfolio for the recipient with
+  // the selected category's reusable template structure.
   const slugBase = `${recipient.username || recipient.full_name || "portfolio"}-${category}`
     .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   let slug = slugBase || `portfolio-${randomUUID().slice(0, 8)}`;
@@ -454,6 +454,88 @@ async function handlePortfolioShare(req, res) {
     slug,
   }).select("id,slug").single();
   if (createPortfolioError || !createdPortfolio) return res.status(503).json({ success: false, error: "Could not create the recipient portfolio." });
+
+  const [{ data: templateCategories, error: templateCategoryError }, { data: templateItems, error: templateItemError }] = await Promise.all([
+    supabase.from("vp_custom_categories").select("*").eq("portfolio_id", portfolio.id).order("order_index", { ascending: true }),
+    supabase.from("vp_portfolio_items").select("*").eq("portfolio_id", portfolio.id).order("order_index", { ascending: true }),
+  ]);
+  if (templateCategoryError || templateItemError) {
+    return res.status(503).json({ success: false, error: "Could not prepare the portfolio template." });
+  }
+
+  const categoryIdMap = new Map();
+  const sourceCategories = Array.isArray(templateCategories) ? templateCategories : [];
+  if (sourceCategories.length) {
+    const categoryPayload = sourceCategories.map((sourceCategory, index) => ({
+      portfolio_id: createdPortfolio.id,
+      name: sourceCategory.name || "Portfolio Category",
+      description: sourceCategory.description || null,
+      order_index: Number.isFinite(sourceCategory.order_index) ? sourceCategory.order_index : index,
+    }));
+    const { data: createdCategories, error: categoryCloneError } = await supabase
+      .from("vp_custom_categories")
+      .insert(categoryPayload)
+      .select("id,name,order_index");
+    if (categoryCloneError) return res.status(503).json({ success: false, error: "Could not create the portfolio categories." });
+    (createdCategories || []).forEach((createdCategory, index) => {
+      const sourceCategory = sourceCategories[index];
+      if (sourceCategory?.id && createdCategory?.id) categoryIdMap.set(sourceCategory.id, createdCategory.id);
+    });
+  }
+
+  const sourceItems = Array.isArray(templateItems) ? templateItems : [];
+  if (sourceItems.length) {
+    const stripTemplateItem = (sourceItem, index) => {
+      const {
+        id,
+        portfolio_id: sourcePortfolioId,
+        created_at,
+        updated_at,
+        custom_category_id: sourceCategoryId,
+        reaction_count,
+        fire_count,
+        mind_blown_count,
+        hire_count,
+        love_this_count,
+        clean_work_count,
+        stunning_count,
+        clean_code_count,
+        impressive_count,
+        slick_design_count,
+        great_writing_count,
+        spot_on_count,
+        results_count,
+        smart_build_count,
+        solid_work_count,
+        ...templateItem
+      } = sourceItem;
+      return {
+        ...templateItem,
+        portfolio_id: createdPortfolio.id,
+        custom_category_id: sourceCategoryId ? categoryIdMap.get(sourceCategoryId) || null : null,
+        order_index: Number.isFinite(sourceItem.order_index) ? sourceItem.order_index : index,
+        reaction_count: 0,
+        fire_count: 0,
+        mind_blown_count: 0,
+        hire_count: 0,
+        love_this_count: 0,
+        clean_work_count: 0,
+        stunning_count: 0,
+        clean_code_count: 0,
+        impressive_count: 0,
+        slick_design_count: 0,
+        great_writing_count: 0,
+        spot_on_count: 0,
+        results_count: 0,
+        smart_build_count: 0,
+        solid_work_count: 0,
+      };
+    };
+    const { error: itemCloneError } = await supabase
+      .from("vp_portfolio_items")
+      .insert(sourceItems.map(stripTemplateItem));
+    if (itemCloneError) return res.status(503).json({ success: false, error: "Could not create the portfolio template items." });
+  }
 
   const { data: senderProfile } = await supabase.from("profiles").select("full_name,username,email").eq("clerk_id", writer.actor.userId).maybeSingle();
   let supportChat;
