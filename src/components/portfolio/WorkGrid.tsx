@@ -495,7 +495,7 @@ export const WorkGrid = ({
           return (
             <div
               key={item.id}
-              className="work-card-element"
+              className="work-card-element relative"
               onClick={() => onItemClick(item)}
               style={{
                 flexShrink: 0,
@@ -674,7 +674,7 @@ export const WorkGrid = ({
               return (
                 <div
                   key={item.id}
-                  className="work-card-element"
+                  className="work-card-element relative"
                   onClick={() => onItemClick(item)}
                   style={{ cursor: "pointer" }}
                 >
@@ -814,10 +814,16 @@ export const WorkGrid = ({
               return (
                 <div
                   key={item.id}
-                  className="work-card-element"
+                  className="work-card-element relative"
                   onClick={() => onItemClick(item)}
                   style={{ cursor: "pointer" }}
                 >
+                  {isEditMode && onMoveItem && (
+                    <div className="absolute right-2 top-2 z-30 flex gap-1" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" aria-label="Move item up" className="rounded-full bg-black/80 p-2.5 text-white shadow-lg touch-manipulation" onClick={() => onMoveItem(item.id, "up")}><ChevronUp size={18} /></button>
+                      <button type="button" aria-label="Move item down" className="rounded-full bg-black/80 p-2.5 text-white shadow-lg touch-manipulation" onClick={() => onMoveItem(item.id, "down")}><ChevronDown size={18} /></button>
+                    </div>
+                  )}
                   {item.pdf_url || item.item_type === "pdf" ? (
                     <PDFItem url={(item.pdf_url || item.external_link || "") as string} title={item.title} />
                   ) : (
