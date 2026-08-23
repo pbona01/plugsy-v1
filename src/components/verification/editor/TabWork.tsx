@@ -221,7 +221,7 @@ function SortableCategory({
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-[#111] border border-[#222] rounded-lg p-3 mb-2 flex items-center ${isDragging ? "shadow-2xl shadow-black border-[#444] relative z-50" : ""}`}
+      className={`bg-[#111] border border-[#222] rounded-lg p-3 mb-2 flex items-center gap-2 ${isDragging ? "shadow-2xl shadow-black border-[#444] relative z-50" : ""}`}
     >
       <div
         {...attributes}
@@ -240,7 +240,7 @@ function SortableCategory({
           </div>
         )}
       </div>
-      <div className="flex items-center gap-2 ml-3">
+      <div className="flex items-center gap-0.5 ml-1 flex-wrap justify-end shrink-0">
         <button type="button" onClick={() => onMove(category.id, "up")} className="min-w-10 min-h-10 text-[#aaa] hover:text-white transition flex items-center justify-center touch-manipulation" aria-label={`Move ${category.name} up`}>
           <ChevronUp size={18} />
         </button>
@@ -892,9 +892,9 @@ export function TabWork({
   };
 
   const renderGroup = (catId: string | null, title: string) => {
-    const groupItems = items.filter((i) =>
-      catId === null ? !i.custom_category_id : i.custom_category_id === catId,
-    );
+    const groupItems = items
+      .filter((i) => catId === null ? !i.custom_category_id : i.custom_category_id === catId)
+      .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
 
     const catIdKey = catId || "uncategorized";
 
@@ -950,7 +950,7 @@ export function TabWork({
               ) : (
                 <div
                   onClick={() => setExpandedItemId(item.id)}
-                  className="bg-gray-50 dark:bg-[#111] hover:bg-brand-surface border border-brand-border hover:border-brand-border rounded-lg p-3 flex items-center gap-4 cursor-pointer transition"
+                  className="bg-gray-50 dark:bg-[#111] hover:bg-brand-surface border border-brand-border hover:border-brand-border rounded-lg p-3 flex items-center gap-3 cursor-pointer transition"
                 >
                   <div className="w-[60px] h-[60px] rounded shrink-0 bg-brand-surface border border-brand-border overflow-hidden flex items-center justify-center relative">
                     {getThumbnailImage(item) ? (
@@ -972,7 +972,7 @@ export function TabWork({
                       {item.link_platform || item.item_type || "item"}
                     </div>
                   </div>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 overflow-hidden">
                     <div className="text-brand-text font-bold text-sm truncate">
                       {item.title || "Untitled Project"}
                     </div>
@@ -983,7 +983,7 @@ export function TabWork({
                       </span>
                     </div>
                   </div>
-                  <div className="flex gap-1.5 items-center shrink-0">
+                  <div className="flex gap-0.5 items-center shrink-0">
                     <button
                       onClick={(e) => { e.stopPropagation(); void moveWorkItem(item.id, "up"); }}
                       type="button"
