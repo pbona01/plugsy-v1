@@ -866,6 +866,13 @@ export function PublicPortfolio({
     setCategories(persisted);
 
     try {
+      await Promise.all(
+        persisted.map((category, index) =>
+          supabase.from("vp_custom_categories")
+            .update({ order_index: 1000000 + index })
+            .eq("id", category.id),
+        ),
+      );
       const results = await Promise.all(
         persisted.map((category) =>
           supabase.from("vp_custom_categories")
@@ -880,6 +887,36 @@ export function PublicPortfolio({
       setCategories(previousCategories);
       console.error("Failed to reorder portfolio categories:", error);
       showToast("Could not save category order", "error");
+    }
+  };
+
+  const moveItem = async (itemId: string, direction: "up" | "down") => {
+    const item = items.find((entry) => entry.id === itemId);
+    if (!item) return;
+    const sameCategory = items
+      .filter((entry) => (entry.custom_category_id || null) === (item.custom_category_id || null))
+      .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+    const currentIndex = sameCategory.findIndex((entry) => entry.id === itemId);
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= sameCategory.length) return;
+    [sameCategory[currentIndex], sameCategory[targetIndex]] = [sameCategory[targetIndex], sameCategory[currentIndex]];
+    const orderMap = new Map(sameCategory.map((entry, index) => [entry.id, index]));
+    const previousItems = items;
+    setItems(items.map((entry) => orderMap.has(entry.id) ? { ...entry, order_index: orderMap.get(entry.id)! } : entry));
+    try {
+      await Promise.all(sameCategory.map((entry, index) =>
+        supabase.from("vp_portfolio_items").update({ order_index: 1000000 + index }).eq("id", entry.id),
+      ));
+      const results = await Promise.all(sameCategory.map((entry, index) =>
+        supabase.from("vp_portfolio_items").update({ order_index: index }).eq("id", entry.id),
+      ));
+      const error = results.find((result) => result.error)?.error;
+      if (error) throw error;
+      window.dispatchEvent(new CustomEvent("vp-portfolio-updated"));
+    } catch (error) {
+      setItems(previousItems);
+      console.error("Failed to reorder portfolio item:", error);
+      showToast("Could not save video order", "error");
     }
   };
 
@@ -2309,6 +2346,8 @@ export function PublicPortfolio({
                     onReact={(itemId, reactionType) =>
                       toggleReaction(itemId, reactionType)
                     }
+                    isEditMode={isEditMode}
+                    onMoveItem={moveItem}
                   />
                 </div>
               );
@@ -2400,6 +2439,8 @@ export function PublicPortfolio({
                     onReact={(itemId, reactionType) =>
                       toggleReaction(itemId, reactionType)
                     }
+                    isEditMode={isEditMode}
+                    onMoveItem={moveItem}
                   />
                 </div>
               );
