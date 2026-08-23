@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useAuth } from "@clerk/clerk-react";
 import { motion } from "motion/react";
 import {
   VPPortfolio,
@@ -22,6 +23,8 @@ import {
   FileText,
   RefreshCw,
   CheckCircle2,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import {
   DndContext,
@@ -159,6 +162,7 @@ function SortableCategory({
   onCancelEdit,
   onDelete,
   deletingId,
+  onMove,
 }: any) {
   const {
     attributes,
@@ -237,6 +241,12 @@ function SortableCategory({
         )}
       </div>
       <div className="flex items-center gap-2 ml-3">
+        <button type="button" onClick={() => onMove(category.id, "up")} className="min-w-10 min-h-10 text-[#aaa] hover:text-white transition flex items-center justify-center touch-manipulation" aria-label={`Move ${category.name} up`}>
+          <ChevronUp size={18} />
+        </button>
+        <button type="button" onClick={() => onMove(category.id, "down")} className="min-w-10 min-h-10 text-[#aaa] hover:text-white transition flex items-center justify-center touch-manipulation" aria-label={`Move ${category.name} down`}>
+          <ChevronDown size={18} />
+        </button>
         <button
           onClick={() => onStartEdit(category)}
           className="text-[#888] hover:text-white transition p-1"
@@ -398,6 +408,7 @@ export function TabWork({
   setCategories: any;
   updatePortfolio: (u: any) => void;
 }) {
+  const { getToken } = useAuth();
   const [items, setItems] = useState<VPPortfolioItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -491,26 +502,48 @@ export function TabWork({
     }),
   );
 
+  const saveOrder = async (entity: "category" | "item", orderedIds: string[]) => {
+    const token = await getToken();
+    if (!token) throw new Error("Your sign-in session has expired.");
+    const response = await fetch("/api/portfolio?action=reorder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ portfolioId: portfolio.id, entity, orderedIds }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.success) {
+      throw new Error(payload?.error || "Could not save the new order.");
+    }
+  };
+
+  const saveCategoryOrder = async (nextCategories: VPCustomCategory[]) => {
+    const previous = categories;
+    const normalized = nextCategories.map((category, index) => ({ ...category, order_index: index }));
+    setCategories(normalized);
+    try {
+      await saveOrder("category", normalized.map((category) => category.id));
+      window.dispatchEvent(new CustomEvent("vp-portfolio-updated"));
+    } catch (error: any) {
+      setCategories(previous);
+      showToast(error.message || "Could not save category order", "error");
+    }
+  };
+
+  const moveCategory = async (categoryId: string, direction: "up" | "down") => {
+    const currentIndex = categories.findIndex((category) => category.id === categoryId);
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= categories.length) return;
+    const next = [...categories];
+    [next[currentIndex], next[targetIndex]] = [next[targetIndex], next[currentIndex]];
+    await saveCategoryOrder(next);
+  };
+
   const handleDragEnd = async (event: any) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      setCategories((cats: VPCustomCategory[]) => {
-        const oldIndex = cats.findIndex((c) => c.id === active.id);
-        const newIndex = cats.findIndex((c) => c.id === over.id);
-        const newArray = arrayMove(cats, oldIndex, newIndex);
-
-        const updates = newArray.map((c, i) => ({ id: c.id, order_index: i }));
-        (async () => {
-          try {
-            const { error } = await supabase.rpc("vp_update_category_orders", { payload: updates });
-            if (error) console.error("Error updating category orders:", error);
-          } catch (e) {
-            console.error("Exception updating category orders:", e);
-          }
-        })();
-
-        return newArray;
-      });
+      const oldIndex = categories.findIndex((category) => category.id === active.id);
+      const newIndex = categories.findIndex((category) => category.id === over.id);
+      if (oldIndex >= 0 && newIndex >= 0) await saveCategoryOrder(arrayMove(categories, oldIndex, newIndex));
     }
   };
 
@@ -833,6 +866,31 @@ export function TabWork({
   
   const canAddMore = canAddMedia.length > 0 ? canAddMedia.some(v => v) : items.length < 20;
 
+  const moveWorkItem = async (itemId: string, direction: "up" | "down") => {
+    const selected = items.find((item) => item.id === itemId);
+    if (!selected) return;
+    const allInOrder = [...items].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+    const groupPositions = allInOrder
+      .map((item, index) => ((item.custom_category_id || null) === (selected.custom_category_id || null) ? index : -1))
+      .filter((index) => index >= 0);
+    const group = groupPositions.map((index) => allInOrder[index]);
+    const currentIndex = group.findIndex((item) => item.id === itemId);
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= group.length) return;
+    [group[currentIndex], group[targetIndex]] = [group[targetIndex], group[currentIndex]];
+    groupPositions.forEach((position, index) => { allInOrder[position] = group[index]; });
+    const previous = items;
+    const orderMap = new Map(allInOrder.map((item, index) => [item.id, index]));
+    setItems(items.map((item) => ({ ...item, order_index: orderMap.get(item.id) ?? item.order_index })));
+    try {
+      await saveOrder("item", allInOrder.map((item) => item.id));
+      window.dispatchEvent(new CustomEvent("vp-portfolio-updated"));
+    } catch (error: any) {
+      setItems(previous);
+      showToast(error.message || "Could not save work order", "error");
+    }
+  };
+
   const renderGroup = (catId: string | null, title: string) => {
     const groupItems = items.filter((i) =>
       catId === null ? !i.custom_category_id : i.custom_category_id === catId,
@@ -926,6 +984,22 @@ export function TabWork({
                     </div>
                   </div>
                   <div className="flex gap-1.5 items-center shrink-0">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); void moveWorkItem(item.id, "up"); }}
+                      type="button"
+                      className="min-w-10 min-h-10 text-brand-text-secondary hover:text-brand-text transition flex items-center justify-center touch-manipulation"
+                      title="Move work up"
+                    >
+                      <ChevronUp size={18} />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); void moveWorkItem(item.id, "down"); }}
+                      type="button"
+                      className="min-w-10 min-h-10 text-brand-text-secondary hover:text-brand-text transition flex items-center justify-center touch-manipulation"
+                      title="Move work down"
+                    >
+                      <ChevronDown size={18} />
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -1076,6 +1150,7 @@ export function TabWork({
                 onCancelEdit={handleCancelEdit}
                 onDelete={handleDeleteCategory}
                 deletingId={deletingId}
+                onMove={moveCategory}
               />
             ))}
           </SortableContext>
