@@ -673,6 +673,22 @@ export async function handlePortfolioWalletPurchase(req, res) {
     );
   }
 
+  // A purchase must never reuse visible work from a previously gifted/draft
+  // portfolio. The entitlement belongs to the buyer, so start its work area
+  // clean even when the wallet RPC reused an existing draft record.
+  const { error: inheritedItemsError } = await supabase
+    .from("vp_portfolio_items")
+    .delete()
+    .eq("portfolio_id", result.entitlement.id)
+  if (inheritedItemsError) {
+    return send(
+      res,
+      503,
+      "PORTFOLIO_CONTENT_RESET_FAILED",
+      "Your portfolio was created, but its work area could not be prepared.",
+    )
+  }
+
   return res.status(200).json({
     success: true,
     alreadyProcessed: result.already_processed === true,
