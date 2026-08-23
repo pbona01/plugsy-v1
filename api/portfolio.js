@@ -101,6 +101,84 @@ async function handleDeleteItem(req, res) {
   })
 }
 
+async function handleReorder(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ success: false, error: "Method not allowed" })
+  }
+
+  const actor = await requireVerifiedClerkUser(req, res)
+  if (!actor) return
+
+  let body
+  try {
+    body = await prepareJsonRequestBody(req)
+  } catch {
+    return res.status(400).json({ success: false, error: "The request body is invalid." })
+  }
+
+  const portfolioId = String(body?.portfolioId || "").trim()
+  const entity = String(body?.entity || "").trim()
+  const orderedIds = Array.isArray(body?.orderedIds)
+    ? body.orderedIds.map((id) => String(id || "").trim())
+    : []
+  if (
+    !/^[A-Za-z0-9_-]{8,128}$/.test(portfolioId) ||
+    !["category", "item"].includes(entity) ||
+    orderedIds.length === 0 ||
+    orderedIds.length > 500 ||
+    new Set(orderedIds).size !== orderedIds.length ||
+    orderedIds.some((id) => !/^[A-Za-z0-9-]{8,128}$/.test(id))
+  ) {
+    return res.status(400).json({ success: false, error: "The order request is invalid." })
+  }
+
+  const supabase = getWalletServiceClient(res)
+  if (!supabase) return
+
+  const { data: portfolio, error: portfolioError } = await supabase
+    .from("vp_portfolios")
+    .select("id,user_id")
+    .eq("id", portfolioId)
+    .maybeSingle()
+  if (portfolioError || !portfolio) {
+    return res.status(404).json({ success: false, error: "Portfolio not found." })
+  }
+  if (portfolio.user_id !== actor.userId) {
+    return res.status(403).json({ success: false, error: "You do not own this portfolio." })
+  }
+
+  const table = entity === "category" ? "vp_custom_categories" : "vp_portfolio_items"
+  const { data: records, error: recordsError } = await supabase
+    .from(table)
+    .select("id")
+    .eq("portfolio_id", portfolioId)
+  if (recordsError) {
+    return res.status(503).json({ success: false, error: "Could not load the current order." })
+  }
+  const currentIds = (records || []).map((record) => record.id)
+  if (currentIds.length !== orderedIds.length || currentIds.some((id) => !orderedIds.includes(id))) {
+    return res.status(409).json({ success: false, error: "Your portfolio changed. Please try again." })
+  }
+
+  const temporary = await Promise.all(orderedIds.map((id, index) =>
+    supabase.from(table).update({ order_index: 1000000 + index }).eq("id", id).eq("portfolio_id", portfolioId),
+  ))
+  const temporaryError = temporary.find((result) => result.error)?.error
+  if (temporaryError) {
+    return res.status(503).json({ success: false, error: "Could not save the new order." })
+  }
+
+  const saved = await Promise.all(orderedIds.map((id, index) =>
+    supabase.from(table).update({ order_index: index }).eq("id", id).eq("portfolio_id", portfolioId),
+  ))
+  const saveError = saved.find((result) => result.error)?.error
+  if (saveError) {
+    return res.status(503).json({ success: false, error: "Could not save the new order." })
+  }
+
+  return res.status(200).json({ success: true, orderedIds })
+}
+
 const hasJsonContentType = (req) => {
   const contentType = String(
     req.headers?.["content-type"] || "",
@@ -274,6 +352,10 @@ export default async function handler(req, res) {
 
   if (action === "delete-item") {
     return handleDeleteItem(req, res)
+  }
+
+  if (action === "reorder") {
+    return handleReorder(req, res)
   }
 
   if (action === "update-extra-category") {
