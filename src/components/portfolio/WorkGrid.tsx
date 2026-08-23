@@ -396,7 +396,8 @@ export const WorkGrid = ({
   isEditMode,
   onEditItem,
   onDeleteItem,
-  onReact
+  onReact,
+  onMoveItem
 }: {
   items: VPPortfolioItem[]
   workLayout: string
@@ -405,6 +406,7 @@ export const WorkGrid = ({
   onEditItem?: (item: VPPortfolioItem) => void
   onDeleteItem?: (id: string) => void
   onReact?: (itemId: string, reactionType: string) => void
+  onMoveItem?: (itemId: string, direction: "up" | "down") => void
 }) => {
   
   console.log("[WorkGrid] workLayout:", workLayout, "items:", items.length)
@@ -503,6 +505,12 @@ export const WorkGrid = ({
                 cursor: "pointer"
               }}
             >
+              {isEditMode && onMoveItem && (
+                <div className="absolute right-2 top-2 z-30 flex gap-1" onClick={(e) => e.stopPropagation()}>
+                  <button type="button" aria-label="Move item up" className="rounded-full bg-black/70 p-1 text-white" onClick={() => onMoveItem(item.id, "up")}><ChevronUp size={14} /></button>
+                  <button type="button" aria-label="Move item down" className="rounded-full bg-black/70 p-1 text-white" onClick={() => onMoveItem(item.id, "down")}><ChevronDown size={14} /></button>
+                </div>
+              )}
               {item.pdf_url || item.item_type === "pdf" ? (
                 <PDFItem url={(item.pdf_url || item.external_link || "") as string} title={item.title} />
               ) : (
@@ -670,6 +678,12 @@ export const WorkGrid = ({
                   onClick={() => onItemClick(item)}
                   style={{ cursor: "pointer" }}
                 >
+                  {isEditMode && onMoveItem && (
+                    <div className="absolute right-2 top-2 z-30 flex gap-1" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" aria-label="Move item up" className="rounded-full bg-black/70 p-1 text-white" onClick={() => onMoveItem(item.id, "up")}><ChevronUp size={14} /></button>
+                      <button type="button" aria-label="Move item down" className="rounded-full bg-black/70 p-1 text-white" onClick={() => onMoveItem(item.id, "down")}><ChevronDown size={14} /></button>
+                    </div>
+                  )}
                   {item.pdf_url || item.item_type === "pdf" ? (
                     <PDFItem url={(item.pdf_url || item.external_link || "") as string} title={item.title} />
                   ) : (
