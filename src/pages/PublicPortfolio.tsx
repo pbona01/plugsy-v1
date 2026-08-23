@@ -2230,7 +2230,7 @@ export function PublicPortfolio({
                           onClick={() => moveCategory(category.id, "up")}
                           disabled={categories.indexOf(category) === 0}
                           aria-label={`Move ${category.name} up`}
-                          className="p-2 rounded-lg border border-black/10 dark:border-white/10 text-[var(--vp-text-muted)] hover:text-[var(--vp-text)] hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed transition"
+                          className="min-w-11 min-h-11 p-2.5 rounded-lg border border-black/10 dark:border-white/10 text-[var(--vp-text-muted)] hover:text-[var(--vp-text)] hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed transition touch-manipulation"
                         >
                           <ChevronUp size={16} />
                         </button>
@@ -2239,7 +2239,7 @@ export function PublicPortfolio({
                           onClick={() => moveCategory(category.id, "down")}
                           disabled={categories.indexOf(category) === categories.length - 1}
                           aria-label={`Move ${category.name} down`}
-                          className="p-2 rounded-lg border border-black/10 dark:border-white/10 text-[var(--vp-text-muted)] hover:text-[var(--vp-text)] hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed transition"
+                          className="min-w-11 min-h-11 p-2.5 rounded-lg border border-black/10 dark:border-white/10 text-[var(--vp-text-muted)] hover:text-[var(--vp-text)] hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed transition touch-manipulation"
                         >
                           <ChevronDown size={16} />
                         </button>
