@@ -771,8 +771,8 @@ async function handleSendLoginEmail(req, res) {
 
     // STEP 4: TELEGRAM to admin (isolated)
     try {
-      const telegramToken = process.env.TELEGRAM_BOT_TOKEN
-      const telegramChatId = process.env.TELEGRAM_CHAT_ID
+      const telegramToken = process.env.TELEGRAM_BOT_TOKEN || process.env.VITE_TELEGRAM_ADMIN_TELEGRAM_BOT_TOKEN
+      const telegramChatId = process.env.TELEGRAM_CHAT_ID || process.env.VITE_TELEGRAM_ADMIN_GROUP_ID
 
       if (telegramToken && telegramChatId) {
         const tgRes = await fetch(
