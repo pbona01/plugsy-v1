@@ -866,22 +866,15 @@ export function PublicPortfolio({
     setCategories(persisted);
 
     try {
-      await Promise.all(
-        persisted.map((category, index) =>
-          supabase.from("vp_custom_categories")
-            .update({ order_index: 1000000 + index })
-            .eq("id", category.id),
-        ),
-      );
-      const results = await Promise.all(
-        persisted.map((category) =>
-          supabase.from("vp_custom_categories")
-            .update({ order_index: category.order_index })
-            .eq("id", category.id),
-        ),
-      );
-      const error = results.find((result) => result.error)?.error;
-      if (error) throw error;
+      const token = await getToken();
+      if (!token) throw new Error("Your sign-in session has expired.");
+      const response = await fetch("/api/portfolio?action=reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ portfolioId: portfolio?.id, entity: "category", orderedIds: persisted.map((category) => category.id) }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) throw new Error(payload?.error || "Could not save category order");
       window.dispatchEvent(new CustomEvent("vp-portfolio-updated"));
     } catch (error) {
       setCategories(previousCategories);
@@ -900,18 +893,24 @@ export function PublicPortfolio({
     const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
     if (currentIndex < 0 || targetIndex < 0 || targetIndex >= sameCategory.length) return;
     [sameCategory[currentIndex], sameCategory[targetIndex]] = [sameCategory[targetIndex], sameCategory[currentIndex]];
-    const orderMap = new Map(sameCategory.map((entry, index) => [entry.id, index]));
+    const allItemsInOrder = [...items].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+    const categoryPositions = allItemsInOrder
+      .map((entry, index) => ((entry.custom_category_id || null) === (item.custom_category_id || null) ? index : -1))
+      .filter((index) => index >= 0);
+    categoryPositions.forEach((position, index) => { allItemsInOrder[position] = sameCategory[index]; });
+    const orderMap = new Map(allItemsInOrder.map((entry, index) => [entry.id, index]));
     const previousItems = items;
     setItems(items.map((entry) => orderMap.has(entry.id) ? { ...entry, order_index: orderMap.get(entry.id)! } : entry));
     try {
-      await Promise.all(sameCategory.map((entry, index) =>
-        supabase.from("vp_portfolio_items").update({ order_index: 1000000 + index }).eq("id", entry.id),
-      ));
-      const results = await Promise.all(sameCategory.map((entry, index) =>
-        supabase.from("vp_portfolio_items").update({ order_index: index }).eq("id", entry.id),
-      ));
-      const error = results.find((result) => result.error)?.error;
-      if (error) throw error;
+      const token = await getToken();
+      if (!token) throw new Error("Your sign-in session has expired.");
+      const response = await fetch("/api/portfolio?action=reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ portfolioId: portfolio?.id, entity: "item", orderedIds: allItemsInOrder.map((entry) => entry.id) }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) throw new Error(payload?.error || "Could not save video order");
       window.dispatchEvent(new CustomEvent("vp-portfolio-updated"));
     } catch (error) {
       setItems(previousItems);
