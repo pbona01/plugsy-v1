@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { VPPortfolioItem } from '../../types/verification';
 import { YoutubeThumbnail } from './YoutubeThumbnail';
 import { extractYoutubeId } from '../../utils/verification';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import gsap from 'gsap';
 
@@ -507,8 +507,8 @@ export const WorkGrid = ({
             >
               {isEditMode && onMoveItem && (
                 <div className="absolute right-2 top-2 z-30 flex gap-1" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" aria-label="Move item up" className="rounded-full bg-black/70 p-1 text-white" onClick={() => onMoveItem(item.id, "up")}><ChevronUp size={14} /></button>
-                  <button type="button" aria-label="Move item down" className="rounded-full bg-black/70 p-1 text-white" onClick={() => onMoveItem(item.id, "down")}><ChevronDown size={14} /></button>
+                  <button type="button" aria-label="Move item up" className="rounded-full bg-black/80 p-2.5 text-white shadow-lg touch-manipulation" onClick={() => onMoveItem(item.id, "up")}><ChevronUp size={18} /></button>
+                  <button type="button" aria-label="Move item down" className="rounded-full bg-black/80 p-2.5 text-white shadow-lg touch-manipulation" onClick={() => onMoveItem(item.id, "down")}><ChevronDown size={18} /></button>
                 </div>
               )}
               {item.pdf_url || item.item_type === "pdf" ? (
@@ -680,8 +680,8 @@ export const WorkGrid = ({
                 >
                   {isEditMode && onMoveItem && (
                     <div className="absolute right-2 top-2 z-30 flex gap-1" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" aria-label="Move item up" className="rounded-full bg-black/70 p-1 text-white" onClick={() => onMoveItem(item.id, "up")}><ChevronUp size={14} /></button>
-                      <button type="button" aria-label="Move item down" className="rounded-full bg-black/70 p-1 text-white" onClick={() => onMoveItem(item.id, "down")}><ChevronDown size={14} /></button>
+                      <button type="button" aria-label="Move item up" className="rounded-full bg-black/80 p-2.5 text-white shadow-lg touch-manipulation" onClick={() => onMoveItem(item.id, "up")}><ChevronUp size={18} /></button>
+                      <button type="button" aria-label="Move item down" className="rounded-full bg-black/80 p-2.5 text-white shadow-lg touch-manipulation" onClick={() => onMoveItem(item.id, "down")}><ChevronDown size={18} /></button>
                     </div>
                   )}
                   {item.pdf_url || item.item_type === "pdf" ? (
