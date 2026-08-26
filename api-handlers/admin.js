@@ -33,6 +33,7 @@ const getClient = () => {
 };
 
 const textValue = (value) => String(value || "").trim();
+const categoryLabel = (value) => textValue(value).replace(/[_-]+/g, " ").replace(/\b\w/g, (character) => character.toUpperCase()) || "Portfolio";
 const normalizeEmail = (value) => textValue(value).toLowerCase();
 const normalizeRole = (value) => textValue(value).toLowerCase() || "user";
 const normalizeAdminDisplayRole = (value) =>
@@ -480,6 +481,16 @@ async function handlePortfolioShare(req, res) {
       const sourceCategory = sourceCategories[index];
       if (sourceCategory?.id && createdCategory?.id) categoryIdMap.set(sourceCategory.id, createdCategory.id);
     });
+  } else {
+    const { error: fallbackCategoryError } = await supabase
+      .from("vp_custom_categories")
+      .insert({
+        portfolio_id: createdPortfolio.id,
+        name: categoryLabel(category),
+        description: null,
+        order_index: 0,
+      });
+    if (fallbackCategoryError) return res.status(503).json({ success: false, error: "Could not create the portfolio category." });
   }
 
   const { data: senderProfile } = await supabase.from("profiles").select("full_name,username,email").eq("clerk_id", writer.actor.userId).maybeSingle();
