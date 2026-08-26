@@ -21,6 +21,10 @@ const REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,180}$/;
 
 const text = (value) => String(value || "").trim();
 const lower = (value) => text(value).toLowerCase();
+const portfolioCategoryLabel = (value) =>
+  text(value)
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase()) || "Portfolio";
 
 const MEDAL_STATUS_VALUES = new Set(["paid", "completed"]);
 const MEDAL_PAGE_SIZE = 500;
@@ -687,6 +691,31 @@ export async function handlePortfolioWalletPurchase(req, res) {
       "PORTFOLIO_CONTENT_RESET_FAILED",
       "Your portfolio was created, but its work area could not be prepared.",
     )
+  }
+
+  const { data: existingCategories, error: existingCategoriesError } = await supabase
+    .from("vp_custom_categories")
+    .select("name,order_index")
+    .eq("portfolio_id", result.entitlement.id)
+  if (existingCategoriesError) {
+    return send(res, 503, "PORTFOLIO_CATEGORIES_LOAD_FAILED", "The portfolio categories could not be prepared.")
+  }
+  const existingNames = new Set((existingCategories || []).map((category) => lower(category.name)))
+  const missingCategories = categories
+    .filter((category) => !existingNames.has(lower(portfolioCategoryLabel(category))))
+    .map((category, index) => ({
+      portfolio_id: result.entitlement.id,
+      name: portfolioCategoryLabel(category),
+      description: null,
+      order_index: (existingCategories || []).length + index,
+    }))
+  if (missingCategories.length) {
+    const { error: categoryInsertError } = await supabase
+      .from("vp_custom_categories")
+      .insert(missingCategories)
+    if (categoryInsertError) {
+      return send(res, 503, "PORTFOLIO_CATEGORIES_CREATE_FAILED", "The portfolio categories could not be created.")
+    }
   }
 
   return res.status(200).json({
