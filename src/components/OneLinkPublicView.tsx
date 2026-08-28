@@ -191,16 +191,11 @@ export default function OneLinkPublicView({
             </p>
           )}
 
-          {(profile.settings.followerCount > 0 || profile.settings.stickers?.length > 0) && (
+          {profile.settings.followerCount > 0 && (
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-              {profile.settings.followerCount > 0 && (
-                <span className={cn("rounded-full border px-3 py-1.5 text-xs font-bold", visual.buttonSurface, visual.buttonForeground, visual.border)}>
-                  {profile.settings.followerCount.toLocaleString()} followers
-                </span>
-              )}
-              {(profile.settings.stickers || []).map((sticker, index) => (
-                <span key={`${sticker}-${index}`} className="text-xl" aria-label="Profile sticker">{sticker}</span>
-              ))}
+              <span className={cn("rounded-full border px-3 py-1.5 text-xs font-bold", visual.buttonSurface, visual.buttonForeground, visual.border)}>
+                {profile.settings.followerCount.toLocaleString()} followers
+              </span>
             </div>
           )}
 
