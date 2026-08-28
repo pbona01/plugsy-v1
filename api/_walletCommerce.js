@@ -718,6 +718,23 @@ export async function handlePortfolioWalletPurchase(req, res) {
     }
   }
 
+  try {
+    const token = text(process.env.TELEGRAM_BOT_TOKEN || process.env.VITE_TELEGRAM_ADMIN_TELEGRAM_BOT_TOKEN)
+    const chatId = text(process.env.TELEGRAM_CHAT_ID || process.env.VITE_TELEGRAM_ADMIN_GROUP_ID)
+    if (token && chatId) {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: `🛒 NEW PORTFOLIO PURCHASE\n👤 ${context.actor.fullName || "User"}\n📧 ${context.actor.email}\n📦 ${categories.map(portfolioCategoryLabel).join(", ")}\n🔑 Ref: ${result.reference}`,
+        }),
+      })
+    }
+  } catch (error) {
+    console.error("[portfolio-purchase] Telegram notification failed", error)
+  }
+
   return res.status(200).json({
     success: true,
     alreadyProcessed: result.already_processed === true,
