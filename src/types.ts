@@ -219,7 +219,6 @@ export interface OneLinkSettings {
   seoDescription: string;
   messageEnabled: boolean;
   followerCount: number;
-  stickers: string[];
 }
 
 export interface OneLinkProfile {
