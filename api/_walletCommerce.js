@@ -26,6 +26,22 @@ const portfolioCategoryLabel = (value) =>
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (character) => character.toUpperCase()) || "Portfolio";
 
+const notifyTelegram = async (message) => {
+  const token = text(process.env.TELEGRAM_BOT_TOKEN || process.env.VITE_TELEGRAM_ADMIN_TELEGRAM_BOT_TOKEN);
+  const chatId = text(process.env.TELEGRAM_CHAT_ID || process.env.VITE_TELEGRAM_ADMIN_GROUP_ID);
+  if (!token || !chatId) return;
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text: String(message).slice(0, 4000) }),
+    });
+    if (!response.ok) console.error("[telegram] purchase delivery failed", response.status);
+  } catch (error) {
+    console.error("[telegram] purchase delivery failed", error);
+  }
+};
+
 const MEDAL_STATUS_VALUES = new Set(["paid", "completed"]);
 const MEDAL_PAGE_SIZE = 500;
 const MEDAL_MAX_PAGES = 100;
@@ -436,6 +452,10 @@ export async function handleWalletProductPurchase(req, res) {
     },
   );
   if (!result) return;
+
+  await notifyTelegram(
+    `🛒 NEW PURCHASE — PLUGSY\n👤 ${context.actor.fullName || "User"}\n📧 ${context.actor.email}\n📦 ${result.order?.product_name || result.product_type || "Product"}\n💰 ₦${Number(result.amount || 0).toLocaleString()}\n🔑 Ref: ${result.reference}`,
+  );
 
   return res.status(200).json({
     success: true,
