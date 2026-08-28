@@ -1652,7 +1652,12 @@ export function PublicPortfolio({
                 <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
                   {(() => {
                     let catArray: string[] = [];
-                    if (Array.isArray(portfolio.categories)) {
+                    if (categories.length > 0) {
+                      catArray = categories
+                        .slice()
+                        .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+                        .map((category) => category.name);
+                    } else if (Array.isArray(portfolio.categories)) {
                       catArray = portfolio.categories;
                     } else if (typeof portfolio.category === "string") {
                       try {
