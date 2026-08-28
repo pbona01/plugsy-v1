@@ -1577,13 +1577,6 @@ export default function OneLinkEditor({
                 placeholder="0"
               />
               <Field
-                label="Stickers"
-                value={(draft.settings.stickers || []).join(" ")}
-                onChange={(value) => updateSettings({ stickers: value.split(/\s+/).filter(Boolean).slice(0, 12) })}
-                maxLength={288}
-                placeholder="✨ 🎨 🚀"
-              />
-              <Field
                 label="SEO title"
                 value={draft.settings.seoTitle}
                 onChange={(seoTitle) =>
