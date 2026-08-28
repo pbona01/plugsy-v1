@@ -1570,6 +1570,20 @@ export default function OneLinkEditor({
                 }
               />
               <Field
+                label="Total followers"
+                value={String(draft.settings.followerCount || 0)}
+                onChange={(value) => updateSettings({ followerCount: Math.max(0, Number(value.replace(/[^0-9]/g, "")) || 0) })}
+                maxLength={13}
+                placeholder="0"
+              />
+              <Field
+                label="Stickers"
+                value={(draft.settings.stickers || []).join(" ")}
+                onChange={(value) => updateSettings({ stickers: value.split(/\s+/).filter(Boolean).slice(0, 12) })}
+                maxLength={288}
+                placeholder="✨ 🎨 🚀"
+              />
+              <Field
                 label="SEO title"
                 value={draft.settings.seoTitle}
                 onChange={(seoTitle) =>
@@ -1795,7 +1809,7 @@ function Field({
   label: string;
   value: string;
   onChange: (value: string) => void;
-  maxLength: number;
+  maxLength?: number;
   placeholder?: string;
 }) {
   return (
@@ -1841,7 +1855,7 @@ function TextAreaField({
           {label}
         </label>
         <span className="text-[10px] text-white/30">
-          {value.length}/{maxLength}
+          {maxLength ? `${value.length}/${maxLength}` : null}
         </span>
       </div>
       <textarea
