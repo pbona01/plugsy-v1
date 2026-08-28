@@ -33,6 +33,8 @@ export const DEFAULT_ONE_LINK_SETTINGS = Object.freeze({
   seoTitle: "",
   seoDescription: "",
   messageEnabled: true,
+  followerCount: 0,
+  stickers: Object.freeze([]),
 });
 
 const USERNAME_PATTERN = /^[a-z0-9_]{1,64}$/;
@@ -57,6 +59,8 @@ const KNOWN_ONE_LINK_KEYS = new Set([
   "seoTitle",
   "seoDescription",
   "messageEnabled",
+  "followerCount",
+  "stickers",
 ]);
 
 const isPlainObject = (value) =>
@@ -346,6 +350,13 @@ export function normalizeOneLinkSettings(
       typeof source.messageEnabled === "boolean"
         ? source.messageEnabled
         : true,
+    followerCount:
+      Number.isSafeInteger(source.followerCount) && source.followerCount >= 0
+        ? source.followerCount
+        : 0,
+    stickers: Array.isArray(source.stickers)
+      ? source.stickers.filter((sticker) => typeof sticker === "string").map((sticker) => sticker.trim().slice(0, 24)).filter(Boolean).slice(0, 12)
+      : [],
   };
 }
 
@@ -729,6 +740,12 @@ export function validateOneLinkSavePayload(payload) {
       "One Link visibility settings are invalid.",
     );
   }
+  if (!Number.isSafeInteger(source.followerCount) || source.followerCount < 0 || source.followerCount > 1000000000000) {
+    throw new OneLinkValidationError("ONELINK_FOLLOWER_COUNT_INVALID", "Follower count must be a valid positive number.");
+  }
+  if (!Array.isArray(source.stickers) || source.stickers.length > 12 || source.stickers.some((sticker) => typeof sticker !== "string" || sticker.trim().length > 24)) {
+    throw new OneLinkValidationError("ONELINK_STICKERS_INVALID", "Use no more than 12 short stickers.");
+  }
 
   return {
     expectedRevision: validateOneLinkExpectedRevision(
@@ -758,6 +775,8 @@ export function validateOneLinkSavePayload(payload) {
         ONE_LINK_LIMITS.seoDescription,
       ),
       messageEnabled: source.messageEnabled,
+      followerCount: source.followerCount,
+      stickers: source.stickers.map((sticker) => sticker.trim()).filter(Boolean),
     },
   };
 }
