@@ -1742,6 +1742,16 @@ export default function PersonalChat() {
         sendBroadcastSafely(`user-events-${targetUserId}`, "new_message", inserted);
       }
       await notifyMessage(inserted.id);
+      try {
+        const token = await getToken();
+        await fetch("/api/chat/alert", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ message: content.slice(0, 500), email: currentUserEmail, userId }),
+        });
+      } catch (alertError) {
+        console.warn("[chat] Telegram alert failed", alertError);
+      }
     }
 
   };
