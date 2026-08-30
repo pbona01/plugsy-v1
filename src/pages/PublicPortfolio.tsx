@@ -1652,12 +1652,7 @@ export function PublicPortfolio({
                 <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
                   {(() => {
                     let catArray: string[] = [];
-                    if (categories.length > 0) {
-                      catArray = categories
-                        .slice()
-                        .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
-                        .map((category) => category.name);
-                    } else if (Array.isArray(portfolio.categories)) {
+                    if (Array.isArray(portfolio.categories) && portfolio.categories.length > 0) {
                       catArray = portfolio.categories;
                     } else if (typeof portfolio.category === "string") {
                       try {
@@ -1718,7 +1713,7 @@ export function PublicPortfolio({
                         onClick={startExtraCategoryEdit}
                         className="min-h-9 rounded-lg border border-dashed border-brand-accent/40 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-brand-accent transition hover:bg-brand-accent/10"
                       >
-                        + Add category badge
+                          + Add extra profession
                       </button>
                     )
                   )}
