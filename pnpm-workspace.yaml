@@ -1,0 +1,6 @@
+allowBuilds:
+  '@clerk/shared': true
+  '@google/genai': true
+  '@tsparticles/engine': true
+  esbuild: true
+  protobufjs: true

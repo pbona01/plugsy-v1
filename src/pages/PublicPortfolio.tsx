@@ -2301,7 +2301,8 @@ export function PublicPortfolio({
                               categoryId: category.id,
                             });
                           }}
-                          className="flex flex-col items-center justify-center p-4 bg-white dark:bg-white/[0.03] border border-black/10 dark:border-white/10 rounded-2xl aspect-[4/3] text-center"
+                          className="flex flex-col items-center justify-center p-4 rounded-2xl aspect-[4/3] text-center transition hover:opacity-90"
+                          style={{ backgroundColor: "color-mix(in srgb, var(--vp-text) 6%, var(--vp-bg))", border: "1px solid color-mix(in srgb, var(--vp-text) 14%, transparent)", color: "var(--vp-text)" }}
                         >
                           <span className="text-xl mb-1">+</span>
                           <span className="text-[11px] font-bold tracking-wider uppercase">
@@ -2325,7 +2326,8 @@ export function PublicPortfolio({
                               custom_category_id: category.id,
                             });
                           }}
-                          className="flex flex-col items-center justify-center p-4 bg-white dark:bg-white/[0.03] border border-black/10 dark:border-white/10 rounded-2xl aspect-[4/3] text-center"
+                          className="flex flex-col items-center justify-center p-4 rounded-2xl aspect-[4/3] text-center transition hover:opacity-90"
+                          style={{ backgroundColor: "color-mix(in srgb, var(--vp-text) 6%, var(--vp-bg))", border: "1px solid color-mix(in srgb, var(--vp-text) 14%, transparent)", color: "var(--vp-text)" }}
                         >
                           <span className="text-xl mb-1">+</span>
                           <span className="text-[11px] font-bold tracking-wider uppercase">
@@ -2395,7 +2397,8 @@ export function PublicPortfolio({
                             }
                             setUploadModalTargetAction({ categoryId: undefined });
                           }}
-                          className="flex flex-col items-center justify-center p-4 bg-white dark:bg-white/[0.03] border border-black/10 dark:border-white/10 rounded-2xl aspect-[4/3] text-center"
+                          className="flex flex-col items-center justify-center p-4 rounded-2xl aspect-[4/3] text-center transition hover:opacity-90"
+                          style={{ backgroundColor: "color-mix(in srgb, var(--vp-text) 6%, var(--vp-bg))", border: "1px solid color-mix(in srgb, var(--vp-text) 14%, transparent)", color: "var(--vp-text)" }}
                         >
                           <span className="text-xl mb-1">+</span>
                           <span className="text-[11px] font-bold tracking-wider uppercase">
@@ -2418,7 +2421,8 @@ export function PublicPortfolio({
                               title: "New Reel",
                             });
                           }}
-                          className="flex flex-col items-center justify-center p-4 bg-white dark:bg-white/[0.03] border border-black/10 dark:border-white/10 rounded-2xl aspect-[4/3] text-center"
+                          className="flex flex-col items-center justify-center p-4 rounded-2xl aspect-[4/3] text-center transition hover:opacity-90"
+                          style={{ backgroundColor: "color-mix(in srgb, var(--vp-text) 6%, var(--vp-bg))", border: "1px solid color-mix(in srgb, var(--vp-text) 14%, transparent)", color: "var(--vp-text)" }}
                         >
                           <span className="text-xl mb-1">+</span>
                           <span className="text-[11px] font-bold tracking-wider uppercase">

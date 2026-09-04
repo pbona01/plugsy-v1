@@ -232,6 +232,9 @@ function toPublicResponse(profile) {
       seoTitle: settings.seoTitle,
       seoDescription: settings.seoDescription,
       messageEnabled: settings.messageEnabled,
+      // Keep the editable follower total in the public payload.  It is safe
+      // public profile metadata and must not be lost during publication.
+      followerCount: settings.followerCount,
     },
   };
 }
