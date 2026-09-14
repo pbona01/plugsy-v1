@@ -10,6 +10,7 @@ import { SafeImage } from '../components/SafeImage';
 import { ScaleButton } from '../components/PageTransition';
 import { PlanEditor } from '../components/PlanEditor';
 import { cn } from '../lib/utils';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { 
   Users as UsersIcon, 
   CreditCard, 
@@ -93,8 +94,13 @@ export default function Admin() {
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const [analyticsRange, setAnalyticsRange] = useState<"day" | "7d" | "30d" | "12m">("7d");
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const overviewAbortRef = useRef<AbortController | null>(null);
   const overviewRequestRef = useRef(0);
+  const analyticsAbortRef = useRef<AbortController | null>(null);
+  const analyticsRequestRef = useRef(0);
   const [publishedOneLinks, setPublishedOneLinks] = useState<any[]>([]);
   const [oneLinksLoading, setOneLinksLoading] = useState(false);
   const [oneLinksError, setOneLinksError] = useState<string | null>(null);
@@ -721,14 +727,47 @@ export default function Admin() {
     }
   }, [getToken, userId]);
 
+  const refreshAnalytics = useCallback(async () => {
+    if (!userId) return;
+    analyticsAbortRef.current?.abort();
+    const requestId = ++analyticsRequestRef.current;
+    const controller = new AbortController();
+    analyticsAbortRef.current = controller;
+    setAnalyticsLoading(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Admin authentication is required.");
+      const response = await fetch(`/api/admin?action=analytics&range=${analyticsRange}`, {
+        headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success !== true || requestId !== analyticsRequestRef.current) {
+        throw new Error("Analytics are unavailable.");
+      }
+      setAnalyticsData(payload.analytics);
+      setAnalyticsError(null);
+    } catch (error: any) {
+      if (error?.name !== "AbortError") setAnalyticsError("Analytics refresh failed; showing the last confirmed data.");
+    } finally {
+      if (requestId === analyticsRequestRef.current) setAnalyticsLoading(false);
+      if (analyticsAbortRef.current === controller) analyticsAbortRef.current = null;
+    }
+  }, [analyticsRange, getToken, userId]);
+
   useEffect(() => {
     if (activeTab !== "overview") return;
     void refreshOverview();
+    void refreshAnalytics();
     const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refreshOverview();
+      if (document.visibilityState === "visible") {
+        void refreshOverview();
+        void refreshAnalytics();
+      }
     }, 30000);
-    const onFocus = () => void refreshOverview();
-    const onVisibility = () => { if (document.visibilityState === "visible") void refreshOverview(); };
+    const onFocus = () => { void refreshOverview(); void refreshAnalytics(); };
+    const onVisibility = () => { if (document.visibilityState === "visible") { void refreshOverview(); void refreshAnalytics(); } };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
@@ -738,12 +777,35 @@ export default function Admin() {
       overviewRequestRef.current += 1;
       overviewAbortRef.current?.abort();
       overviewAbortRef.current = null;
+      analyticsRequestRef.current += 1;
+      analyticsAbortRef.current?.abort();
+      analyticsAbortRef.current = null;
     };
-  }, [activeTab, refreshOverview]);
+  }, [activeTab, refreshAnalytics, refreshOverview]);
 
   const dbStats = overviewMetrics
     ? { ...overviewMetrics, combinedRevenue: overviewMetrics.paidVolume, totalRevenue: overviewMetrics.subscriptionPaidVolume, portfolioRevenue: overviewMetrics.portfolioPaidVolume }
     : { combinedRevenue: null, totalRevenue: null, portfolioRevenue: null };
+
+  const analytics = useMemo(() => {
+    const countryName = (code: string) => { try { return new Intl.DisplayNames(['en'], { type: 'region' }).of(code) || code; } catch { return code; } };
+    const locations = new Map<string, number>();
+    safeArray(allUsers).forEach((entry) => { const code = String(entry.location || '').trim().toUpperCase(); if (/^[A-Z]{2}$/.test(code)) locations.set(countryName(code), (locations.get(countryName(code)) || 0) + 1); });
+    const selectedRangeLabel = { day: 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days', '12m': 'Last 12 months' }[analyticsRange];
+    return {
+      loaded: Boolean(analyticsData),
+      label: analyticsData?.label || selectedRangeLabel,
+      series: Array.isArray(analyticsData?.series) ? analyticsData.series : [],
+      successfulPayments: Number(analyticsData?.successfulPayments || 0),
+      totalRevenue: Number(analyticsData?.totalRevenue || 0),
+      averageOrder: Number(analyticsData?.averageOrder || 0),
+      revenueChange: analyticsData?.revenueChange ?? 0,
+      orderChange: analyticsData?.orderChange ?? 0,
+      topProducts: Array.isArray(analyticsData?.topProducts) ? analyticsData.topProducts : [],
+      locations: [...locations.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8),
+      locatedUsers: [...locations.values()].reduce((sum, value) => sum + value, 0),
+    };
+  }, [allUsers, analyticsData, analyticsRange]);
 
   const loadPublishedOneLinks = useCallback(async () => {
     if (!userId || oneLinksInFlightRef.current) return;
@@ -1460,45 +1522,42 @@ export default function Admin() {
                   </div>
                 </header>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6">
                     {[
-                      { icon: UsersIcon, label: 'Registered Users', val: overviewMetrics ? Number(dbStats.registeredUsers).toLocaleString() : '—', color: 'text-blue-500' },
-                      { icon: UsersIcon, label: 'Synced Profiles', val: overviewMetrics ? Number(dbStats.syncedProfiles).toLocaleString() : '—', color: 'text-cyan-500' },
-                      { icon: CreditCard, label: 'Volume (Paid)', val: formatOverviewRevenue(dbStats.combinedRevenue), color: 'text-green-500', isRevenue: true },
-                      { icon: Crown, label: 'Active Subscriptions', val: overviewMetrics ? Number(dbStats.activeSubscriptions).toLocaleString() : '—', color: 'text-brand-accent', tab: 'subscriptions' },
-                      { icon: Clock, label: 'Pending Orders', val: overviewMetrics ? Number(dbStats.pendingOrders).toLocaleString() : '—', color: 'text-orange-500', tab: 'pending' },
-                      { icon: MessageSquare, label: 'Open Chats', val: overviewMetrics ? Number(dbStats.openSupportChats).toLocaleString() : '—', color: 'text-indigo-500', tab: 'chats' },
-                      { icon: AlertCircle, label: 'Action Required', val: overviewMetrics ? Number(dbStats.actionRequiredChats).toLocaleString() : '—', color: 'text-red-500', tab: 'chats' },
-                      { icon: Inbox, label: 'Total Orders', val: overviewMetrics ? Number(dbStats.totalOrders).toLocaleString() : '—', color: 'text-brand-text-secondary' },
-                      { icon: Globe, label: 'Published One Links', val: overviewMetrics ? Number(dbStats.publishedOneLinks).toLocaleString() : '—', color: 'text-purple-500', tab: 'onelinks' },
-                      { icon: UsersIcon, label: 'Signed-in Users Online Now', val: Math.max(onlineSignedInCount, Number(overviewMetrics?.recentlyActiveUsers || 0)).toLocaleString(), color: 'text-emerald-500' }
+                      { icon: DollarSign, label: `Sales volume · ${analytics.label}`, val: analytics.loaded ? formatCurrency(analytics.totalRevenue) : '—', color: 'text-emerald-400', change: analytics.loaded ? analytics.revenueChange : undefined },
+                      { icon: CreditCard, label: `Successful payments · ${analytics.label}`, val: analytics.loaded ? analytics.successfulPayments.toLocaleString() : '—', color: 'text-blue-400', change: analytics.loaded ? analytics.orderChange : undefined },
+                      { icon: TrendingUp, label: 'Average order value', val: analytics.loaded ? formatCurrency(analytics.averageOrder) : '—', color: 'text-violet-400' },
+                      { icon: UsersIcon, label: 'Registered users', val: overviewMetrics ? Number(dbStats.registeredUsers).toLocaleString() : '—', color: 'text-cyan-400' },
+                      { icon: Crown, label: 'Active subscriptions', val: overviewMetrics ? Number(dbStats.activeSubscriptions).toLocaleString() : '—', color: 'text-brand-accent', tab: 'subscriptions' },
+                      { icon: Clock, label: 'Pending orders', val: overviewMetrics ? Number(dbStats.pendingOrders).toLocaleString() : '—', color: 'text-amber-400', tab: 'pending' },
+                      { icon: MessageSquare, label: 'Action required', val: overviewMetrics ? Number(dbStats.actionRequiredChats).toLocaleString() : '—', color: 'text-rose-400', tab: 'chats' },
+                      { icon: UsersIcon, label: 'Online now', val: Math.max(onlineSignedInCount, Number(overviewMetrics?.recentlyActiveUsers || 0)).toLocaleString(), color: 'text-teal-400' }
                     ].map((stat, i) => (
                     <button 
                       key={i} 
                       onClick={() => stat.tab && setActiveTab(stat.tab as any)}
-                      className={`card-premium p-6 flex flex-col group text-left transition-all hover:scale-[1.02] ${stat.tab ? 'cursor-pointer' : 'cursor-default'}`}
+                      className={`card-premium relative overflow-hidden p-6 flex flex-col group text-left transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl ${stat.tab ? 'cursor-pointer' : 'cursor-default'}`}
                     >
-                      <div className="w-10 h-10 rounded-2xl bg-brand-text/5 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                      <div className="absolute -right-5 -top-5 h-20 w-20 rounded-full bg-brand-accent/10 blur-2xl transition-opacity group-hover:opacity-100" />
+                      <div className="w-10 h-10 rounded-2xl border border-brand-border bg-brand-text/5 flex items-center justify-center mb-5 group-hover:scale-110 transition-transform">
                         <stat.icon size={20} className={stat.color} />
                       </div>
                       <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-text-secondary mb-1">{stat.label}</h3>
                       <p className="text-3xl font-black tracking-tighter text-brand-text">{stat.val}</p>
-                      {stat.isRevenue && (
-                        <div className="mt-2 text-[10px] font-bold text-brand-text-secondary leading-normal uppercase space-y-0.5">
-                          <div>Subscriptions: {formatOverviewRevenue(dbStats.totalRevenue)}</div>
-                          <div>Portfolios: {formatOverviewRevenue(dbStats.portfolioRevenue)}</div>
-                        </div>
-                      )}
+                      {'change' in stat && stat.change !== undefined && <div className={cn('mt-3 text-[10px] font-black uppercase tracking-wider', stat.change === null || stat.change === 0 ? 'text-brand-text-secondary' : Number(stat.change) > 0 ? 'text-emerald-400' : 'text-rose-400')}>{stat.change === null ? 'New in this period' : `${Number(stat.change) >= 0 ? '+' : ''}${Number(stat.change).toFixed(0)}% vs previous period`}</div>}
                     </button>
                   ))}
                 </div>
                 <div className="flex flex-wrap items-center gap-4 text-xs text-brand-text-secondary">
-                  <button onClick={() => void refreshOverview()} disabled={overviewLoading} className="btn-primary h-10 px-4 flex items-center gap-2"><RefreshCw size={14} className={overviewLoading ? 'animate-spin' : ''} /> Refresh</button>
+                  <button onClick={() => { void refreshOverview(); void refreshAnalytics(); }} disabled={overviewLoading || analyticsLoading} className="btn-primary h-10 px-4 flex items-center gap-2"><RefreshCw size={14} className={overviewLoading || analyticsLoading ? 'animate-spin' : ''} /> Refresh</button>
                   <span>{overviewMetrics?.updatedAt ? `Last updated ${new Date(overviewMetrics.updatedAt).toLocaleString()}` : 'Overview unavailable'}</span>
                   {overviewError && <span className="text-orange-500">Refresh failed; showing the last confirmed overview data.</span>}
+                  {analyticsError && <span className="text-orange-500">{analyticsError}</span>}
                   <span>Anonymous visitors are not included. Realtime presence {presenceStatus}; server fallback covers visible sessions active in the last 3 minutes.</span>
                 </div>
 
+                {/* Replaced by the interactive analytics surface below. */}
+                {/*
                 {(() => {
                   const validOrders = safeArray(orders).filter((order) => {
                     const status = String(order.payment_status || order.status || "").toLowerCase();
@@ -1533,19 +1592,24 @@ export default function Admin() {
                     <div className="card-premium p-8"><div className="flex items-center justify-between mb-8"><div><h3 className="text-xs font-black uppercase tracking-widest">Top products</h3><p className="text-[10px] text-brand-text-secondary mt-2">Ranked by confirmed purchases</p></div><Award size={18} className="text-brand-accent" /></div>{topProducts.length === 0 ? <p className="py-8 text-center text-xs text-brand-text-secondary">No confirmed product sales yet.</p> : <div className="space-y-4">{topProducts.map(([name, data], index) => <div key={name} className="flex items-center gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-accent/10 text-xs font-black text-brand-accent">{index + 1}</span><div className="min-w-0 flex-1"><div className="flex justify-between gap-3 text-xs"><span className="truncate font-bold">{name}</span><span className="shrink-0 text-brand-text-secondary">{data.count}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-brand-text/10"><div className="h-full rounded-full bg-brand-accent" style={{ width: `${Math.max(5, (data.count / Math.max(1, topProducts[0][1].count)) * 100)}%` }} /></div></div></div>)}</div>}</div>
                   </div>;
                 })()}
+                */}
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
-                  <div className="card-premium p-8 lg:col-span-2">
-                    <div className="flex items-center justify-between mb-8">
-                      <h3 className="text-xs font-black uppercase tracking-widest">Video Storage</h3>
-                      <span className="text-[10px] font-black text-brand-text-secondary uppercase tracking-widest">Verification Engine Support</span>
+                <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+                  <section className="card-premium overflow-hidden p-0 xl:col-span-2">
+                    <div className="flex flex-wrap items-start justify-between gap-4 border-b border-brand-border p-6 md:p-8">
+                      <div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-accent">Performance</p><h3 className="mt-2 text-xl font-black tracking-tight">Sales volume</h3><p className="mt-1 text-xs text-brand-text-secondary">Confirmed payment revenue · {analytics.label}</p></div>
+                      <div className="rounded-xl border border-brand-border bg-brand-text/5 px-4 py-3 text-right"><p className="text-[10px] font-black uppercase tracking-wider text-brand-text-secondary">Gross volume</p><p className="mt-1 text-lg font-black">{analytics.loaded ? formatCurrency(analytics.totalRevenue) : '—'}</p></div>
                     </div>
-                    <div className="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 bg-brand-surface rounded-2xl border border-brand-border">
-                       <div>
-                          <p className="text-xs font-bold text-white mb-1">Daily upload limit: 500 videos</p>
-                       </div>
+                    <div className="h-[300px] p-4 pt-7 md:p-7">
+                      <ResponsiveContainer width="100%" height="100%"><AreaChart data={analytics.series} margin={{ top: 12, right: 8, left: -16, bottom: 0 }}><defs><linearGradient id="plugsySalesGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#1677ff" stopOpacity={0.42} /><stop offset="100%" stopColor="#1677ff" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid vertical={false} stroke="currentColor" strokeOpacity={0.08} strokeDasharray="3 6" /><XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: 'currentColor', fontSize: 10, opacity: 0.55 }} minTickGap={24} /><YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor', fontSize: 10, opacity: 0.55 }} tickFormatter={(value) => `₦${Number(value).toLocaleString('en-NG', { notation: 'compact' })}`} width={58} /><Tooltip cursor={{ stroke: '#1677ff', strokeOpacity: 0.4 }} contentStyle={{ background: '#16161a', border: '1px solid rgba(255,255,255,.12)', borderRadius: 14, color: '#fff' }} formatter={(value) => [formatCurrency(Number(value) || 0), 'Revenue']} /><Area type="monotone" dataKey="revenue" stroke="#1677ff" strokeWidth={3} fill="url(#plugsySalesGradient)" animationDuration={450} /></AreaChart></ResponsiveContainer>
                     </div>
-                  </div>
+                  </section>
+
+                  <section className="card-premium p-6 md:p-8"><div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-accent">Audience</p><h3 className="mt-2 text-xl font-black tracking-tight">Users by location</h3><p className="mt-1 text-xs text-brand-text-secondary">{analytics.locatedUsers} of {allUsers.length} recorded</p></div><div className="rounded-xl bg-brand-accent/10 p-3 text-brand-accent"><Globe size={18} /></div></div>{analytics.locations.length ? <div className="mt-8 space-y-5">{analytics.locations.map(([location, count]) => <div key={location}><div className="mb-2 flex items-center justify-between gap-3 text-xs"><span className="truncate font-bold">{location}</span><span className="shrink-0 text-brand-text-secondary">{count} users</span></div><div className="h-2 overflow-hidden rounded-full bg-brand-text/10"><motion.div initial={{ width: 0 }} animate={{ width: `${(count / analytics.locations[0][1]) * 100}%` }} transition={{ duration: .45 }} className="h-full rounded-full bg-gradient-to-r from-brand-accent to-cyan-400" /></div></div>)}</div> : <div className="mt-10 rounded-2xl border border-dashed border-brand-border p-6 text-center"><p className="text-sm font-bold">Location data is starting to collect</p><p className="mt-2 text-xs leading-5 text-brand-text-secondary">Countries are saved on a user’s next signed-in visit. Older accounts cannot be guessed.</p></div>}</section>
+
+                  <section className="card-premium p-6 md:p-8 xl:col-span-2"><div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-accent">Product performance</p><h3 className="mt-2 text-xl font-black tracking-tight">Top products</h3><p className="mt-1 text-xs text-brand-text-secondary">Confirmed purchases · {analytics.label}</p></div><Award className="text-brand-accent" size={20} /></div>{!analytics.loaded ? <div className="mt-8 rounded-2xl border border-dashed border-brand-border p-10 text-center text-sm text-brand-text-secondary">Loading verified product data…</div> : analytics.topProducts.length ? <div className="mt-8 h-[240px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={analytics.topProducts.map(([name, data]) => ({ name, orders: data.orders, revenue: data.revenue }))} layout="vertical" margin={{ top: 0, right: 18, left: 14, bottom: 0 }}><CartesianGrid horizontal={false} stroke="currentColor" strokeOpacity={0.06} /><XAxis type="number" hide /><YAxis dataKey="name" type="category" width={125} tickLine={false} axisLine={false} tick={{ fill: 'currentColor', fontSize: 11, fontWeight: 700 }} tickFormatter={(value) => String(value).length > 18 ? `${String(value).slice(0, 18)}…` : value} /><Tooltip cursor={{ fill: 'rgba(255,255,255,.04)' }} contentStyle={{ background: '#16161a', border: '1px solid rgba(255,255,255,.12)', borderRadius: 14, color: '#fff' }} formatter={(value) => [`${Number(value) || 0} purchases`, 'Orders']} /><Bar dataKey="orders" fill="#1677ff" radius={[0, 8, 8, 0]} barSize={18} animationDuration={450} /></BarChart></ResponsiveContainer></div> : <div className="mt-8 rounded-2xl border border-dashed border-brand-border p-10 text-center text-sm text-brand-text-secondary">No confirmed product sales in this period.</div>}</section>
+
+                  <section className="card-premium p-6 md:p-8"><p className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-accent">Operations</p><h3 className="mt-2 text-xl font-black tracking-tight">Live snapshot</h3><div className="mt-7 space-y-4">{[{ label: 'Active subscriptions', value: overviewMetrics?.activeSubscriptions || 0, color: 'bg-violet-400' }, { label: 'Pending orders', value: overviewMetrics?.pendingOrders || 0, color: 'bg-amber-400' }, { label: 'Open support chats', value: overviewMetrics?.openSupportChats || 0, color: 'bg-cyan-400' }].map((item) => <div key={item.label} className="flex items-center justify-between rounded-xl border border-brand-border bg-brand-text/[.025] px-4 py-3"><span className="flex items-center gap-2 text-xs font-bold"><span className={cn('h-2 w-2 rounded-full', item.color)} />{item.label}</span><span className="text-sm font-black">{Number(item.value).toLocaleString()}</span></div>)}</div></section>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">

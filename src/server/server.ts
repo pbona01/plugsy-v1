@@ -760,7 +760,7 @@ async function startServer() {
     try {
       const actor = await requireVerifiedClerkUser(req, res);
       if (!actor) return;
-      const result = await syncVerifiedClerkProfile({ supabase, actor });
+      const result = await syncVerifiedClerkProfile({ supabase, actor, requestCountryCode: req.headers?.["x-vercel-ip-country"] });
       return res.status(result.status).json(result);
     } catch (error: any) {
       console.error("[profile-sync] synchronization failed:", error?.message || error);

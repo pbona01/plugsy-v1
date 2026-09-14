@@ -177,7 +177,7 @@ export default async function handler(req, res) {
     if (!supabase) return
 
     try {
-      const result = await syncVerifiedClerkProfile({ supabase, actor })
+      const result = await syncVerifiedClerkProfile({ supabase, actor, requestCountryCode: req.headers?.["x-vercel-ip-country"] })
       return res.status(result.status).json(result)
     } catch (error) {
       console.error("[profile-sync] synchronization failed:", error?.message || error)

@@ -204,7 +204,7 @@ export async function fetchAllProfiles(supabase, options = {}) {
     const from = page * pageSize;
     const { data, error } = await supabase
       .from("profiles")
-      .select("id,clerk_id,email,full_name,username,wallet_tag,role,image_url,profile_pic_url,last_login_at,created_at")
+    .select("id,clerk_id,email,full_name,username,wallet_tag,role,image_url,profile_pic_url,last_login_at,analytics_country_code,created_at")
       .order("created_at", { ascending: false })
       .range(from, from + pageSize - 1);
     if (error) throw new AdminUsersFailure("ADMIN_USERS_LOOKUP_FAILED", 503);
@@ -288,7 +288,7 @@ export function normalizeAdminUsers(clerkUsers, profiles) {
       created_at: toIsoDate(clerkUser.created_at || clerkUser.createdAt),
       last_login_at: toIsoDate(clerkUser.last_sign_in_at || clerkUser.lastSignInAt),
       role,
-      location: textValue(metadata.country || metadata.location || privateMetadata.country || privateMetadata.location) || null,
+      location: textValue(profile?.analytics_country_code || metadata.country || metadata.location || privateMetadata.country || privateMetadata.location) || null,
     });
     seenClerkIds.add(clerkId);
   }
@@ -316,7 +316,7 @@ export function normalizeAdminUsers(clerkUsers, profiles) {
       created_at: toIsoDate(profile.created_at),
       last_login_at: toIsoDate(profile.last_login_at),
       role: normalizeAdminDisplayRole(profile.role),
-      location: textValue(profile.country || profile.location) || null,
+      location: textValue(profile.analytics_country_code || profile.country || profile.location) || null,
     });
     seenProfileIds.add(profileId);
     if (clerkId) seenClerkIds.add(clerkId);
@@ -1276,6 +1276,158 @@ export async function handleOverviewMetrics(req, res, dependencies = {}) {
   }
 }
 
+const ANALYTICS_RANGES = new Set(["day", "7d", "30d", "12m"]);
+const PAID_ORDER_STATUSES = new Set(["paid", "confirmed", "success", "successful", "completed"]);
+
+function getAnalyticsPeriod(range, now = new Date()) {
+  const selectedRange = ANALYTICS_RANGES.has(range) ? range : "7d";
+  const start = new Date(now);
+  start.setUTCMinutes(0, 0, 0);
+  if (selectedRange === "7d") start.setUTCDate(start.getUTCDate() - 6);
+  if (selectedRange === "30d") start.setUTCDate(start.getUTCDate() - 29);
+  if (selectedRange === "12m") {
+    start.setUTCDate(1);
+    start.setUTCMonth(start.getUTCMonth() - 11);
+  }
+  const previousStart = new Date(start);
+  if (selectedRange === "day") previousStart.setUTCDate(previousStart.getUTCDate() - 1);
+  if (selectedRange === "7d") previousStart.setUTCDate(previousStart.getUTCDate() - 7);
+  if (selectedRange === "30d") previousStart.setUTCDate(previousStart.getUTCDate() - 30);
+  if (selectedRange === "12m") previousStart.setUTCMonth(previousStart.getUTCMonth() - 12);
+  return {
+    range: selectedRange,
+    start,
+    end: now,
+    previousStart,
+    label: { day: "Today", "7d": "Last 7 days", "30d": "Last 30 days", "12m": "Last 12 months" }[selectedRange],
+  };
+}
+
+function makeAnalyticsBuckets(period) {
+  const buckets = [];
+  const bucketCount = period.range === "day" ? 24 : period.range === "12m" ? 12 : period.range === "30d" ? 30 : 7;
+  for (let index = 0; index < bucketCount; index += 1) {
+    const date = new Date(period.start);
+    if (period.range === "day") date.setUTCHours(index);
+    else if (period.range === "12m") date.setUTCMonth(date.getUTCMonth() + index);
+    else date.setUTCDate(date.getUTCDate() + index);
+    const key = period.range === "day"
+      ? date.toISOString().slice(0, 13)
+      : period.range === "12m"
+        ? date.toISOString().slice(0, 7)
+        : date.toISOString().slice(0, 10);
+    const label = period.range === "day"
+      ? date.toLocaleTimeString("en-NG", { hour: "numeric", hour12: true, timeZone: "UTC" })
+      : period.range === "12m"
+        ? date.toLocaleDateString("en-NG", { month: "short", timeZone: "UTC" })
+        : date.toLocaleDateString("en-NG", { month: "short", day: "numeric", timeZone: "UTC" });
+    buckets.push({ key, label, orders: 0, revenue: 0 });
+  }
+  return buckets;
+}
+
+function analyticsBucketKey(date, range) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  const iso = date.toISOString();
+  if (range === "day") return iso.slice(0, 13);
+  if (range === "12m") return iso.slice(0, 7);
+  return iso.slice(0, 10);
+}
+
+function analyticsPercentChange(value, previous) {
+  if (previous === 0) return value > 0 ? null : 0;
+  return ((value - previous) / previous) * 100;
+}
+
+export async function handleAnalytics(req, res, dependencies = {}) {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  if (req.method !== "GET") {
+    res.setHeader("Allow", "GET");
+    return res.status(405).json({ success: false, code: "METHOD_NOT_ALLOWED", error: "GET is required." });
+  }
+  if (!/^Bearer\s+\S+$/i.test(textValue(req.headers?.authorization))) {
+    return res.status(401).json({ success: false, code: "ADMIN_AUTH_REQUIRED", error: "Sign-in is required." });
+  }
+  try {
+    const actor = await (dependencies.authenticate || requireVerifiedClerkUser)(req, res);
+    if (!actor) return;
+    const supabase = dependencies.supabase || getAdminUsersClient();
+    if (!await (dependencies.authorize || authorizeAdminUsersActor)(actor, res, supabase)) return;
+    const urlObj = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
+    const requestedRange = textValue(req.query?.range || urlObj.searchParams.get("range"));
+    const period = getAnalyticsPeriod(requestedRange);
+    const queryStart = period.previousStart.toISOString();
+    const queryEnd = period.end.toISOString();
+    const [orderCountResult, portfolioCountResult] = await Promise.all([
+      supabase.from("orders").select("id", { count: "exact", head: true }).gte("created_at", queryStart).lte("created_at", queryEnd),
+      supabase.from("portfolio_purchases").select("id", { count: "exact", head: true }).gte("created_at", queryStart).lte("created_at", queryEnd),
+    ]);
+    if (orderCountResult?.error || portfolioCountResult?.error || !Number.isSafeInteger(orderCountResult?.count) || !Number.isSafeInteger(portfolioCountResult?.count)) {
+      throw new AdminOverviewFailure("ADMIN_OVERVIEW_DATABASE_ERROR");
+    }
+    const [orders, portfolioPurchases] = await Promise.all([
+      fetchBoundedRows((from, to) => supabase
+        .from("orders")
+        .select("id,status,amount,product_name,created_at")
+        .gte("created_at", queryStart)
+        .lte("created_at", queryEnd)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to), { expectedCount: orderCountResult.count }),
+      fetchBoundedRows((from, to) => supabase
+        .from("portfolio_purchases")
+        .select("id,category,amount,created_at")
+        .gte("created_at", queryStart)
+        .lte("created_at", queryEnd)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to), { expectedCount: portfolioCountResult.count }),
+    ]);
+    const currentSales = [];
+    const previousSales = [];
+    const addSale = (record, name, isPaid = true) => {
+      if (!isPaid) return;
+      const createdAt = new Date(record?.created_at || "");
+      const amount = Number(record?.amount || 0);
+      if (Number.isNaN(createdAt.getTime()) || !Number.isFinite(amount) || amount < 0) return;
+      const sale = { name: textValue(name) || "Unnamed product", amount, createdAt };
+      if (createdAt >= period.start && createdAt <= period.end) currentSales.push(sale);
+      else if (createdAt >= period.previousStart && createdAt < period.start) previousSales.push(sale);
+    };
+    orders.forEach((order) => addSale(order, order.product_name, PAID_ORDER_STATUSES.has(textValue(order.status).toLowerCase())));
+    portfolioPurchases.forEach((purchase) => addSale(purchase, categoryLabel(purchase.category)));
+    const buckets = makeAnalyticsBuckets(period);
+    const bucketMap = new Map(buckets.map((bucket) => [bucket.key, bucket]));
+    const products = new Map();
+    currentSales.forEach((sale) => {
+      const bucket = bucketMap.get(analyticsBucketKey(sale.createdAt, period.range));
+      if (bucket) { bucket.orders += 1; bucket.revenue += sale.amount; }
+      const current = products.get(sale.name) || { orders: 0, revenue: 0 };
+      products.set(sale.name, { orders: current.orders + 1, revenue: current.revenue + sale.amount });
+    });
+    const totalRevenue = currentSales.reduce((sum, sale) => sum + sale.amount, 0);
+    const previousRevenue = previousSales.reduce((sum, sale) => sum + sale.amount, 0);
+    const analytics = {
+      range: period.range,
+      label: period.label,
+      series: buckets.map(({ key, ...bucket }) => bucket),
+      successfulPayments: currentSales.length,
+      totalRevenue,
+      averageOrder: currentSales.length ? totalRevenue / currentSales.length : 0,
+      revenueChange: analyticsPercentChange(totalRevenue, previousRevenue),
+      orderChange: analyticsPercentChange(currentSales.length, previousSales.length),
+      topProducts: [...products.entries()]
+        .sort((left, right) => right[1].orders - left[1].orders || right[1].revenue - left[1].revenue)
+        .slice(0, 6),
+    };
+    return res.status(200).json({ success: true, analytics, updatedAt: new Date().toISOString() });
+  } catch (error) {
+    const code = error instanceof AdminOverviewFailure ? error.code : "ADMIN_OVERVIEW_DATABASE_ERROR";
+    return res.status(503).json({ success: false, code, error: "Analytics are temporarily unavailable." });
+  }
+}
+
 export async function handleListPublishedOneLinks(req, res, dependencies = {}) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
@@ -1531,6 +1683,7 @@ export default async function handler(req, res) {
   if (action === "list-subscriptions") return await handleListSubscriptions(req, res)
   if (action === "list-profiles") return await handleListProfiles(req, res)
   if (action === "overview-metrics") return await handleOverviewMetrics(req, res)
+  if (action === "analytics") return await handleAnalytics(req, res)
   if (action === "list-published-onelinks") return await handleListPublishedOneLinks(req, res)
   if (action === "list-users") return await handleListUsers(req, res)
   if (action === "list-portfolio_purchases") return await handleListPortfolioPurchases(req, res)

@@ -15,6 +15,8 @@ const PROFILE_FIELDS = [
   "bio",
   "phone_number",
   "last_login_at",
+  "analytics_country_code",
+  "analytics_location_updated_at",
   "created_at",
   "updated_at",
 ].join(",");
@@ -29,7 +31,9 @@ const normalizeProfile = (profile) => ({
   role: text(profile?.role).toLowerCase() || "user",
 });
 
-async function performVerifiedClerkProfileSync({ supabase, actor }) {
+const normalizeCountryCode = (value) => /^[A-Z]{2}$/.test(text(value).toUpperCase()) ? text(value).toUpperCase() : "";
+
+async function performVerifiedClerkProfileSync({ supabase, actor, requestCountryCode = "" }) {
   const clerkId = text(actor?.userId);
   const email = normalizedEmail(actor?.email);
 
@@ -51,6 +55,7 @@ async function performVerifiedClerkProfileSync({ supabase, actor }) {
   const fullName = text(actor.fullName);
   const clerkUsername = text(clerkUser.username).toLowerCase();
   const imageUrl = text(clerkUser.imageUrl || clerkUser.image_url);
+  const countryCode = normalizeCountryCode(requestCountryCode);
 
   const { data: linkedRows, error: linkedError } = await supabase
     .from("profiles")
@@ -128,6 +133,10 @@ async function performVerifiedClerkProfileSync({ supabase, actor }) {
   if (!text(existing?.username) && clerkUsername) {
     identityPatch.username = clerkUsername;
   }
+  if (countryCode && text(existing?.analytics_country_code) !== countryCode) {
+    identityPatch.analytics_country_code = countryCode;
+    identityPatch.analytics_location_updated_at = new Date().toISOString();
+  }
 
   let result;
   if (existing) {
@@ -170,14 +179,14 @@ async function performVerifiedClerkProfileSync({ supabase, actor }) {
   };
 }
 
-export async function syncVerifiedClerkProfile({ supabase, actor }) {
+export async function syncVerifiedClerkProfile({ supabase, actor, requestCountryCode = "" }) {
   const clerkId = text(actor?.userId);
-  if (!clerkId) return performVerifiedClerkProfileSync({ supabase, actor });
+  if (!clerkId) return performVerifiedClerkProfileSync({ supabase, actor, requestCountryCode });
 
   const existing = profileSyncLocks.get(clerkId);
   if (existing) return existing;
 
-  const operation = performVerifiedClerkProfileSync({ supabase, actor });
+  const operation = performVerifiedClerkProfileSync({ supabase, actor, requestCountryCode });
   profileSyncLocks.set(clerkId, operation);
   try {
     return await operation;
