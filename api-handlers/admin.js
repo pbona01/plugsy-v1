@@ -264,6 +264,8 @@ export function normalizeAdminUsers(clerkUsers, profiles) {
     const clerkUsername = textValue(clerkUser.username);
     const fullName = textValue(`${firstName} ${lastName}`) || clerkUsername || email.split("@")[0] || "Plugsy Member";
     const clerkRole = clerkUser.public_metadata?.role ?? clerkUser.publicMetadata?.role;
+    const metadata = clerkUser.public_metadata || clerkUser.publicMetadata || {};
+    const privateMetadata = clerkUser.private_metadata || clerkUser.privateMetadata || {};
     const role =
       normalizeAdminDisplayRole(clerkRole) === "admin" ||
       normalizeAdminDisplayRole(profile?.role) === "admin"
@@ -286,6 +288,7 @@ export function normalizeAdminUsers(clerkUsers, profiles) {
       created_at: toIsoDate(clerkUser.created_at || clerkUser.createdAt),
       last_login_at: toIsoDate(clerkUser.last_sign_in_at || clerkUser.lastSignInAt),
       role,
+      location: textValue(metadata.country || metadata.location || privateMetadata.country || privateMetadata.location) || null,
     });
     seenClerkIds.add(clerkId);
   }
@@ -313,6 +316,7 @@ export function normalizeAdminUsers(clerkUsers, profiles) {
       created_at: toIsoDate(profile.created_at),
       last_login_at: toIsoDate(profile.last_login_at),
       role: normalizeAdminDisplayRole(profile.role),
+      location: textValue(profile.country || profile.location) || null,
     });
     seenProfileIds.add(profileId);
     if (clerkId) seenClerkIds.add(clerkId);

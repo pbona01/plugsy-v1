@@ -254,7 +254,7 @@ export default function Admin() {
   }, [getToken]);
 
   useEffect(() => {
-    if (activeTab !== "users" || !userId) return;
+    if (!((activeTab === "users" || activeTab === "overview") && userId)) return;
 
     void fetchAdminUsers();
     return () => {
@@ -1495,6 +1495,32 @@ export default function Admin() {
                   {overviewError && <span className="text-orange-500">Refresh failed; showing the last confirmed overview data.</span>}
                   <span>Anonymous visitors are not included. Realtime presence {presenceStatus}; server fallback covers visible sessions active in the last 3 minutes.</span>
                 </div>
+
+                {(() => {
+                  const validOrders = safeArray(orders).filter((order) => {
+                    const status = String(order.payment_status || order.status || "").toLowerCase();
+                    return ["paid", "confirmed", "success", "successful", "completed"].includes(status);
+                  });
+                  const days = Array.from({ length: 7 }, (_, index) => {
+                    const date = new Date();
+                    date.setHours(0, 0, 0, 0);
+                    date.setDate(date.getDate() - (6 - index));
+                    const key = date.toISOString().slice(0, 10);
+                    const dayOrders = validOrders.filter((order) => String(order.created_at || "").slice(0, 10) === key);
+                    return { label: date.toLocaleDateString(undefined, { weekday: "short" }), count: dayOrders.length, revenue: dayOrders.reduce((sum, order) => sum + Number(order.amount || 0), 0) };
+                  });
+                  const maxCount = Math.max(1, ...days.map((day) => day.count));
+                  const locations = new Map<string, number>();
+                  safeArray(allUsers).forEach((entry) => { const location = String(entry.location || "Unknown").trim() || "Unknown"; locations.set(location, (locations.get(location) || 0) + 1); });
+                  const topLocations = [...locations.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+                  return <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 mt-8">
+                    <div className="card-premium p-8 xl:col-span-2">
+                      <div className="flex items-center justify-between mb-8"><div><h3 className="text-xs font-black uppercase tracking-widest">Orders over time</h3><p className="text-[10px] text-brand-text-secondary mt-2">Confirmed paid orders from the last 7 days</p></div><TrendingUp size={18} className="text-brand-accent" /></div>
+                      <div className="flex h-48 items-end gap-3 border-b border-brand-border px-2 pb-2">{days.map((day) => <div key={day.label} className="flex min-w-0 flex-1 flex-col items-center gap-2"><span className="text-[10px] font-bold text-brand-text-secondary">{day.count || "—"}</span><div className="w-full max-w-10 rounded-t-lg bg-brand-accent/80 transition-all" style={{ height: `${Math.max(day.count ? 10 : 2, (day.count / maxCount) * 130)}px` }} title={`${day.count} orders · ${formatCurrency(day.revenue)}`} /><span className="text-[10px] uppercase text-brand-text-secondary">{day.label}</span></div>)}</div>
+                    </div>
+                    <div className="card-premium p-8"><div className="flex items-center justify-between mb-8"><div><h3 className="text-xs font-black uppercase tracking-widest">Users by location</h3><p className="text-[10px] text-brand-text-secondary mt-2">Known Clerk profile data only</p></div><Globe size={18} className="text-brand-accent" /></div>{topLocations.length === 0 ? <p className="py-8 text-center text-xs text-brand-text-secondary">No location data available yet.</p> : <div className="space-y-4">{topLocations.map(([location, count]) => <div key={location}><div className="mb-1 flex justify-between text-xs"><span className="font-bold truncate pr-3">{location}</span><span className="text-brand-text-secondary">{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-brand-text/10"><div className="h-full rounded-full bg-brand-accent" style={{ width: `${Math.max(4, (count / Math.max(1, topLocations[0][1])) * 100)}%` }} /></div></div>)}</div>}</div>
+                  </div>;
+                })()}
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
                   <div className="card-premium p-8 lg:col-span-2">
