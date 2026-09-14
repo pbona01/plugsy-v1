@@ -92,6 +92,7 @@ export default function Admin() {
   const [overviewMetrics, setOverviewMetrics] = useState<any>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState<string | null>(null);
+  const [analyticsRange, setAnalyticsRange] = useState<"day" | "7d" | "30d" | "12m">("7d");
   const overviewAbortRef = useRef<AbortController | null>(null);
   const overviewRequestRef = useRef(0);
   const [publishedOneLinks, setPublishedOneLinks] = useState<any[]>([]);
@@ -1452,9 +1453,11 @@ export default function Admin() {
             )}
             {activeTab === 'overview' && (
               <div className="space-y-12">
-                <header>
-                  <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">Metrics</h2>
-                  <p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">System Pulse & Performance</p>
+                <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                  <div><h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">Analytics</h2><p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">Verified business performance</p></div>
+                  <div className="flex items-center gap-1 rounded-2xl border border-brand-border bg-brand-surface p-1" aria-label="Analytics period">
+                    {[['day','Today'],['7d','7 days'],['30d','30 days'],['12m','12 months']].map(([value, label]) => <button key={value} onClick={() => setAnalyticsRange(value as typeof analyticsRange)} className={cn("rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-wider transition-all", analyticsRange === value ? "bg-brand-accent text-white shadow-lg" : "text-brand-text-secondary hover:text-brand-text")}>{label}</button>)}
+                  </div>
                 </header>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -1501,24 +1504,33 @@ export default function Admin() {
                     const status = String(order.payment_status || order.status || "").toLowerCase();
                     return ["paid", "confirmed", "success", "successful", "completed"].includes(status);
                   });
-                  const days = Array.from({ length: 7 }, (_, index) => {
+                  const bucketCount = analyticsRange === "day" ? 8 : analyticsRange === "12m" ? 12 : analyticsRange === "30d" ? 10 : 7;
+                  const days = Array.from({ length: bucketCount }, (_, index) => {
                     const date = new Date();
                     date.setHours(0, 0, 0, 0);
-                    date.setDate(date.getDate() - (6 - index));
-                    const key = date.toISOString().slice(0, 10);
-                    const dayOrders = validOrders.filter((order) => String(order.created_at || "").slice(0, 10) === key);
-                    return { label: date.toLocaleDateString(undefined, { weekday: "short" }), count: dayOrders.length, revenue: dayOrders.reduce((sum, order) => sum + Number(order.amount || 0), 0) };
+                    const isMonthly = analyticsRange === "12m";
+                    const span = analyticsRange === "30d" ? 3 : 1;
+                    if (isMonthly) date.setMonth(date.getMonth() - (11 - index)); else if (analyticsRange === "day") date.setHours(date.getHours() - (7 - index)); else date.setDate(date.getDate() - ((bucketCount - 1 - index) * span));
+                    const key = isMonthly ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` : analyticsRange === "day" ? `${date.toISOString().slice(0, 13)}` : date.toISOString().slice(0, 10);
+                    const dayOrders = validOrders.filter((order) => { const created = new Date(order.created_at || 0); const candidate = isMonthly ? `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}` : analyticsRange === "day" ? `${created.toISOString().slice(0, 13)}` : created.toISOString().slice(0, 10); return isMonthly ? candidate === key : analyticsRange === "30d" ? candidate >= key && candidate <= date.toISOString().slice(0, 10) : candidate === key; });
+                    return { label: isMonthly ? date.toLocaleDateString(undefined, { month: "short" }) : analyticsRange === "day" ? date.toLocaleTimeString(undefined, { hour: "numeric" }) : date.toLocaleDateString(undefined, { weekday: "short" }), count: dayOrders.length, revenue: dayOrders.reduce((sum, order) => sum + Number(order.amount || 0), 0) };
                   });
                   const maxCount = Math.max(1, ...days.map((day) => day.count));
+                  const rangeStart = new Date();
+                  rangeStart.setDate(rangeStart.getDate() - (analyticsRange === "day" ? 1 : analyticsRange === "30d" ? 30 : analyticsRange === "12m" ? 365 : 7));
+                  const productSales = new Map<string, { count: number; revenue: number }>();
+                  validOrders.filter((order) => new Date(order.created_at || 0) >= rangeStart).forEach((order) => { const name = String(order.product_name || "Unnamed product").trim() || "Unnamed product"; const current = productSales.get(name) || { count: 0, revenue: 0 }; productSales.set(name, { count: current.count + 1, revenue: current.revenue + Number(order.amount || 0) }); });
+                  const topProducts = [...productSales.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 5);
                   const locations = new Map<string, number>();
                   safeArray(allUsers).forEach((entry) => { const location = String(entry.location || "Unknown").trim() || "Unknown"; locations.set(location, (locations.get(location) || 0) + 1); });
                   const topLocations = [...locations.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
                   return <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 mt-8">
                     <div className="card-premium p-8 xl:col-span-2">
-                      <div className="flex items-center justify-between mb-8"><div><h3 className="text-xs font-black uppercase tracking-widest">Orders over time</h3><p className="text-[10px] text-brand-text-secondary mt-2">Confirmed paid orders from the last 7 days</p></div><TrendingUp size={18} className="text-brand-accent" /></div>
+                      <div className="flex items-center justify-between mb-8"><div><h3 className="text-xs font-black uppercase tracking-widest">Sales volume</h3><p className="text-[10px] text-brand-text-secondary mt-2">Confirmed orders · {analyticsRange === "12m" ? "last 12 months" : analyticsRange === "day" ? "today" : analyticsRange === "30d" ? "last 30 days" : "last 7 days"}</p></div><TrendingUp size={18} className="text-brand-accent" /></div>
                       <div className="flex h-48 items-end gap-3 border-b border-brand-border px-2 pb-2">{days.map((day) => <div key={day.label} className="flex min-w-0 flex-1 flex-col items-center gap-2"><span className="text-[10px] font-bold text-brand-text-secondary">{day.count || "—"}</span><div className="w-full max-w-10 rounded-t-lg bg-brand-accent/80 transition-all" style={{ height: `${Math.max(day.count ? 10 : 2, (day.count / maxCount) * 130)}px` }} title={`${day.count} orders · ${formatCurrency(day.revenue)}`} /><span className="text-[10px] uppercase text-brand-text-secondary">{day.label}</span></div>)}</div>
                     </div>
                     <div className="card-premium p-8"><div className="flex items-center justify-between mb-8"><div><h3 className="text-xs font-black uppercase tracking-widest">Users by location</h3><p className="text-[10px] text-brand-text-secondary mt-2">Known Clerk profile data only</p></div><Globe size={18} className="text-brand-accent" /></div>{topLocations.length === 0 ? <p className="py-8 text-center text-xs text-brand-text-secondary">No location data available yet.</p> : <div className="space-y-4">{topLocations.map(([location, count]) => <div key={location}><div className="mb-1 flex justify-between text-xs"><span className="font-bold truncate pr-3">{location}</span><span className="text-brand-text-secondary">{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-brand-text/10"><div className="h-full rounded-full bg-brand-accent" style={{ width: `${Math.max(4, (count / Math.max(1, topLocations[0][1])) * 100)}%` }} /></div></div>)}</div>}</div>
+                    <div className="card-premium p-8"><div className="flex items-center justify-between mb-8"><div><h3 className="text-xs font-black uppercase tracking-widest">Top products</h3><p className="text-[10px] text-brand-text-secondary mt-2">Ranked by confirmed purchases</p></div><Award size={18} className="text-brand-accent" /></div>{topProducts.length === 0 ? <p className="py-8 text-center text-xs text-brand-text-secondary">No confirmed product sales yet.</p> : <div className="space-y-4">{topProducts.map(([name, data], index) => <div key={name} className="flex items-center gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-accent/10 text-xs font-black text-brand-accent">{index + 1}</span><div className="min-w-0 flex-1"><div className="flex justify-between gap-3 text-xs"><span className="truncate font-bold">{name}</span><span className="shrink-0 text-brand-text-secondary">{data.count}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-brand-text/10"><div className="h-full rounded-full bg-brand-accent" style={{ width: `${Math.max(5, (data.count / Math.max(1, topProducts[0][1].count)) * 100)}%` }} /></div></div></div>)}</div>}</div>
                   </div>;
                 })()}
 
