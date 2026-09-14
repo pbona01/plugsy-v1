@@ -18,6 +18,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { ThemeToggle } from "../ui/curtain-theme-toggle";
 import { Logo } from "../ui/Logo";
+import { MarketplaceMark } from "../icons/MarketplaceMark";
 import { isAdmin } from "../../lib/authUtils";
 import { GlassBottomNav } from "apple-liquid-glass-ui";
 
@@ -88,6 +89,7 @@ export default function Navbar() {
   const userLinks = [
     ...(userId ? [] : [{ name: "Home", href: "/", icon: Home }]),
     { name: "All Products", href: "/products", icon: Package },
+    { name: "Marketplace", href: "/marketplace", icon: MarketplaceMark },
     { name: "Portfolio", href: "/portfolio", icon: Image },
     { name: "About", href: "/about", icon: null },
     ...(userId ? [
@@ -100,6 +102,7 @@ export default function Navbar() {
     { name: "Overview", href: "/admin?tab=overview", icon: LayoutDashboard },
     { name: "Support", href: "/admin/chats", icon: MessageCircle },
     { name: "Inventory", href: "/admin?tab=plans", icon: Package },
+    { name: "Marketplace", href: "/marketplace", icon: MarketplaceMark },
     { name: "Orders", href: "/admin?tab=orders", icon: null },
     { name: "Portfolios", href: "/portfolio", icon: Image },
   ];
@@ -120,6 +123,7 @@ export default function Navbar() {
     mobileLinks = [
       { name: "Home", href: "/", icon: Home },
       { name: "Products", href: "/products", icon: Package },
+      { name: "Market", href: "/marketplace", icon: MarketplaceMark },
       { name: "Portfolio", href: "/portfolio", icon: Image },
       ...(userId ? [
         { name: "Chats", href: "/chats", icon: MessageCircle },

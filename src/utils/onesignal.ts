@@ -1,3 +1,4 @@
+import { loadPushSdk } from './pushSdkLoader.js';
 declare global {
   interface Window { OneSignal?: any; OneSignalDeferred?: any[]; Clerk?: any; }
 }
@@ -20,18 +21,7 @@ const activeSubscription = () => {
 };
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const loadOneSignalPageSdk = async () => {
-  if (typeof document === "undefined" || window.OneSignal || window.OneSignalDeferred?.length) return;
-  const existing = document.querySelector('script[src*="OneSignalSDK.page.js"]');
-  if (existing) return;
-  await new Promise<void>((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("ONESIGNAL_SDK_LOAD_FAILED"));
-    document.head.appendChild(script);
-  });
+  if (typeof document !== 'undefined') await loadPushSdk(window, document);
 };
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs = 10_000): Promise<T> => {
   let timer: number | undefined;
@@ -80,7 +70,9 @@ export const initOneSignal = (): Promise<OneSignalState> => {
       window.OneSignalDeferred = window.OneSignalDeferred || [];
       window.OneSignalDeferred.push(async (OneSignal: any) => {
         try {
-          if (!OneSignal.initialized) await OneSignal.init({ appId, notifyButton: { enable: false }, allowLocalhostAsSecureOrigin: true, serviceWorkerParam: { scope: "/" }, serviceWorkerPath: "/OneSignalSDKWorker.js" });
+          // The PWA worker already imports OneSignal. Use one root worker so
+          // installing/updating the app cannot replace the push subscription.
+          if (!OneSignal.initialized) await OneSignal.init({ appId, notifyButton: { enable: false }, allowLocalhostAsSecureOrigin: true, serviceWorkerParam: { scope: "/" }, serviceWorkerPath: "/sw.js" });
           window.clearTimeout(timeout);
           if (settled) return;
           pushSubscription()?.addEventListener?.("change", () => {

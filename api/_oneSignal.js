@@ -16,7 +16,7 @@ export const deterministicEventUuid = (namespace, eventId) => {
 };
 
 const getPrivateConfiguration = () => {
-  const appId = text(process.env.ONESIGNAL_APP_ID);
+  const appId = text(process.env.ONESIGNAL_APP_ID) || text(process.env.VITE_ONESIGNAL_APP_ID);
   const appApiKey = text(process.env.ONESIGNAL_APP_API_KEY) || text(process.env.ONESIGNAL_REST_API_KEY);
   return {
     appId,

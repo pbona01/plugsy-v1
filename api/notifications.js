@@ -16,7 +16,7 @@ const bodyOf = (req) => {
 };
 const fail = (res, status, code, message) => res.status(status).json({ success: false, code, error: message });
 const serviceClient = () => {
-  const url = String(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim();
+  const url = String(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
   const key = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
   return url && key ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 };

@@ -198,11 +198,11 @@ test("only the serialized identity coordinator performs SDK login", async () => 
   assert.equal((onesignal.match(/OneSignal\.login\(/g) || []).length, 1); assert.match(onesignal, /serializedLogin/); assert.match(onesignal, /identityGeneration/);
 });
 
-test("client initialization uses the dedicated OneSignal worker and SDK fallback", async () => {
+test("client initialization shares the PWA root worker and SDK fallback", async () => {
   const onesignal = await readFile(new URL("../src/utils/onesignal.ts", import.meta.url), "utf8");
-  assert.match(onesignal, /serviceWorkerPath: "\/OneSignalSDKWorker\.js"/);
-  assert.match(onesignal, /OneSignalSDK\.page\.js/);
-  assert.doesNotMatch(onesignal, /serviceWorkerPath: "\/sw\.js"/);
+  assert.match(onesignal, /serviceWorkerPath: "\/sw\.js"/);
+  const loader = await readFile(new URL('../src/utils/pushSdkLoader.js', import.meta.url), 'utf8');
+  assert.match(loader, /OneSignalSDK\.page\.js/);
 });
 
 test("broadcast operation does not overlap and keeps ambiguous ownership", async () => {
@@ -214,7 +214,7 @@ test("persisted message notification sends exactly one actor-scoped request", as
   const requests = [];
   const ok = await notifyPersistedMessage("message-1", {
     getToken: async () => "clerk-token",
-    fetchImpl: async (url, options) => { requests.push({ url, options }); return new Response("{}", { status: 200 }); },
+    fetchImpl: async (url, options) => { requests.push({ url, options }); return new Response('{"success":true}', { status: 200 }); },
   });
   assert.equal(ok, true); assert.equal(requests.length, 1);
   assert.equal(requests[0].url, "/api/notifications?action=notify-message");

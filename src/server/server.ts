@@ -1910,6 +1910,7 @@ async function startServer() {
   createApiProxy("/api/admin", "../../api-handlers/admin.js");
   createApiProxy("/api/categories", "../../api-handlers/categories.js");
   createApiProxy("/api/payments", "../../api/payments.js");
+  createApiProxy("/api/marketplace", "../../api/marketplace.js");
   createApiProxy("/api/video", "../../api/video.js");
   createApiProxy("/api/wallet", "../../api/wallet.js");
   createApiProxy("/api/calls", "../../api-handlers/calls.js");

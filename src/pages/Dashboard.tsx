@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase';
 import { Link, useNavigate } from 'react-router-dom';
 import { useUnreadMessages } from '../hooks/useUnreadMessages';
 import { UserMedalsDisplay } from "../components/UserMedalsDisplay";
+import { MarketplaceMark } from "../components/icons/MarketplaceMark";
 import toast from 'react-hot-toast';
 import { getOneSignalPlayerId, requestOneSignalPermission, checkOneSignalSubscribed } from '../lib/oneSignal';
 import { compressAndUpload } from "../utils/uploadMedia";
@@ -239,6 +240,13 @@ export default function Dashboard() {
       icon: Gift,
       route: '/products',
       ariaLabel: 'Explore available creative service plans',
+    },
+    {
+      id: 'marketplace',
+      label: 'Market',
+      icon: MarketplaceMark,
+      route: '/marketplace',
+      ariaLabel: 'Buy or sell digital products in the Plugsy Marketplace',
     },
     {
       id: 'refer',

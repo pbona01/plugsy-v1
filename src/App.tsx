@@ -61,6 +61,7 @@ const AdminChats = lazyWithDeploymentRecovery(() => import("./pages/AdminChats")
 const AdminPortfolioSales = lazyWithDeploymentRecovery(() => import("./pages/AdminPortfolioSales"));
 const AdminPortfolioShare = lazyWithDeploymentRecovery(() => import("./pages/AdminPortfolioShare"));
 const AdminBroadcast = lazyWithDeploymentRecovery(() => import("./pages/AdminBroadcast"));
+const AdminMarketplace = lazyWithDeploymentRecovery(() => import("./pages/AdminMarketplace"));
 import PaymentCallback from "./pages/PaymentCallback";
 import PortfolioCallback from "./pages/PortfolioCallback";
 const PortfolioDashboard = lazyWithDeploymentRecovery(() => import("./pages/PortfolioDashboard"));
@@ -70,6 +71,7 @@ const EditPortfolio = lazyWithDeploymentRecovery(() => import("./pages/EditPortf
 const PublicPortfolio = lazyWithDeploymentRecovery(() => import("./pages/PublicPortfolio").then((module) => ({ default: module.PublicPortfolio })));
 const Wallet = lazyWithDeploymentRecovery(() => import("./pages/Wallet").then((module) => ({ default: module.Wallet })));
 const WalletCallback = lazyWithDeploymentRecovery(() => import("./pages/WalletCallback").then((module) => ({ default: module.WalletCallback })));
+const Marketplace = lazyWithDeploymentRecovery(() => import("./pages/Marketplace"));
 import { TermsOfService } from "./pages/TermsOfService";
 import { PrivacyPolicy } from "./pages/PrivacyPolicy";
 import { BackgroundGradientAnimationDemo } from "./components/effects/background-gradient-animation-demo";
@@ -483,6 +485,8 @@ function AppContent({
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/products" element={<Products />} />
+          <Route path="/marketplace" element={<Marketplace />} />
+          <Route path="/marketplace/private/:accessToken" element={<Marketplace />} />
           <Route path="/medals" element={<Medals />} />
           <Route
             path="/checkout/confirm"
@@ -640,6 +644,7 @@ function AppContent({
           />
 
           {/* Admin Routes */}
+          <Route path="/admin/marketplace" element={userId && isUserAdmin ? <AdminMarketplace /> : <Navigate to={userId ? '/dashboard' : '/login'} />} />
           <Route
             path="/admin"
             element={

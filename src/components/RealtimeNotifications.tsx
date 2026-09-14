@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import toast from 'react-hot-toast';
-import { Film, Zap, MessageSquare, Phone } from 'lucide-react';
+import { Film, MessageSquare, Phone } from 'lucide-react';
 import {
   getSupportChatRows,
   getUnreadSupportMessageCount,
@@ -28,6 +28,7 @@ function playNotificationSound() {
     
     osc.start();
     osc.stop(audioContext.currentTime + 0.35);
+    osc.onended = () => { void audioContext.close(); };
   } catch (err) {
     // blocked by browser policy
   }
@@ -36,13 +37,13 @@ function playNotificationSound() {
 export default function RealtimeNotifications() {
   const { userId } = useAuth();
   const { user } = useUser();
-  const isSubscribed = React.useRef(false);
+  const isUserAdmin = user?.publicMetadata?.role === 'admin';
 
   useEffect(() => {
     if (!userId) return;
 
     const uniqueSuffix = Math.random().toString(36).slice(2, 9);
-    const isUserAdmin = user?.publicMetadata?.role === 'admin';
+    let cancelled = false;
     const handledMessageIds = new Set<string>();
     
     // Proactive re-fetch of unread message counts upon mount or window focus
@@ -50,6 +51,7 @@ export default function RealtimeNotifications() {
       if (!userId) return;
       try {
         const count = await getUnreadSupportMessageCount(userId);
+        if (cancelled) return;
         localStorage.setItem("chat_unread_count", String(count));
         window.dispatchEvent(new CustomEvent('unread-count-changed', { detail: count }));
       } catch {
@@ -65,28 +67,7 @@ export default function RealtimeNotifications() {
       if (document.visibilityState === "visible") void triggerUnreadCountRefresh();
     }, 5 * 60_000);
 
-    // Channel 1: Portfolio Reactions
-    const reactChannel = supabase
-      .channel('vp_portfolio_reactions_' + uniqueSuffix)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'vp_portfolio_views' }, 
-        (payload) => {
-           toast(
-            <div className="flex items-center gap-3">
-              <Zap className="text-yellow-500" size={20} />
-              <div>
-                <p className="font-bold text-sm">New Reaction! 🔥</p>
-                <p className="text-xs text-gray-500">Someone just reacted to your portfolio.</p>
-              </div>
-            </div>,
-            {
-               className: "bg-white/70 dark:bg-[#0D0D0F]/70 backdrop-blur-xl border border-white/10 text-slate-900 dark:text-white rounded-2xl shadow-2xl p-4",
-            }
-          );
-        }
-      )
-      .subscribe();
+    // Portfolio view inserts are not reactions and must not alert every user.
 
     // Channel 2: CapCut Logins (orders table)
     const orderChannel = supabase
@@ -117,11 +98,17 @@ export default function RealtimeNotifications() {
     const handleNewMessageReceived = async (newMsg: any) => {
       if (!newMsg) return;
       const messageId = String(newMsg.id || "");
+      if (!messageId || newMsg.sender_id === userId || cancelled) return;
       if (messageId && handledMessageIds.has(messageId)) return;
       if (messageId) {
         handledMessageIds.add(messageId);
         window.setTimeout(() => handledMessageIds.delete(messageId), 15000);
       }
+      // Broadcasts are hints, not trusted message content. Re-read through RLS.
+      const { data: persistedMessage, error: persistedError } = await supabase
+        .from('messages').select('*').eq('id', messageId).maybeSingle();
+      if (cancelled || persistedError || !persistedMessage || persistedMessage.sender_id === userId) return;
+      newMsg = persistedMessage;
       
       // Global real-time call alert notification
       if (newMsg.message_type === "call_event" && newMsg.sender_id !== userId && newMsg.content?.includes("started")) {
@@ -228,6 +215,7 @@ export default function RealtimeNotifications() {
         }
 
         let isForThisUser = false;
+        let supportConversation = false;
         try {
           const { data: chatData, error: chatError } = await supabase
             .from('chats')
@@ -237,11 +225,11 @@ export default function RealtimeNotifications() {
           if (chatError || !chatData) throw new Error("CHAT_LOOKUP_FAILED");
 
           if (isSupportChat(chatData)) {
+            supportConversation = true;
             const supportChats = await getSupportChatRows(userId);
             isForThisUser =
               supportChats.some((chat) => chat.id === newMsg.chat_id) &&
-              chatData.user_id === userId &&
-              newMsg.user_id === userId;
+              (chatData.user_id === userId || supportChats.some((chat) => chat.id === chatData.id));
           } else {
             const { data: membership, error: membershipError } = await supabase
               .from('chat_members')
@@ -256,7 +244,10 @@ export default function RealtimeNotifications() {
           console.error("[RealtimeNotifications] support chat resolution failed");
         }
 
-        if (isForThisUser && newMsg.sender_role !== 'user' && !currentPath.startsWith('/dashboard/messages') && !currentPath.startsWith('/chat')) {
+        const messageHref = supportConversation ? '/dashboard/messages' : `/chats/${newMsg.chat_id}`;
+        const viewingConversation = supportConversation ? currentPath.startsWith('/dashboard/messages') :
+          currentPath === `/chats/${newMsg.chat_id}` || currentPath === `/chat/${newMsg.chat_id}`;
+        if (isForThisUser && !viewingConversation) {
           playNotificationSound();
           toast(
             (t) => (
@@ -264,14 +255,14 @@ export default function RealtimeNotifications() {
                 className="flex items-center gap-3 cursor-pointer"
                 onClick={() => {
                   toast.dismiss(t.id);
-                  window.location.href = "/dashboard/messages";
+                  window.location.href = messageHref;
                 }}
               >
                 <div className="bg-[#3b82f6]/20 p-2 rounded-xl">
                   <MessageSquare className="text-[#3b82f6]" size={20} />
                 </div>
                 <div>
-                  <p className="font-bold text-sm text-slate-900 dark:text-white">New Message from Plugsy 💬</p>
+                  <p className="font-bold text-sm text-slate-900 dark:text-white">{supportConversation ? 'New message from Plugsy' : 'New message'}</p>
                   <p className="text-xs text-gray-500 dark:text-[#a1a1a1] line-clamp-1">
                     <span className="font-semibold text-slate-700 dark:text-white/80">{newMsg.sender_name || "Support"}:</span>{" "}
                     {messageText}
@@ -292,7 +283,6 @@ export default function RealtimeNotifications() {
       // This topic must match the sender's `user-events-${userId}` target.
       .channel('user-events-' + userId);
 
-    if (!isSubscribed.current) {
       chatMsgChannel
         .on(
           'broadcast',
@@ -312,8 +302,6 @@ export default function RealtimeNotifications() {
         )
         .subscribe();
       
-      isSubscribed.current = true;
-    }
 
     let supportMessageChannel: any = null;
     let supportSubscriptionCancelled = false;
@@ -363,10 +351,10 @@ export default function RealtimeNotifications() {
     }
 
     return () => {
+      cancelled = true;
       supportSubscriptionCancelled = true;
       window.clearInterval(unreadRefreshInterval);
       window.removeEventListener('focus', triggerUnreadCountRefresh);
-      supabase.removeChannel(reactChannel);
       supabase.removeChannel(orderChannel);
       supabase.removeChannel(chatMsgChannel);
       if (adminChannel) {
@@ -375,9 +363,8 @@ export default function RealtimeNotifications() {
       if (supportMessageChannel) {
         supabase.removeChannel(supportMessageChannel);
       }
-      isSubscribed.current = false;
     };
-  }, [userId, user]);
+  }, [userId, isUserAdmin]);
 
   return null;
 }

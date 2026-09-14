@@ -9,7 +9,8 @@ export async function notifyPersistedMessage(messageId, { getToken, fetchImpl = 
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ messageId }),
     });
-    return response.ok;
+    const result = await response.json().catch(() => null);
+    return response.ok && result?.success === true;
   } catch {
     return false;
   }
