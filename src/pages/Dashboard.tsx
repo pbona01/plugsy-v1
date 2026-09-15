@@ -279,6 +279,20 @@ export default function Dashboard() {
     }
   ];
 
+  const launchpadTones: Record<string, { glow: string; icon: string; ring: string }> = {
+    orders: { glow: 'from-blue-500/24 to-cyan-400/5', icon: 'text-blue-500', ring: 'group-hover:border-blue-500/35' },
+    portfolio: { glow: 'from-violet-500/24 to-fuchsia-400/5', icon: 'text-violet-500', ring: 'group-hover:border-violet-500/35' },
+    wallet: { glow: 'from-emerald-500/24 to-teal-400/5', icon: 'text-emerald-500', ring: 'group-hover:border-emerald-500/35' },
+    onelink: { glow: 'from-sky-500/24 to-blue-400/5', icon: 'text-sky-500', ring: 'group-hover:border-sky-500/35' },
+    chat: { glow: 'from-indigo-500/24 to-blue-400/5', icon: 'text-indigo-500', ring: 'group-hover:border-indigo-500/35' },
+    support: { glow: 'from-rose-500/24 to-orange-400/5', icon: 'text-rose-500', ring: 'group-hover:border-rose-500/35' },
+    products: { glow: 'from-amber-500/24 to-yellow-400/5', icon: 'text-amber-500', ring: 'group-hover:border-amber-500/35' },
+    marketplace: { glow: 'from-blue-600/30 to-violet-500/8', icon: 'text-blue-500', ring: 'group-hover:border-blue-500/40' },
+    refer: { glow: 'from-pink-500/24 to-rose-400/5', icon: 'text-pink-500', ring: 'group-hover:border-pink-500/35' },
+    medals: { glow: 'from-yellow-500/30 to-amber-500/8', icon: 'text-amber-500', ring: 'group-hover:border-amber-500/40' },
+    more: { glow: 'from-slate-400/22 to-slate-500/5', icon: 'text-slate-500 dark:text-slate-300', ring: 'group-hover:border-slate-400/35' },
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -320,13 +334,14 @@ export default function Dashboard() {
         <div className="grid grid-cols-3 gap-3 p-4 shrink-0">
           {launchpadItems.map((item, index) => {
             const Icon = item.icon;
+            const tone = launchpadTones[item.id] || launchpadTones.more;
             return (
               <motion.div
                 key={item.id}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.05, duration: 0.3 }}
-                className="flex flex-col items-center justify-center cursor-pointer select-none"
+                className="group flex flex-col items-center justify-center cursor-pointer select-none"
                 onClick={() => {
                   if (item.action) {
                     item.action();
@@ -338,9 +353,14 @@ export default function Dashboard() {
                 <motion.button
                   whileTap={{ scale: 0.95 }}
                   aria-label={item.ariaLabel}
-                  className="w-16 h-16 rounded-[20px] bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/5 flex items-center justify-center text-slate-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-[#3b82f6]/50 shadow-md dark:shadow-lg relative"
+                  whileHover={{ y: -3, scale: 1.025 }}
+                  className={`relative flex h-[68px] w-[68px] items-center justify-center overflow-hidden rounded-[22px] border border-white/80 bg-white/85 shadow-[0_12px_30px_rgba(15,23,42,0.10),inset_0_1px_0_rgba(255,255,255,0.95)] backdrop-blur-xl transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-white/10 dark:bg-[#151517]/90 dark:shadow-[0_16px_34px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.08)] ${tone.ring}`}
                 >
-                  <Icon size={24} strokeWidth={1.8} />
+                  <span className={`absolute inset-0 bg-gradient-to-br ${tone.glow} opacity-80 transition-opacity duration-300 group-hover:opacity-100`} />
+                  <span className="absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-white/30" />
+                  <span className={`relative grid h-10 w-10 place-items-center rounded-[14px] border border-white/70 bg-white/65 shadow-[0_8px_18px_rgba(15,23,42,0.08)] backdrop-blur-md dark:border-white/10 dark:bg-black/20 ${tone.icon}`}>
+                    <Icon size={22} strokeWidth={1.9} />
+                  </span>
                   {item.id === 'support' && unreadCount > 0 && (
                     <span 
                       id="chat-unread-badge"

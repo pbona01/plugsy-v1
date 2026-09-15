@@ -3,7 +3,7 @@ import { Helmet } from "react-helmet-async";
 import { useAuth } from "@clerk/clerk-react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { AlertCircle, ArrowRight, CheckCircle2, ChevronRight, CircleDollarSign, Clock3, Copy, FileKey2, Library, Loader2, LockKeyhole, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, Store, X } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, ChevronRight, CircleDollarSign, Clock3, Copy, FileKey2, Loader2, LockKeyhole, Plus, Search, ShieldCheck, Sparkles, Store, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { MarketplaceMark } from "../components/icons/MarketplaceMark";
 import ResaleWorkspace from "../components/marketplace/ResaleWorkspace";
@@ -97,12 +97,6 @@ export default function Marketplace() {
     if (location.pathname.endsWith('/buyer')) setMode('library');
     else if (location.pathname.endsWith('/seller')) setMode('sell');
   }, [location.pathname]);
-
-  const selectMode = (next: 'buy' | 'sell' | 'library') => {
-    if ((next === 'sell' || next === 'library') && !userId) return navigate(`/login?redirect=${next === 'sell' ? '/marketplace/seller' : '/marketplace/buyer'}`);
-    navigate(next === 'sell' ? '/marketplace/seller' : next === 'library' ? '/marketplace/buyer' : '/marketplace');
-    setMode(next);
-  };
 
   useEffect(() => { if (!isListingOpen) { setEditingId(null); setForm(emptyForm); } }, [isListingOpen]);
 
@@ -290,10 +284,7 @@ export default function Marketplace() {
           </div>
         </section>
 
-        <nav className="mt-7 flex w-full gap-2 overflow-x-auto rounded-2xl border border-brand-border bg-brand-surface p-1.5 sm:w-fit" aria-label="Marketplace sections">
-          {[{ key: "buy", label: "Marketplace", icon: ShoppingBag }, { key: "library", label: "Buyer dashboard", icon: Library }, { key: "sell", label: "Seller dashboard", icon: Store }].map(({ key, label, icon: Icon }) => <button key={key} onClick={() => selectMode(key as typeof mode)} className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black uppercase tracking-wider transition ${mode === key ? "bg-brand-text text-brand-surface shadow-lg" : "text-brand-text-secondary hover:text-brand-text"}`}><Icon size={15} />{label}</button>)}
-        </nav>
-        <div className="mt-3 text-right"><Link to="/marketplace/policy" className="text-[10px] font-black uppercase tracking-wider text-brand-text-secondary hover:text-brand-accent">Protection, seller & cookie policy</Link></div>
+        <div className="mt-6 text-right"><Link to="/marketplace/policy" className="text-[10px] font-black uppercase tracking-wider text-brand-text-secondary hover:text-brand-accent">Protection, seller & cookie policy</Link></div>
 
         {mode === "buy" && <section className="mt-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><p className="text-[11px] font-black uppercase tracking-[.2em] text-brand-accent">{privateListing ? "Private product" : "Buy with confidence"}</p><h2 className="mt-2 text-3xl font-black tracking-tight">{privateListing ? "A product shared with you" : "Find your next advantage"}</h2></div>{!privateListing && <div className="relative w-full lg:w-80"><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text-secondary" size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search products" className="h-12 w-full rounded-xl border border-brand-border bg-brand-surface pl-11 pr-4 text-sm outline-none transition focus:border-brand-accent" /></div>}</div>
