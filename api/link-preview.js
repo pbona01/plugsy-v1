@@ -113,7 +113,7 @@ function sendError(res, status) {
 
 async function getServiceClient(res, dependencies = {}) {
   if (dependencies.supabase) return dependencies.supabase;
-  const supabaseUrl = text(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
+  const supabaseUrl = text(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL);
   const serviceRoleKey = text(process.env.SUPABASE_SERVICE_ROLE_KEY);
   if (!supabaseUrl || !serviceRoleKey) {
     sendError(res, 503);
@@ -271,7 +271,7 @@ async function marketplacePreview(req, res, { id, accessToken }, dependencies = 
   const price = Number(listing.price || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 });
   const category = text(listing.category).replace(/[_-]/g, " ");
   const title = truncate(`${listing.title} | Plugsy Marketplace`, 90);
-  const description = truncate(listing.summary || listing.description || `${category} digital product · ₦${price}`, 180);
+  const description = truncate(listing.summary || listing.description || `${listing.title} · ${category} digital product · ₦${price}`, 180);
   const path = isPrivate
     ? `/marketplace/private/${encodeURIComponent(privateToken)}`
     : `/marketplace/product/${encodeURIComponent(listing.id)}`;
