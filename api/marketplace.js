@@ -224,7 +224,7 @@ async function sellerWorkspace(req, res) {
   const [{ data: listings, error: listingError }, { data: seller, error: sellerError }, { data: sales, error: salesError }] = await Promise.all([
     supabase.from("marketplace_listings").select(ownerListingFields).eq("seller_id", actor.userId).order("updated_at", { ascending: false }),
     supabase.from("marketplace_seller_profiles").select("verification_status,public_selling_enabled,public_plan_expires_at,trust_score,total_sales_count,completed_orders_count,upheld_disputes_count").eq("user_id", actor.userId).maybeSingle(),
-    supabase.from("marketplace_orders").select("id,order_reference,listing_id,buyer_id,amount,seller_amount,platform_fee,reseller_amount,payment_status,funds_status,hold_expires_at,created_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(250),
+    supabase.from("marketplace_orders").select("id,order_reference,listing_id,buyer_id,amount,seller_amount,platform_fee,reseller_amount,payment_status,funds_status,hold_expires_at,payout_available_at,created_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(250),
   ]);
   if (listingError || sellerError || salesError) throw listingError || sellerError || salesError;
   const buyerIds = [...new Set((sales || []).map((sale) => text(sale.buyer_id)).filter(Boolean))];

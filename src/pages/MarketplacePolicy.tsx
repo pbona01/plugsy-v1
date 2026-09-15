@@ -5,7 +5,8 @@ import { Link } from 'react-router-dom';
 import MarketplaceCookieConsent from '../components/marketplace/MarketplaceCookieConsent';
 
 const sections = [
-  ['Buyer protection', 'Marketplace payments are held for 10 hours. A buyer must report a genuine product issue during that window. Plugsy reviews reports and may refund the buyer and revoke access when the product is unavailable, misleading or materially different from its description.'],
+  ['Buyer protection', 'Marketplace payments are protected for 10 hours. A buyer must report a genuine product issue during that window. Plugsy reviews reports and may refund the buyer and revoke access when the product is unavailable, misleading or materially different from its description.'],
+  ['Seller payouts', 'After the 10-hour protection period without an open report, seller funds move to Processing Payout. They become available in the seller’s Plugsy Wallet at 11:00 AM on the next business day. If the protection period ends before 11:00 AM on a business day, payout is available at 11:00 AM that same day. Weekend payouts are processed on Monday.'],
   ['Digital delivery', 'Products are delivered to the buyer’s signed-in Plugsy library. Buyers must not redistribute files unless the listing expressly permits resale. Download links may expire and can be regenerated only for an entitled account.'],
   ['Seller responsibilities', 'Sellers must own or have permission to sell every file, describe products accurately, provide safe files, and complete identity verification before public publishing. Fraud, malware, copyright abuse and deceptive listings may lead to removal and frozen funds.'],
   ['Refunds and disputes', 'Digital purchases are not automatically refundable after successful delivery. During the protection window, buyers can submit one truthful report with details. Plugsy may request evidence and its recorded decision controls the held marketplace funds.'],

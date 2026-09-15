@@ -28,6 +28,10 @@
     {
       "path": "/api/bookings?action=notify-expiring",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/marketplace?action=release-due",
+      "schedule": "0 10 * * 1-5"
     }
   ],
   "headers": [{

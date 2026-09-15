@@ -257,7 +257,7 @@ export default function Marketplace() {
         headers: { "Idempotency-Key": key },
         body: JSON.stringify({ listingId: listing.id, idempotencyKey: key, privateAccessToken: listing.privateAccessToken || null, acceptedTermsVersion: "marketplace-v1", resellerCode: searchParams.get('product') === listing.id ? searchParams.get('ref') : null }),
       });
-      toast.success(`Purchase complete. Your product is now in My library. Seller funds are held until ${new Date(payload.purchase.hold_expires_at).toLocaleString()}.`);
+      toast.success(`Purchase complete. Your product is now in My library. Seller funds are protected for 10 hours, then processed for the next business-day payout.`);
       clearMarketplaceAttempt(localStorage, userId, listing.id);
       setMode("library");
     } catch (error: any) {
