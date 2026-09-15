@@ -271,7 +271,7 @@ async function marketplacePreview(req, res, { id, accessToken }, dependencies = 
   const price = Number(listing.price || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 });
   const category = text(listing.category).replace(/[_-]/g, " ");
   const title = truncate(`${listing.title} | Plugsy Marketplace`, 90);
-  const description = truncate(listing.summary || listing.description || `${listing.title} · ${category} digital product · ₦${price}`, 180);
+  const description = truncate(listing.description || listing.summary || `${listing.title} · ${category} digital product · ₦${price}`, 180);
   const path = isPrivate
     ? `/marketplace/private/${encodeURIComponent(privateToken)}`
     : `/marketplace/product/${encodeURIComponent(listing.id)}`;

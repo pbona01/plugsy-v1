@@ -99,6 +99,7 @@ export const allowedListingPayload = (body) => {
     : Number(body.resaleCommissionPercent);
   if (title.length < 3 || title.length > 100) return { error: "Use a listing title between 3 and 100 characters." };
   if (summary.length > 220 || description.length > 8000) return { error: "Your listing text is too long." };
+  if (description.length < 20) return { error: "Add a product description of at least 20 characters so buyers know exactly what they will receive." };
   if (!/^[a-z0-9_-]{2,48}$/.test(category)) return { error: "Choose a valid category." };
   if (!Number.isFinite(price) || price < 100 || price > 10_000_000) return { error: "Set a price between ₦100 and ₦10,000,000." };
   if (coverImageUrl && !isUrl(coverImageUrl)) return { error: "Cover image must be a secure URL." };
@@ -290,9 +291,10 @@ async function publishListing(req, res) {
   const nextStatus = text(body.status || "published");
   if (!/^[0-9a-f-]{36}$/i.test(listingId) || !['published', 'paused', 'archived'].includes(nextStatus)) return send(res, 400, "PUBLISH_REQUEST_INVALID", "Use a valid listing and status.");
   const supabase = getClient();
-  const { data: listing, error: listingError } = await supabase.from("marketplace_listings").select("id,visibility,delivery_url,delivery_asset_id").eq("id", listingId).eq("seller_id", actor.userId).maybeSingle();
+  const { data: listing, error: listingError } = await supabase.from("marketplace_listings").select("id,visibility,delivery_url,delivery_asset_id,description").eq("id", listingId).eq("seller_id", actor.userId).maybeSingle();
   if (listingError) throw listingError;
   if (!listing) return send(res, 404, "LISTING_NOT_FOUND", "That listing was not found.");
+  if (nextStatus === 'published' && text(listing.description).length < 20) return send(res, 400, "PRODUCT_DESCRIPTION_REQUIRED", "Add a clear product description of at least 20 characters before publishing.");
   if (nextStatus === 'published' && !listing.delivery_url && !listing.delivery_asset_id) return send(res, 400, "DELIVERY_REQUIRED", "Add a delivery link or upload a product file before publishing.");
   if (nextStatus === 'published' && listing.delivery_asset_id) {
     const {data:asset,error}=await supabase.from('marketplace_assets').select('status').eq('id',listing.delivery_asset_id).eq('seller_id',actor.userId).maybeSingle();

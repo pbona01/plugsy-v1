@@ -44,8 +44,8 @@ const WALLET_FUNDING_PAUSED_MESSAGE =
 
 const getWithdrawalFee = (amount: number): number => {
   const amt = Number(amount) || 0;
-  if (amt < 1000) return 25;
-  if (amt < 10000) return 25;
+  if (amt < 1000) return 50;
+  if (amt < 10000) return 50;
   if (amt < 100000) return 100;
   if (amt < 1000000) return 500;
   return 5000;

@@ -47,7 +47,7 @@ export default function MarketplaceProductPage() {
   const share = async () => {
     const url = window.location.href;
     try {
-      if (navigator.share) await navigator.share({ title: product?.title || "Plugsy product", text: product?.summary || product?.description || "View this digital product on Plugsy.", url });
+      if (navigator.share) await navigator.share({ title: product?.title || "Plugsy product", text: product?.description || product?.summary || "View this digital product on Plugsy.", url });
       else { await navigator.clipboard.writeText(url); toast.success("Product link copied."); }
     } catch { /* The person intentionally closed sharing. */ }
   };
@@ -83,10 +83,10 @@ export default function MarketplaceProductPage() {
   return <main className="min-h-screen bg-brand-bg px-4 pb-20 pt-24 text-brand-text sm:px-6 lg:px-8">
     <Helmet>
       <title>{product.title} | Plugsy Marketplace</title>
-      <meta name="description" content={product.summary || description.slice(0, 180)} />
+      <meta name="description" content={description.slice(0, 180)} />
       <meta property="og:type" content="product" />
       <meta property="og:title" content={`${product.title} | Plugsy Marketplace`} />
-      <meta property="og:description" content={product.summary || description.slice(0, 180)} />
+      <meta property="og:description" content={description.slice(0, 180)} />
       {product.coverImageUrl && <meta property="og:image" content={product.coverImageUrl} />}
     </Helmet>
     <div className="mx-auto max-w-6xl">
