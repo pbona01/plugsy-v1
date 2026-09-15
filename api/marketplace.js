@@ -1,10 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Resend } from "resend";
-import { buildMarketplaceEmail } from "./_marketplaceEmail.js";
+import { buildMarketplaceEmail, buildMarketplaceGuestEmail } from "./_marketplaceEmail.js";
 import { dojahOutcome, fetchDojahVerification } from './_marketplaceVerification.js';
 import { validateMarketplaceFile, createUploadUrl, verifyUploadedFile, createDownloadUrl } from './_marketplaceStorage.js';
 import { requireVerifiedClerkUser, requireVerifiedClerkAdmin } from "./_clerkAuth.js";
+import { verifyFlutterwaveReference } from "./_walletFundingWebhook.js";
 
 const text = (value) => String(value || "").trim();
 const slugify = (value) => text(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 72);
@@ -12,6 +13,7 @@ const isUrl = (value) => {
   try { const url = new URL(text(value)); return url.protocol === 'https:' && !url.username && !url.password && text(value).length <= 2048; }
   catch { return false; }
 };
+const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(value)) && text(value).length <= 254;
 const idempotencyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const marketplaceRulesVersion = "marketplace-rules-v1";
 const listingFields = "id,seller_id,title,slug,summary,description,category,price,currency,cover_image_url,delivery_label,visibility,status,resale_policy,resale_commission_percent,published_at,created_at,updated_at";
@@ -322,6 +324,97 @@ async function purchase(req, res) {
   return res.status(200).json({ success: true, purchase: data });
 }
 
+async function sendGuestReceipt(supabase, order) {
+  if (!text(process.env.RESEND_API_KEY) || order.receipt_email_sent_at) return;
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const result = await resend.emails.send(buildMarketplaceGuestEmail({
+    recipient: order.buyer_email, title: order.listing_snapshot?.title || "Digital product", amount: order.amount,
+    reference: order.order_reference, deliveryToken: order.delivery_token,
+  }), { idempotencyKey: `marketplace-guest-receipt:${order.order_reference}` });
+  if (result.error) throw new Error(result.error.name || "GUEST_RECEIPT_FAILED");
+  const { error } = await supabase.from("marketplace_guest_orders").update({ receipt_email_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", order.id).is("receipt_email_sent_at", null);
+  if (error) throw error;
+}
+
+async function finalizeGuestCheckout(reference) {
+  const supabase = getClient();
+  const { data: pending, error: pendingError } = await supabase.from("marketplace_guest_orders").select("*").eq("order_reference", reference).maybeSingle();
+  if (pendingError) throw pendingError;
+  if (!pending) throw new Error("GUEST_ORDER_NOT_FOUND");
+  let fulfilled = pending;
+  if (pending.payment_status !== "paid") {
+    const verified = await verifyFlutterwaveReference(reference);
+    const provider = verified?.data;
+    const status = text(provider?.status).toLowerCase();
+    const providerEmail = text(provider?.customer?.email || provider?.customer?.email_address).toLowerCase();
+    const providerAmount = Number(provider?.amount);
+    const providerCurrency = text(provider?.currency).toUpperCase();
+    const providerId = text(provider?.id || provider?.flw_ref || provider?.transaction_id);
+    if (verified?.status !== "success" || status !== "successful" || provider?.tx_ref !== reference || providerCurrency !== "NGN" || providerAmount !== Number(pending.amount) || !providerId || (providerEmail && providerEmail !== text(pending.buyer_email).toLowerCase())) throw new Error("GUEST_PAYMENT_NOT_CONFIRMED");
+    const { data, error } = await supabase.rpc("marketplace_fulfill_guest_checkout_v1", { p_reference: reference, p_provider_transaction_id: providerId });
+    if (error || !data?.success) throw error || new Error("GUEST_FULFILLMENT_FAILED");
+    const { data: refreshed, error: refreshError } = await supabase.from("marketplace_guest_orders").select("*").eq("order_reference", reference).single();
+    if (refreshError) throw refreshError;
+    fulfilled = refreshed;
+  }
+  try { await sendGuestReceipt(supabase, fulfilled); } catch (error) { console.error("[marketplace] guest receipt pending", error?.message || error); }
+  return fulfilled;
+}
+
+async function guestCheckout(req, res) {
+  if (process.env.MARKETPLACE_PAYMENTS_ENABLED !== "true" || process.env.MARKETPLACE_GUEST_CHECKOUT_ENABLED !== "true") return send(res, 403, "MARKETPLACE_PREVIEW", "Guest checkout is not enabled yet.");
+  const body = readBody(req);
+  const listingId = text(body.listingId);
+  const email = text(body.email).toLowerCase();
+  if (!/^[0-9a-f-]{36}$/i.test(listingId) || !isEmail(email)) return send(res, 400, "GUEST_CHECKOUT_INVALID", "Enter a valid product and email address.");
+  const secret = text(process.env.FLUTTERWAVE_SECRET_KEY);
+  if (!secret) return send(res, 503, "PAYMENT_CONFIG_REQUIRED", "Guest checkout is temporarily unavailable.");
+  const reference = `mkt_guest_${randomUUID().replaceAll("-", "")}`;
+  const supabase = getClient();
+  const { data, error } = await supabase.rpc("marketplace_create_guest_checkout_v1", { p_listing_id: listingId, p_email: email, p_reference: reference, p_private_access_token: text(body.privateAccessToken) || null });
+  if (error || !data?.success) return send(res, 409, "GUEST_CHECKOUT_UNAVAILABLE", "This product is not available for guest checkout.");
+  const siteUrl = text(process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || "https://www.plugsy.ng").replace(/\/$/, "");
+  const response = await fetch("https://api.flutterwave.com/v3/payments", { method: "POST", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ tx_ref: reference, amount: Number(data.amount), currency: "NGN", redirect_url: `${siteUrl}/marketplace/guest-checkout?reference=${encodeURIComponent(reference)}`, customer: { email }, customizations: { title: "Plugsy Marketplace", description: "Guest marketplace purchase" }, meta: { type: "marketplace_guest_checkout", listingId } }) });
+  const provider = await response.json().catch(() => null);
+  if (!response.ok || provider?.status !== "success" || !provider?.data?.link) {
+    await supabase.from("marketplace_guest_orders").update({ payment_status: "failed", updated_at: new Date().toISOString() }).eq("order_reference", reference).eq("payment_status", "pending");
+    return send(res, 502, "GUEST_CHECKOUT_UNAVAILABLE", "Flutterwave could not start this checkout.");
+  }
+  return res.status(200).json({ success: true, authorizationUrl: provider.data.link });
+}
+
+async function verifyGuestCheckout(req, res) {
+  const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
+  const body = req.method === "POST" ? readBody(req) : {};
+  const reference = text(body.reference || req.query?.reference || url.searchParams.get("reference"));
+  if (!/^mkt_guest_[A-Za-z0-9_-]{20,100}$/.test(reference)) return send(res, 400, "GUEST_REFERENCE_INVALID", "This checkout link is invalid.");
+  try {
+    const order = await finalizeGuestCheckout(reference);
+    return res.status(200).json({ success: true, pending: false, deliveryToken: order.delivery_token, receiptSent: Boolean(order.receipt_email_sent_at) });
+  } catch (error) {
+    if (text(error?.message).includes("NOT_CONFIRMED")) return res.status(200).json({ success: false, pending: true, error: "Payment confirmation is still processing." });
+    throw error;
+  }
+}
+
+async function guestDelivery(req, res) {
+  const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
+  const token = text(req.query?.token || url.searchParams.get("token"));
+  if (!/^[a-f0-9]{32}$/i.test(token)) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This delivery link is unavailable.");
+  const supabase = getClient();
+  const { data: order, error } = await supabase.from("marketplace_guest_orders").select("listing_snapshot").eq("delivery_token", token).eq("payment_status", "paid").maybeSingle();
+  if (error) throw error;
+  if (!order) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This delivery link is unavailable.");
+  if (order.listing_snapshot?.delivery_asset_id) {
+    const { data: asset, error: assetError } = await supabase.from("marketplace_assets").select("id,object_key,status,original_name").eq("id", order.listing_snapshot.delivery_asset_id).maybeSingle();
+    if (assetError) throw assetError;
+    if (!asset) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This file is no longer available.");
+    return res.status(200).json({ success: true, deliveryUrl: await createDownloadUrl(asset), deliveryLabel: order.listing_snapshot.delivery_label || "Download product" });
+  }
+  if (!isUrl(order.listing_snapshot?.delivery_url)) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This delivery link is unavailable.");
+  return res.status(200).json({ success: true, deliveryUrl: order.listing_snapshot.delivery_url, deliveryLabel: order.listing_snapshot.delivery_label || "Open product" });
+}
+
 async function library(req, res) {
   const actor = await requireActor(req, res);
   if (!actor) return;
@@ -422,7 +515,9 @@ async function releaseDue(req, res) {
   const supabase = getClient();
   const { data, error } = await supabase.rpc("marketplace_release_due_orders_v1", { p_limit: 250 });
   if (error) throw error;
-  return res.status(200).json({ success: true, released: Number(data || 0) });
+  const { data: guestData, error: guestError } = await supabase.rpc("marketplace_release_due_guest_orders_v1", { p_limit: 250 });
+  if (guestError) throw guestError;
+  return res.status(200).json({ success: true, released: Number(data || 0) + Number(guestData || 0) });
 }
 
 const secretsMatch = (expected, received) => Boolean(expected) && Buffer.byteLength(expected) === Buffer.byteLength(received) && timingSafeEqual(Buffer.from(expected), Buffer.from(received));
@@ -563,6 +658,9 @@ export default async function handler(req, res) {
     if (req.method === "GET" && action === "workspace") return await sellerWorkspace(req, res);
     if (req.method === "GET" && action === "library") return await library(req, res);
     if (req.method === "GET" && action === "delivery") return await delivery(req, res);
+    if (req.method === "GET" && action === "guest-delivery") return await guestDelivery(req, res);
+    if (req.method === "POST" && action === "guest-checkout") return await guestCheckout(req, res);
+    if ((req.method === "GET" || req.method === "POST") && action === "verify-guest-checkout") return await verifyGuestCheckout(req, res);
     if (req.method === "POST" && action === "create-listing") return await createListing(req, res);
     if (req.method === "PATCH" && action === "update-listing") return await updateListing(req, res);
     if (req.method === "POST" && action === "publish") return await publishListing(req, res);
