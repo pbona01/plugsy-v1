@@ -568,7 +568,7 @@ async function adminWorkspace(req, res) {
     supabase.from('marketplace_audit_events').select('id,actor_id,action,entity_id,details,created_at').order('created_at', { ascending: false }).limit(50),
     supabase.from('marketplace_orders').select('id,order_reference,buyer_id,seller_id,listing_id,amount,platform_fee,seller_amount,reseller_amount,payment_status,funds_status,created_at,listing:marketplace_listings(title,category)').gte('created_at', since).order('created_at', { ascending: true }).limit(5000),
     supabase.from('marketplace_listings').select('id,title,category,status,visibility,price,seller_id,created_at').order('created_at', { ascending: false }).limit(1000),
-    supabase.from('marketplace_assets').select('id,status,expected_size,actual_size,created_at').limit(2000),
+    supabase.from('marketplace_assets').select('id,seller_id,listing_id,original_name,content_type,status,expected_size,actual_size,created_at').order('created_at', { ascending: false }).limit(2000),
   ]);
   if (results.some((result) => result.error)) throw results.find((result) => result.error).error;
   const orders = results[3].data || [];
@@ -630,7 +630,7 @@ async function fileMutation(req,res,action) {
   if(!asset||!['uploading','quarantined'].includes(asset.status)) return send(res,409,'UPLOAD_UNAVAILABLE','This upload is not awaiting confirmation.');
   let actualSize; try{actualSize=await verifyUploadedFile(asset);}catch{ return send(res,409,'UPLOAD_MISMATCH','Upload is missing or does not match the expected file.'); }
   const result=await supabase.rpc('marketplace_complete_asset_v1',{p_actor_id:actor.userId,p_asset_id:asset.id,p_size:actualSize}); if(result.error) throw result.error;
-  return res.status(200).json({success:true,status:'quarantined',message:'Uploaded. Awaiting malware scanning; buyers cannot download this file yet.'});
+  return res.status(200).json({success:true,status:'quarantined',message:'Uploaded securely. It is awaiting a Marketplace security review before buyers can download it.'});
 }
 
 async function adminMutation(req, res, action) {
@@ -639,6 +639,16 @@ async function adminMutation(req, res, action) {
   if (!actor) return;
   const body = readBody(req);
   let result;
+  if (action === 'review-asset') {
+    const assetId = text(body.assetId);
+    const outcome = text(body.outcome);
+    if (!/^[0-9a-f-]{36}$/i.test(assetId) || !['clean', 'rejected'].includes(outcome)) return send(res, 400, 'ASSET_REVIEW_INVALID', 'Choose a valid uploaded file and decision.');
+    const { data, error } = await supabase.from('marketplace_assets').update({ status: outcome, scan_reference: `manual_review:${actor.userId}`, scanned_at: new Date().toISOString() }).eq('id', assetId).eq('status', 'quarantined').select('id,status').maybeSingle();
+    if (error) throw error;
+    if (!data) return send(res, 409, 'ASSET_REVIEW_UNAVAILABLE', 'This file is no longer awaiting review.');
+    await supabase.from('marketplace_audit_events').insert({ actor_id: actor.userId, action: `asset_${outcome}`, entity_id: assetId, details: { review: 'manual' } });
+    return res.status(200).json({ success: true, result: data });
+  }
   if (action === 'resolve-dispute') {
     if (!/^[0-9a-f-]{36}$/i.test(text(body.disputeId)) || !['buyer','seller'].includes(body.outcome) || text(body.note).length < 10 || text(body.note).length > 3000) return send(res, 400, 'RESOLUTION_INVALID', 'Choose an outcome and explain the decision.');
     result = await supabase.rpc('marketplace_resolve_dispute_v1', { p_admin_id: actor.userId, p_dispute_id: body.disputeId, p_outcome: body.outcome, p_note: text(body.note) });
@@ -666,7 +676,7 @@ export default async function handler(req, res) {
     if (req.method === "GET" && action === "resale-workspace") return await resaleWorkspace(req,res);
     if (req.method === "POST" && ['request-resale','decide-resale'].includes(action)) return await resaleMutation(req,res,action);
     if (req.method === "POST" && ['prepare-upload','complete-upload'].includes(action)) return await fileMutation(req,res,action);
-    if (req.method === "POST" && ['resolve-dispute','review-seller'].includes(action)) return await adminMutation(req, res, action);
+    if (req.method === "POST" && ['resolve-dispute','review-seller','review-asset'].includes(action)) return await adminMutation(req, res, action);
     if (req.method === "GET" && action === "private-listing") return await privateListing(req, res);
     if (req.method === "GET" && action === "onboarding") return await marketplaceOnboarding(req, res);
     if (req.method === "POST" && action === "accept-onboarding") return await acceptMarketplaceOnboarding(req, res);

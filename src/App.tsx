@@ -62,6 +62,7 @@ const AdminPortfolioSales = lazyWithDeploymentRecovery(() => import("./pages/Adm
 const AdminPortfolioShare = lazyWithDeploymentRecovery(() => import("./pages/AdminPortfolioShare"));
 const AdminBroadcast = lazyWithDeploymentRecovery(() => import("./pages/AdminBroadcast"));
 const AdminMarketplace = lazyWithDeploymentRecovery(() => import("./pages/AdminMarketplace"));
+const AdminMarketplaceFiles = lazyWithDeploymentRecovery(() => import("./pages/AdminMarketplaceFiles"));
 import PaymentCallback from "./pages/PaymentCallback";
 import PortfolioCallback from "./pages/PortfolioCallback";
 const PortfolioDashboard = lazyWithDeploymentRecovery(() => import("./pages/PortfolioDashboard"));
@@ -656,6 +657,7 @@ function AppContent({
 
           {/* Admin Routes */}
           <Route path="/admin/marketplace" element={userId && isUserAdmin ? <AdminMarketplace /> : <Navigate to={userId ? '/dashboard' : '/login'} />} />
+          <Route path="/admin/marketplace/files" element={userId && isUserAdmin ? <AdminMarketplaceFiles /> : <Navigate to={userId ? '/dashboard' : '/login'} />} />
           <Route
             path="/admin"
             element={
