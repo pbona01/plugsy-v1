@@ -24,6 +24,22 @@ export async function verifyUploadedFile(asset) {
   if (result.ContentLength !== Number(asset.expected_size) || result.ContentType !== asset.content_type) throw new Error('UPLOADED_FILE_MISMATCH');
   return result.ContentLength;
 }
+export async function readMarketplaceFile(asset, maxBytes) {
+  const { bucket, client } = storage();
+  const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: asset.object_key }));
+  const length = Number(result.ContentLength || 0);
+  if (!result.Body || !Number.isFinite(length) || length < 1 || length > maxBytes) throw new Error('FILE_SCAN_SIZE_LIMIT');
+  const chunks = [];
+  let received = 0;
+  for await (const chunk of result.Body) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    received += buffer.length;
+    if (received > maxBytes) throw new Error('FILE_SCAN_SIZE_LIMIT');
+    chunks.push(buffer);
+  }
+  if (received !== length) throw new Error('FILE_SCAN_READ_MISMATCH');
+  return Buffer.concat(chunks);
+}
 export async function createDownloadUrl(asset) {
   if (asset.status !== 'clean') throw new Error('FILE_SCAN_NOT_CLEAN');
   const { bucket, client } = storage();

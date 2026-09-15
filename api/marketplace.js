@@ -4,6 +4,7 @@ import { Resend } from "resend";
 import { buildMarketplaceEmail, buildMarketplaceGuestEmail } from "./_marketplaceEmail.js";
 import { dojahOutcome, fetchDojahVerification } from './_marketplaceVerification.js';
 import { validateMarketplaceFile, createUploadUrl, verifyUploadedFile, createDownloadUrl } from './_marketplaceStorage.js';
+import { scanMarketplaceAsset, checkMarketplaceAssetScan } from './_marketplaceScanner.js';
 import { requireVerifiedClerkUser, requireVerifiedClerkAdmin } from "./_clerkAuth.js";
 import { verifyFlutterwaveReference } from "./_walletFundingWebhook.js";
 
@@ -297,9 +298,23 @@ async function publishListing(req, res) {
   if (nextStatus === 'published' && text(listing.description).length < 20) return send(res, 400, "PRODUCT_DESCRIPTION_REQUIRED", "Add a clear product description of at least 20 characters before publishing.");
   if (nextStatus === 'published' && !listing.delivery_url && !listing.delivery_asset_id) return send(res, 400, "DELIVERY_REQUIRED", "Add a delivery link or upload a product file before publishing.");
   if (nextStatus === 'published' && listing.delivery_asset_id) {
-    const {data:asset,error}=await supabase.from('marketplace_assets').select('status').eq('id',listing.delivery_asset_id).eq('seller_id',actor.userId).maybeSingle();
+    let {data:asset,error}=await supabase.from('marketplace_assets').select('status,scan_reference').eq('id',listing.delivery_asset_id).eq('seller_id',actor.userId).maybeSingle();
     if(error) throw error;
-    if(asset?.status!=='clean') return send(res,409,'FILE_REVIEW_REQUIRED','Your uploaded file is awaiting Marketplace security review. Open Admin > Marketplace > File review, approve the file, then publish this product.');
+    if (asset?.status === 'quarantined' && text(asset.scan_reference).startsWith('virustotal_private:')) {
+      try {
+        const scan = await checkMarketplaceAssetScan(asset.scan_reference);
+        if (scan.state === 'clean' || scan.state === 'rejected') {
+          const { error: reviewError } = await supabase.from('marketplace_assets').update({ status: scan.state, scanned_at: new Date().toISOString() }).eq('id', listing.delivery_asset_id).eq('status', 'quarantined');
+          if (reviewError) throw reviewError;
+          asset = { ...asset, status: scan.state };
+        }
+      } catch (scanError) { console.error('[marketplace] scan status check deferred', scanError?.message || scanError); }
+    }
+    if (asset?.status === 'rejected') return send(res,422,'FILE_REJECTED','This product file did not pass the Marketplace security scan. Upload a different file.');
+    if(asset?.status!=='clean') {
+      const automaticScan = text(asset?.scan_reference).startsWith('virustotal_private:');
+      return send(res,409,'FILE_REVIEW_REQUIRED',automaticScan ? 'The automatic security scan is still finishing. Wait a moment, then publish again.' : 'Your uploaded file is awaiting Marketplace security review. Open Admin > Marketplace > File review, approve the file, then publish this product.');
+    }
   }
   if (nextStatus === 'published' && listing.visibility === 'public') {
     const { data: seller, error } = await supabase.from("marketplace_seller_profiles").select("public_selling_enabled,verification_status,public_plan_expires_at").eq("user_id", actor.userId).maybeSingle();
@@ -653,7 +668,20 @@ async function fileMutation(req,res,action) {
   if(!asset||!['uploading','quarantined'].includes(asset.status)) return send(res,409,'UPLOAD_UNAVAILABLE','This upload is not awaiting confirmation.');
   let actualSize; try{actualSize=await verifyUploadedFile(asset);}catch{ return send(res,409,'UPLOAD_MISMATCH','Upload is missing or does not match the expected file.'); }
   const result=await supabase.rpc('marketplace_complete_asset_v1',{p_actor_id:actor.userId,p_asset_id:asset.id,p_size:actualSize}); if(result.error) throw result.error;
-  return res.status(200).json({success:true,status:'quarantined',message:'Uploaded securely. It is awaiting a Marketplace security review before buyers can download it.'});
+  let scan = { state: 'manual', reason: 'scanner_unavailable' };
+  try { scan = await scanMarketplaceAsset({ ...asset, actual_size: actualSize }); } catch (scanError) { console.error('[marketplace] private file scan pending manual review', scanError?.message || scanError); }
+  if (scan.state === 'clean' || scan.state === 'rejected') {
+    const { error: scanUpdateError } = await supabase.from('marketplace_assets').update({ status: scan.state, scan_reference: `virustotal_private:${scan.analysisId}`, scanned_at: new Date().toISOString() }).eq('id', asset.id).eq('status', 'quarantined');
+    if (scanUpdateError) throw scanUpdateError;
+    if (scan.state === 'rejected') return send(res, 422, 'FILE_REJECTED', 'This file did not pass the security scan and cannot be sold.');
+    return res.status(200).json({success:true,status:'clean',message:'Uploaded and approved by the Marketplace security scan. You can publish this product now.'});
+  }
+  if (scan.state === 'pending') {
+    await supabase.from('marketplace_assets').update({ scan_reference: `virustotal_private:${scan.analysisId}` }).eq('id', asset.id).eq('status', 'quarantined');
+    return res.status(200).json({success:true,status:'quarantined',message:'Uploaded securely. The automatic security scan is still running; publish once it has completed.'});
+  }
+  const manualMessage = scan.reason === 'file_too_large' ? 'Uploaded securely. This file is too large for automatic scanning and is awaiting Marketplace security review.' : 'Uploaded securely. It is awaiting a Marketplace security review before buyers can download it.';
+  return res.status(200).json({success:true,status:'quarantined',message:manualMessage});
 }
 
 async function adminMutation(req, res, action) {

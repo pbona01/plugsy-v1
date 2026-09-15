@@ -11,6 +11,9 @@
     },
     "api/wallet.js": {
       "maxDuration": 300
+    },
+    "api/marketplace.js": {
+      "maxDuration": 60
     }
   },
   "crons": [
