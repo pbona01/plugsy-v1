@@ -275,11 +275,11 @@ async function publishListing(req, res) {
   const { data: listing, error: listingError } = await supabase.from("marketplace_listings").select("id,visibility,delivery_url,delivery_asset_id").eq("id", listingId).eq("seller_id", actor.userId).maybeSingle();
   if (listingError) throw listingError;
   if (!listing) return send(res, 404, "LISTING_NOT_FOUND", "That listing was not found.");
-  if (nextStatus === 'published' && !listing.delivery_url && !listing.delivery_asset_id) return send(res, 400, "DELIVERY_REQUIRED", "Add a secure delivery link or scanned file before publishing.");
+  if (nextStatus === 'published' && !listing.delivery_url && !listing.delivery_asset_id) return send(res, 400, "DELIVERY_REQUIRED", "Add a delivery link or upload a product file before publishing.");
   if (nextStatus === 'published' && listing.delivery_asset_id) {
     const {data:asset,error}=await supabase.from('marketplace_assets').select('status').eq('id',listing.delivery_asset_id).eq('seller_id',actor.userId).maybeSingle();
     if(error) throw error;
-    if(asset?.status!=='clean') return send(res,409,'FILE_NOT_READY','The product file must pass scanning before publishing.');
+    if(asset?.status!=='clean') return send(res,409,'FILE_REVIEW_REQUIRED','Your uploaded file is awaiting Marketplace security review. Open Admin > Marketplace > File review, approve the file, then publish this product.');
   }
   if (nextStatus === 'published' && listing.visibility === 'public') {
     const { data: seller, error } = await supabase.from("marketplace_seller_profiles").select("public_selling_enabled,verification_status,public_plan_expires_at").eq("user_id", actor.userId).maybeSingle();
