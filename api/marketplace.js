@@ -361,6 +361,21 @@ async function finalizeGuestCheckout(reference) {
   return fulfilled;
 }
 
+export async function processMarketplaceGuestPaymentWebhook(event) {
+  const eventName = text(event?.event || event?.["event.type"] || event?.type).toLowerCase();
+  const eventData = event?.data || {};
+  const metadata = eventData.meta || eventData.metadata || event?.meta || {};
+  const reference = text(eventData.tx_ref || eventData.reference);
+  if (eventName !== "charge.completed" || text(metadata?.type) !== "marketplace_guest_checkout" || !/^mkt_guest_[A-Za-z0-9_-]{20,100}$/.test(reference)) return { handled: false };
+  try {
+    const order = await finalizeGuestCheckout(reference);
+    return { handled: true, status: 200, body: { received: true, fulfilled: true, reference: order.order_reference } };
+  } catch (error) {
+    console.error("[marketplace] guest webhook pending review", { reference, message: error?.message || error });
+    return { handled: true, status: 200, body: { received: true, fulfilled: false, pending: true, reference } };
+  }
+}
+
 async function guestCheckout(req, res) {
   if (process.env.MARKETPLACE_PAYMENTS_ENABLED !== "true" || process.env.MARKETPLACE_GUEST_CHECKOUT_ENABLED !== "true") return send(res, 403, "MARKETPLACE_PREVIEW", "Guest checkout is not enabled yet.");
   const body = readBody(req);

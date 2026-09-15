@@ -71,6 +71,14 @@ async function handleFundingWebhook(req, res) {
         .json(fundingResult.body)
     }
 
+    const { processMarketplaceGuestPaymentWebhook } = await import("./marketplace.js")
+    const guestResult = await processMarketplaceGuestPaymentWebhook(event)
+    if (guestResult.handled) {
+      return res
+        .status(guestResult.status)
+        .json(guestResult.body)
+    }
+
     const eventName = getFlutterwaveEventName(event)
     const eventData = event?.data || {}
     const reference =
