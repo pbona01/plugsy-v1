@@ -8,6 +8,10 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const privateApiKey = () => String(process.env.VIRUSTOTAL_API_KEY || '').trim();
 const scanStats = (attributes = {}) => attributes.stats || attributes.last_analysis_stats || {};
+const hasFinalStats = (attributes = {}) => {
+  const stats = scanStats(attributes);
+  return ['malicious', 'suspicious', 'undetected', 'harmless'].some((key) => Object.prototype.hasOwnProperty.call(stats, key));
+};
 const dangerous = (attributes = {}) => {
   const stats = scanStats(attributes);
   return Number(stats.malicious || 0) + Number(stats.suspicious || 0) > 0;
@@ -45,17 +49,20 @@ export async function scanMarketplaceAsset(asset) {
   if (!analysisId) throw new Error('VIRUSTOTAL_ANALYSIS_MISSING');
   const completed = await waitForPrivateAnalysis(analysisId);
   if (!completed.attributes) return { state: 'pending', analysisId };
+  if (!hasFinalStats(completed.attributes)) return { state: 'manual', reason: 'scan_result_incomplete', analysisId };
   return dangerous(completed.attributes)
     ? { state: 'rejected', analysisId }
     : { state: 'clean', analysisId };
 }
 
 export async function checkMarketplaceAssetScan(scanReference) {
-  if (!privateApiKey() || !String(scanReference || '').startsWith('virustotal_private:')) return { state: 'manual' };
+  if (!privateApiKey()) return { state: 'manual', reason: 'scanner_not_configured' };
+  if (!String(scanReference || '').startsWith('virustotal_private:')) return { state: 'manual', reason: 'scan_reference_invalid' };
   const analysisId = String(scanReference).slice('virustotal_private:'.length);
   if (!analysisId) return { state: 'manual' };
   const payload = await virusTotalRequest(`/analyses/${encodeURIComponent(analysisId)}`);
   const attributes = payload?.data?.attributes || {};
   if (attributes.status !== 'completed') return { state: 'pending', analysisId };
+  if (!hasFinalStats(attributes)) return { state: 'manual', reason: 'scan_result_incomplete', analysisId };
   return dangerous(attributes) ? { state: 'rejected', analysisId } : { state: 'clean', analysisId };
 }

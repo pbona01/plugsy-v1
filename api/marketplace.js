@@ -307,6 +307,10 @@ async function publishListing(req, res) {
           const { error: reviewError } = await supabase.from('marketplace_assets').update({ status: scan.state, scanned_at: new Date().toISOString() }).eq('id', listing.delivery_asset_id).eq('status', 'quarantined');
           if (reviewError) throw reviewError;
           asset = { ...asset, status: scan.state };
+        } else if (scan.state === 'manual') {
+          const { error: reviewError } = await supabase.from('marketplace_assets').update({ scan_reference: `manual_review:${scan.reason || 'scanner_check'}` }).eq('id', listing.delivery_asset_id).eq('status', 'quarantined');
+          if (reviewError) throw reviewError;
+          asset = { ...asset, scan_reference: `manual_review:${scan.reason || 'scanner_check'}` };
         }
       } catch (scanError) { console.error('[marketplace] scan status check deferred', scanError?.message || scanError); }
     }
@@ -669,7 +673,7 @@ async function fileMutation(req,res,action) {
   let actualSize; try{actualSize=await verifyUploadedFile(asset);}catch{ return send(res,409,'UPLOAD_MISMATCH','Upload is missing or does not match the expected file.'); }
   const result=await supabase.rpc('marketplace_complete_asset_v1',{p_actor_id:actor.userId,p_asset_id:asset.id,p_size:actualSize}); if(result.error) throw result.error;
   let scan = { state: 'manual', reason: 'scanner_unavailable' };
-  try { scan = await scanMarketplaceAsset({ ...asset, actual_size: actualSize }); } catch (scanError) { console.error('[marketplace] private file scan pending manual review', scanError?.message || scanError); }
+  try { scan = await scanMarketplaceAsset({ ...asset, actual_size: actualSize }); } catch (scanError) { const code=text(scanError?.message); console.error('[marketplace] private file scan pending manual review', code || scanError); scan={ state:'manual', reason:code==='VIRUSTOTAL_401'||code==='VIRUSTOTAL_403'?'scanner_access_denied':'scanner_unavailable' }; }
   if (scan.state === 'clean' || scan.state === 'rejected') {
     const { error: scanUpdateError } = await supabase.from('marketplace_assets').update({ status: scan.state, scan_reference: `virustotal_private:${scan.analysisId}`, scanned_at: new Date().toISOString() }).eq('id', asset.id).eq('status', 'quarantined');
     if (scanUpdateError) throw scanUpdateError;
@@ -680,7 +684,7 @@ async function fileMutation(req,res,action) {
     await supabase.from('marketplace_assets').update({ scan_reference: `virustotal_private:${scan.analysisId}` }).eq('id', asset.id).eq('status', 'quarantined');
     return res.status(200).json({success:true,status:'quarantined',message:'Uploaded securely. The automatic security scan is still running; publish once it has completed.'});
   }
-  const manualMessage = scan.reason === 'file_too_large' ? 'Uploaded securely. This file is too large for automatic scanning and is awaiting Marketplace security review.' : 'Uploaded securely. It is awaiting a Marketplace security review before buyers can download it.';
+  const manualMessage = scan.reason === 'file_too_large' ? 'Uploaded securely. This file is too large for automatic scanning and is awaiting Marketplace security review.' : scan.reason === 'scanner_access_denied' ? 'Uploaded securely, but the automatic scanner could not access your VirusTotal private-scanning plan. This file is awaiting Marketplace security review.' : scan.reason === 'scan_result_incomplete' ? 'Uploaded securely. The scanner returned an incomplete result, so this file is awaiting Marketplace security review.' : 'Uploaded securely. It is awaiting a Marketplace security review before buyers can download it.';
   return res.status(200).json({success:true,status:'quarantined',message:manualMessage});
 }
 
