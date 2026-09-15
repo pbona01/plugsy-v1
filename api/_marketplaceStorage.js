@@ -16,7 +16,7 @@ function storage() {
 }
 export async function createUploadUrl(asset) {
   const { bucket, client } = storage();
-  return getSignedUrl(client, new PutObjectCommand({ Bucket: bucket, Key: asset.object_key, ContentType: asset.content_type, ContentLength: asset.expected_size }), { expiresIn: 300 });
+  return getSignedUrl(client, new PutObjectCommand({ Bucket: bucket, Key: asset.object_key, ContentType: asset.content_type, ContentLength: asset.expected_size }), { expiresIn: 60 });
 }
 export async function verifyUploadedFile(asset) {
   const { bucket, client } = storage();

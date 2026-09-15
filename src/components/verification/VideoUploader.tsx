@@ -105,6 +105,7 @@ export function VideoUploader({
           title: workTitle || file.name || "Portfolio Video",
           description: workDescription || "",
           mimeType: file.type,
+          size: file.size,
         }),
       });
 

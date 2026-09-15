@@ -192,7 +192,7 @@ export default function Marketplace() {
 
   const openSeller = () => {
     if (!userId) return navigate("/login?redirect=/marketplace");
-    setMode("sell");
+    navigate("/marketplace/seller");
   };
 
   const createListing = async (event: React.FormEvent) => {

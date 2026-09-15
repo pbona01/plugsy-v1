@@ -332,7 +332,7 @@ async function startServer() {
     },
   );
 
-  app.post("/api/admin/withdrawal-ping", async (req, res) => {
+  app.post("/api/admin/withdrawal-ping", ClerkExpressWithAuth(), adminProtectionMiddleware, async (req, res) => {
     try {
       const { email, amount } = req.body;
 
@@ -387,7 +387,7 @@ async function startServer() {
   });
 
   // Environment Diagnostics (helpful for debugging live site issues)
-  app.get("/api/health/env", ClerkExpressWithAuth(), async (req: any, res) => {
+  app.get("/api/health/env", ClerkExpressWithAuth(), adminProtectionMiddleware, async (req: any, res) => {
     try {
       res.json({
         status: "ok",

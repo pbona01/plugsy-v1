@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth, useUser } from "@clerk/clerk-react";
 import { supabase } from "../lib/supabase";
 import { compressAndUpload } from "../utils/uploadMedia";
@@ -62,6 +62,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
   const { userId, signOut, getToken } = useAuth();
   const { user } = useUser();
   const navigate = useNavigate();
+  const [routeSearchParams, setRouteSearchParams] = useSearchParams();
   const { isUserOnline } = useOnlinePresence();
   const { theme, toggleTheme } = useTheme();
 
@@ -538,6 +539,30 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
       toast.error(err.message || "Failed to initiate direct message");
     }
   };
+
+  useEffect(() => {
+    const targetId = routeSearchParams.get("start");
+    if (!targetId || !userId || !user || targetId === userId) return;
+    let cancelled = false;
+    const openMarketplaceConversation = async () => {
+      const { data, error } = await supabase
+        .from("profile_directory_v1")
+        .select(CHAT_PROFILE_COLUMNS)
+        .eq("clerk_id", targetId)
+        .maybeSingle();
+      if (!cancelled && !error && data) {
+        setRouteSearchParams({}, { replace: true });
+        await startDM(data as Profile);
+      } else if (!cancelled) {
+        toast.error("This buyer is not available in Plugsy Chat yet.");
+        setRouteSearchParams({}, { replace: true });
+      }
+    };
+    void openMarketplaceConversation();
+    return () => { cancelled = true; };
+  // Run once for an explicit marketplace chat target.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeSearchParams, setRouteSearchParams, userId, user]);
 
   const handleDeleteDM = async (e: React.MouseEvent, chatId: string, partnerName: string) => {
     e.preventDefault();

@@ -161,10 +161,31 @@ async function sellerWorkspace(req, res) {
   const [{ data: listings, error: listingError }, { data: seller, error: sellerError }, { data: sales, error: salesError }] = await Promise.all([
     supabase.from("marketplace_listings").select(ownerListingFields).eq("seller_id", actor.userId).order("updated_at", { ascending: false }),
     supabase.from("marketplace_seller_profiles").select("verification_status,public_selling_enabled,public_plan_expires_at,trust_score,total_sales_count,completed_orders_count,upheld_disputes_count").eq("user_id", actor.userId).maybeSingle(),
-    supabase.from("marketplace_orders").select("id,order_reference,listing_id,amount,funds_status,hold_expires_at,created_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(100),
+    supabase.from("marketplace_orders").select("id,order_reference,listing_id,buyer_id,amount,seller_amount,platform_fee,reseller_amount,payment_status,funds_status,hold_expires_at,created_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(250),
   ]);
   if (listingError || sellerError || salesError) throw listingError || sellerError || salesError;
-  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), trust_score: trustScoreForSeller(seller) }, listings: listings || [], sales: sales || [] });
+  const buyerIds = [...new Set((sales || []).map((sale) => text(sale.buyer_id)).filter(Boolean))];
+  let buyers = new Map();
+  if (buyerIds.length) {
+    const { data: profiles, error: profileError } = await supabase
+      .from("profile_directory_v1")
+      .select("clerk_id,username,full_name,profile_pic_url,image_url")
+      .in("clerk_id", buyerIds);
+    if (profileError) throw profileError;
+    buyers = new Map((profiles || []).map((profile) => [profile.clerk_id, profile]));
+  }
+  const listingNames = new Map((listings || []).map((listing) => [listing.id, listing.title]));
+  const safeSales = (sales || []).map((sale) => ({
+    ...sale,
+    product_title: listingNames.get(sale.listing_id) || "Digital product",
+    buyer: buyers.has(sale.buyer_id) ? {
+      id: sale.buyer_id,
+      name: buyers.get(sale.buyer_id).full_name || buyers.get(sale.buyer_id).username || "Plugsy buyer",
+      username: buyers.get(sale.buyer_id).username || null,
+      avatar: buyers.get(sale.buyer_id).profile_pic_url || buyers.get(sale.buyer_id).image_url || null,
+    } : { id: sale.buyer_id, name: "Plugsy buyer", username: null, avatar: null },
+  }));
+  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), trust_score: trustScoreForSeller(seller) }, listings: listings || [], sales: safeSales });
 }
 
 async function createListing(req, res) {

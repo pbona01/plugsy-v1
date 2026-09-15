@@ -72,6 +72,7 @@ const PublicPortfolio = lazyWithDeploymentRecovery(() => import("./pages/PublicP
 const Wallet = lazyWithDeploymentRecovery(() => import("./pages/Wallet").then((module) => ({ default: module.Wallet })));
 const WalletCallback = lazyWithDeploymentRecovery(() => import("./pages/WalletCallback").then((module) => ({ default: module.WalletCallback })));
 const Marketplace = lazyWithDeploymentRecovery(() => import("./pages/Marketplace"));
+const SellerDashboard = lazyWithDeploymentRecovery(() => import("./pages/SellerDashboard"));
 const MarketplacePolicy = lazyWithDeploymentRecovery(() => import("./pages/MarketplacePolicy"));
 import { TermsOfService } from "./pages/TermsOfService";
 import { PrivacyPolicy } from "./pages/PrivacyPolicy";
@@ -488,7 +489,7 @@ function AppContent({
           <Route path="/products" element={<Products />} />
           <Route path="/marketplace" element={<Marketplace />} />
           <Route path="/marketplace/buyer" element={<Marketplace />} />
-          <Route path="/marketplace/seller" element={<Marketplace />} />
+          <Route path="/marketplace/seller" element={userId ? <SellerDashboard /> : <Navigate to="/login?redirect=/marketplace/seller" replace />} />
           <Route path="/marketplace/policy" element={<MarketplacePolicy />} />
           <Route path="/marketplace/private/:accessToken" element={<Marketplace />} />
           <Route path="/medals" element={<Medals />} />

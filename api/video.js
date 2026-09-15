@@ -32,7 +32,11 @@ async function handleVideoUpload(req, res) {
       else bodyData = {};
     }
 
-    const { title, description, mimeType } = bodyData || {};
+    const { title, description, mimeType, size } = bodyData || {};
+    const declaredSize = Number(size);
+    if (!Number.isInteger(declaredSize) || declaredSize < 1 || declaredSize > 500 * 1024 * 1024) {
+      return res.status(400).json({ success: false, error: "Video must be between 1 byte and 500 MB." });
+    }
     const safeTitle = String(title || "Uploaded Portfolio Video").trim().slice(0, 100);
     const safeDescription = String(description || "").trim().slice(0, 5000);
     const safeMimeType = ["video/mp4", "video/webm", "video/quicktime"].includes(String(mimeType))
@@ -73,6 +77,7 @@ async function handleVideoUpload(req, res) {
           Authorization: "Bearer " + token,
           "Content-Type": "application/json",
           "X-Upload-Content-Type": safeMimeType,
+          "X-Upload-Content-Length": String(declaredSize),
         },
         body: JSON.stringify({
           snippet: {

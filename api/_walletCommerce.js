@@ -849,6 +849,7 @@ export async function handleP2PTransfer(req, res) {
 
   const supabase = getWalletServiceClient(res);
   if (!supabase) return;
+  if (!(await verifyWalletPin(supabase, context.actor.userId, context.body.pin, res))) return;
 
   const result = await callRpc(supabase, res, "transfer_wallet_p2p_v2", {
     p_actor_user_id: context.actor.userId,
@@ -1528,6 +1529,26 @@ const loadActorProfile = async (supabase, actorUserId) => {
   return error ? null : data;
 };
 
+const verifyWalletPin = async (supabase, actorUserId, candidatePin, res) => {
+  const { data: guard, error: guardError } = await supabase.rpc("wallet_pin_guard_v1", { p_actor_user_id: actorUserId, p_result: "check" });
+  if (guardError || !guard?.allowed) {
+    send(res, 429, "PIN_LOCKED", "Too many PIN attempts. Please wait before trying again.", { retryAfterSeconds: Number(guard?.retry_after_seconds || 900) });
+    return false;
+  }
+  const profile = await loadActorProfile(supabase, actorUserId);
+  const state = getPinState(profile);
+  if (!profile || !state.hash) { send(res, 409, "PIN_NOT_SET", "Security PIN is not set."); return false; }
+  const success = constantTimePinMatch(text(candidatePin), state.hash);
+  const { data: recorded, error: recordError } = await supabase.rpc("wallet_pin_guard_v1", { p_actor_user_id: actorUserId, p_result: success ? "success" : "failure" });
+  if (recordError) { send(res, 503, "PIN_SECURITY_UNAVAILABLE", "PIN security is temporarily unavailable."); return false; }
+  if (!success) {
+    const locked = recorded?.allowed === false;
+    send(res, locked ? 429 : 401, locked ? "PIN_LOCKED" : "PIN_INVALID", locked ? "Too many PIN attempts. Please wait before trying again." : "The security PIN is incorrect.", { retryAfterSeconds: Number(recorded?.retry_after_seconds || 0) });
+    return false;
+  }
+  return true;
+};
+
 export async function handleSetPin(req, res) {
   const context = await requireMutationContext(req, res);
   if (!context) return;
@@ -1643,16 +1664,7 @@ export async function handleVerifyPin(req, res) {
 
   const supabase = getWalletServiceClient(res);
   if (!supabase) return;
-  const profile = await loadActorProfile(supabase, context.actor.userId);
-  const state = getPinState(profile);
-
-  if (!profile || !state.hash) {
-    return send(res, 409, "PIN_NOT_SET", "Security PIN is not set.");
-  }
-
-  if (!constantTimePinMatch(text(context.body.pin), state.hash)) {
-    return send(res, 401, "PIN_INVALID", "The security PIN is incorrect.");
-  }
+  if (!(await verifyWalletPin(supabase, context.actor.userId, context.body.pin, res))) return;
 
   return res.status(200).json({
     success: true,
@@ -1758,16 +1770,7 @@ export async function handleWithdrawal(req, res) {
 
   const supabase = getWalletServiceClient(res);
   if (!supabase) return;
-  const profile = await loadActorProfile(supabase, context.actor.userId);
-  const state = getPinState(profile);
-
-  if (!profile || !state.hash) {
-    return send(res, 409, "PIN_NOT_SET", "Security PIN is not set.");
-  }
-
-  if (!constantTimePinMatch(text(context.body.pin), state.hash)) {
-    return send(res, 401, "PIN_INVALID", "The security PIN is incorrect.");
-  }
+  if (!(await verifyWalletPin(supabase, context.actor.userId, context.body.pin, res))) return;
 
   const reservation = await callRpc(
     supabase,
