@@ -47,7 +47,7 @@ export default function MarketplaceProductPage() {
   const share = async () => {
     const url = window.location.href;
     try {
-      if (navigator.share) await navigator.share({ title: product?.title || "Plugsy product", text: product?.summary || "", url });
+      if (navigator.share) await navigator.share({ title: product?.title || "Plugsy product", text: product?.summary || product?.description || "View this digital product on Plugsy.", url });
       else { await navigator.clipboard.writeText(url); toast.success("Product link copied."); }
     } catch { /* The person intentionally closed sharing. */ }
   };

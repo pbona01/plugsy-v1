@@ -35,6 +35,24 @@ const readBody = (req) => {
 const send = (res, status, code, error, extra = {}) =>
   res.status(status).json({ success: false, code, error, ...extra });
 
+const purchaseFailure = (error) => {
+  const message = text(error?.message || error).toUpperCase();
+  const known = {
+    INSUFFICIENT_FUNDS: [402, "INSUFFICIENT_WALLET_FUNDS", "Your Plugsy Wallet balance is too low for this purchase. Fund your wallet and try again."],
+    LISTING_NOT_AVAILABLE: [409, "PRODUCT_UNAVAILABLE", "This product is no longer available. Refresh the page and choose another product."],
+    SELF_PURCHASE_NOT_ALLOWED: [400, "SELF_PURCHASE_NOT_ALLOWED", "You cannot buy your own product."],
+    SELLER_VERIFICATION_REQUIRED: [409, "SELLER_NOT_READY", "This seller is not yet approved to receive marketplace purchases."],
+    SELLER_PLAN_EXPIRED: [409, "SELLER_PLAN_EXPIRED", "This seller's public marketplace access has expired."],
+    PRIVATE_LISTING_ACCESS_DENIED: [403, "PRIVATE_PRODUCT_ACCESS_DENIED", "This private product link is not valid."],
+    FILE_NOT_READY: [409, "PRODUCT_FILE_UNAVAILABLE", "The seller's product file is still under security review. Please try again later."],
+    DELIVERY_REQUIRED: [409, "PRODUCT_DELIVERY_UNAVAILABLE", "This product is missing its delivery setup. Please contact the seller."],
+    PROFILE_NOT_FOUND: [409, "WALLET_PROFILE_UNAVAILABLE", "Your wallet is still being set up. Refresh once, then try again."],
+    IDEMPOTENCY_KEY_REUSED: [409, "PURCHASE_RETRY_CONFLICT", "This purchase is already being processed. Please check My library before trying again."],
+  };
+  for (const [match, value] of Object.entries(known)) if (message.includes(match)) return value;
+  return [409, "MARKETPLACE_PURCHASE_FAILED", "This purchase could not be completed. Your wallet was not charged twice."];
+};
+
 export const trustScoreForSeller = (seller) => {
   const completed = Number(seller?.completed_orders_count || 0);
   const upheld = Number(seller?.upheld_disputes_count || 0);
@@ -320,7 +338,10 @@ async function purchase(req, res) {
     p_private_access_token: text(body.privateAccessToken) || null,
     p_reseller_user_id: resellerUserId,
   });
-  if (error || !data?.success) return send(res, 409, "MARKETPLACE_PURCHASE_FAILED", "This purchase could not be completed. Your wallet was not charged twice.");
+  if (error || !data?.success) {
+    const [status, code, message] = purchaseFailure(error || data?.error);
+    return send(res, status, code, message);
+  }
   return res.status(200).json({ success: true, purchase: data });
 }
 
