@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useAuth } from "@clerk/clerk-react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { AlertCircle, ArrowRight, CheckCircle2, ChevronRight, CircleDollarSign, Clock3, Copy, FileKey2, Library, Loader2, LockKeyhole, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, Store, X } from "lucide-react";
 import toast from "react-hot-toast";
@@ -11,6 +11,7 @@ import ListingFileUploader from '../components/marketplace/ListingFileUploader';
 import SellerPremiumPlan from '../components/marketplace/SellerPremiumPlan';
 import SellerVerification from '../components/marketplace/SellerVerification';
 import { marketplaceAttempt, clearMarketplaceAttempt } from '../utils/marketplaceAttempt.js';
+import MarketplaceCookieConsent from '../components/marketplace/MarketplaceCookieConsent';
 
 type Listing = {
   id: string;
@@ -68,6 +69,7 @@ const emptyForm = {
 
 export default function Marketplace() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const sharedProductId = searchParams.get('product');
   const { accessToken } = useParams<{ accessToken?: string }>();
@@ -90,6 +92,17 @@ export default function Marketplace() {
   const [reportOrderId, setReportOrderId] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState("not_as_described");
   const [reportDescription, setReportDescription] = useState("");
+
+  useEffect(() => {
+    if (location.pathname.endsWith('/buyer')) setMode('library');
+    else if (location.pathname.endsWith('/seller')) setMode('sell');
+  }, [location.pathname]);
+
+  const selectMode = (next: 'buy' | 'sell' | 'library') => {
+    if ((next === 'sell' || next === 'library') && !userId) return navigate(`/login?redirect=${next === 'sell' ? '/marketplace/seller' : '/marketplace/buyer'}`);
+    navigate(next === 'sell' ? '/marketplace/seller' : next === 'library' ? '/marketplace/buyer' : '/marketplace');
+    setMode(next);
+  };
 
   useEffect(() => { if (!isListingOpen) { setEditingId(null); setForm(emptyForm); } }, [isListingOpen]);
 
@@ -278,8 +291,9 @@ export default function Marketplace() {
         </section>
 
         <nav className="mt-7 flex w-full gap-2 overflow-x-auto rounded-2xl border border-brand-border bg-brand-surface p-1.5 sm:w-fit" aria-label="Marketplace sections">
-          {[{ key: "buy", label: "Buy", icon: ShoppingBag }, { key: "sell", label: "Sell", icon: Store }, { key: "library", label: "My library", icon: Library }].map(({ key, label, icon: Icon }) => <button key={key} onClick={() => key === "sell" ? openSeller() : key === "library" && !userId ? navigate("/login?redirect=/marketplace") : setMode(key as typeof mode)} className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black uppercase tracking-wider transition ${mode === key ? "bg-brand-text text-brand-surface shadow-lg" : "text-brand-text-secondary hover:text-brand-text"}`}><Icon size={15} />{label}</button>)}
+          {[{ key: "buy", label: "Marketplace", icon: ShoppingBag }, { key: "library", label: "Buyer dashboard", icon: Library }, { key: "sell", label: "Seller dashboard", icon: Store }].map(({ key, label, icon: Icon }) => <button key={key} onClick={() => selectMode(key as typeof mode)} className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black uppercase tracking-wider transition ${mode === key ? "bg-brand-text text-brand-surface shadow-lg" : "text-brand-text-secondary hover:text-brand-text"}`}><Icon size={15} />{label}</button>)}
         </nav>
+        <div className="mt-3 text-right"><Link to="/marketplace/policy" className="text-[10px] font-black uppercase tracking-wider text-brand-text-secondary hover:text-brand-accent">Protection, seller & cookie policy</Link></div>
 
         {mode === "buy" && <section className="mt-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><p className="text-[11px] font-black uppercase tracking-[.2em] text-brand-accent">{privateListing ? "Private product" : "Buy with confidence"}</p><h2 className="mt-2 text-3xl font-black tracking-tight">{privateListing ? "A product shared with you" : "Find your next advantage"}</h2></div>{!privateListing && <div className="relative w-full lg:w-80"><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text-secondary" size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search products" className="h-12 w-full rounded-xl border border-brand-border bg-brand-surface pl-11 pr-4 text-sm outline-none transition focus:border-brand-accent" /></div>}</div>
@@ -315,6 +329,7 @@ export default function Marketplace() {
 
       <AnimatePresence>{isListingOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/65 p-0 backdrop-blur-sm sm:items-center sm:p-6"><motion.form initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} onSubmit={createListing} className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-t-[2rem] border border-brand-border bg-brand-bg p-6 shadow-2xl sm:rounded-[2rem] sm:p-8"><div className="flex items-start justify-between gap-5"><div><p className="text-[10px] font-black uppercase tracking-[.2em] text-brand-accent">New listing</p><h2 className="mt-2 text-2xl font-black">Create your digital product</h2></div><button type="button" onClick={() => setIsListingOpen(false)} className="rounded-xl border border-brand-border p-2 text-brand-text-secondary"><X size={18} /></button></div><p className="mt-3 text-sm leading-6 text-brand-text-secondary">Your delivery link stays private. Buyers get access immediately after a successful purchase, while funds stay protected for 10 hours.</p><div className="mt-7 grid gap-5 sm:grid-cols-2"><Field label="Product title"><input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Social media content kit" className="market-input" /></Field><Field label="Price (₦)"><input required min="100" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="5000" className="market-input" /></Field><Field label="Category"><select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="market-input"><option value="templates">Templates</option><option value="courses">Courses</option><option value="design">Design</option><option value="video">Video</option><option value="social_media">Social media</option><option value="business">Business</option><option value="creator_tools">Creator tools</option></select></Field><Field label="Visibility"><select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className="market-input"><option value="private">Private — shared link only</option><option value="public">Public — seller approval required</option></select></Field><Field label="Cover image URL (optional)"><input value={form.coverImageUrl} onChange={(e) => setForm({ ...form, coverImageUrl: e.target.value })} placeholder="https://..." className="market-input" /></Field><Field label="Delivery button label"><input required value={form.deliveryLabel} onChange={(e) => setForm({ ...form, deliveryLabel: e.target.value })} placeholder="Open product" className="market-input" /></Field><div className="sm:col-span-2"><Field label="Short summary"><input value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} placeholder="Tell buyers what they get in one clear sentence." className="market-input" /></Field></div><div className="sm:col-span-2"><Field label="Full description"><textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What is included, who is it for and what result can buyers expect?" rows={4} className="market-input resize-y" /></Field></div><div className="sm:col-span-2"><Field label="Secure delivery URL"><input required value={form.deliveryUrl} onChange={(e) => setForm({ ...form, deliveryUrl: e.target.value })} placeholder="https://drive.google.com/... or your secure delivery page" className="market-input" /><p className="mt-2 text-[10px] leading-5 text-brand-text-secondary">This is only returned to entitled buyers. Use a delivery system you control; expiring links can be connected next.</p></Field></div><Field label="Resale terms"><select value={form.resalePolicy} onChange={(e) => setForm({ ...form, resalePolicy: e.target.value })} className="market-input"><option value="not_allowed">Resale not allowed</option><option value="fixed_percent">Fixed reseller percentage</option><option value="approval_required">Seller approval required</option></select></Field>{form.resalePolicy === "fixed_percent" && <Field label="Reseller commission (%)"><input required type="number" min="1" max="80" value={form.resaleCommissionPercent} onChange={(e) => setForm({ ...form, resaleCommissionPercent: e.target.value })} className="market-input" /></Field>}</div><div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><button type="button" onClick={() => setIsListingOpen(false)} className="h-11 rounded-xl border border-brand-border px-5 text-xs font-black uppercase tracking-wider">Cancel</button><button disabled={saving} className="btn-primary flex h-11 items-center justify-center gap-2 px-5 text-xs font-black uppercase tracking-wider disabled:opacity-60">{saving ? <Loader2 className="animate-spin" size={15} /> : <Plus size={15} />}Create draft</button></div></motion.form></motion.div>}</AnimatePresence>
       <style>{`.market-input { width: 100%; height: 46px; border-radius: 12px; border: 1px solid var(--brand-border, rgba(128,128,128,.25)); background: var(--brand-surface, transparent); padding: 0 14px; font-size: 14px; outline: none; } .market-input:focus { border-color: var(--brand-accent, #1677ff); box-shadow: 0 0 0 3px rgba(22,119,255,.1); } textarea.market-input { height: auto; min-height: 96px; padding-top: 12px; }`}</style>
+      <MarketplaceCookieConsent />
     </main>
   );
 }

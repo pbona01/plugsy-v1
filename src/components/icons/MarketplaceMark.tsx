@@ -7,7 +7,7 @@ type MarketplaceMarkProps = {
   strokeWidth?: number;
 };
 
-/** A small, code-native Plugsy marketplace mark: a protected storefront. */
+/** Plugsy Marketplace: a polished shopping bag with the Plugsy spark. */
 export function MarketplaceMark({
   className = "",
   size = 24,
@@ -26,36 +26,11 @@ export function MarketplaceMark({
       xmlns="http://www.w3.org/2000/svg"
     >
       <title>{title}</title>
-      <path
-        d="M5.5 13.25 7.6 6.8c.16-.5.63-.84 1.16-.84h14.48c.53 0 1 .34 1.16.84l2.1 6.45"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={strokeWidth}
-      />
-      <path
-        d="M5.5 13.25h21v2.1a3.6 3.6 0 0 1-6.06 2.6 3.6 3.6 0 0 1-5.08 0 3.6 3.6 0 0 1-5.08 0 3.6 3.6 0 0 1-4.78.36v-5.06Z"
-        fill="currentColor"
-        fillOpacity=".18"
-        stroke="currentColor"
-        strokeLinejoin="round"
-        strokeWidth={strokeWidth}
-      />
-      <path
-        d="M8.1 18.1v7.15c0 .98.8 1.78 1.78 1.78h12.24c.98 0 1.78-.8 1.78-1.78V18.1"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={strokeWidth}
-      />
-      <path
-        d="M13 27v-4.48c0-.72.58-1.3 1.3-1.3h3.4c.72 0 1.3.58 1.3 1.3V27"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={strokeWidth}
-      />
-      <path d="m23.8 8.55 1.45 1.46" stroke="currentColor" strokeLinecap="round" strokeWidth={strokeWidth} />
+      <rect x="4.5" y="7.5" width="23" height="20" rx="5" fill="currentColor" fillOpacity=".1" stroke="currentColor" strokeWidth={strokeWidth}/>
+      <path d="M11 10V8a5 5 0 0 1 10 0v2" stroke="currentColor" strokeLinecap="round" strokeWidth={strokeWidth}/>
+      <path d="M18.1 12.2 11.6 20h4.25l-1.7 6.1 6.45-8.25h-4.15l1.65-5.65Z" fill="currentColor" stroke="currentColor" strokeLinejoin="round" strokeWidth=".7"/>
+      <circle cx="8.5" cy="12" r="1" fill="currentColor" opacity=".55"/>
+      <circle cx="23.5" cy="12" r="1" fill="currentColor" opacity=".55"/>
     </svg>
   );
 }

@@ -385,13 +385,29 @@ async function adminWorkspace(req, res) {
   const supabase = getClient();
   const actor = await requireVerifiedClerkAdmin(req, res, supabase);
   if (!actor) return;
+  const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || 'localhost'}`);
+  const days = Math.min(365, Math.max(1, Number.parseInt(url.searchParams.get('days') || '30', 10) || 30));
+  const since = new Date(Date.now() - days * 86400000).toISOString();
   const results = await Promise.all([
     supabase.from('marketplace_disputes').select('id,order_id,buyer_id,seller_id,reason_code,description,status,resolution_note,created_at').order('created_at', { ascending: false }).limit(100),
     supabase.from('marketplace_seller_profiles').select('user_id,verification_status,verification_provider,verification_reference,public_selling_enabled,public_plan_expires_at,total_sales_count,completed_orders_count,upheld_disputes_count').order('updated_at', { ascending: false }).limit(100),
     supabase.from('marketplace_audit_events').select('id,actor_id,action,entity_id,details,created_at').order('created_at', { ascending: false }).limit(50),
+    supabase.from('marketplace_orders').select('id,order_reference,buyer_id,seller_id,listing_id,amount,platform_fee,seller_amount,reseller_amount,payment_status,funds_status,created_at,listing:marketplace_listings(title,category)').gte('created_at', since).order('created_at', { ascending: true }).limit(5000),
+    supabase.from('marketplace_listings').select('id,title,category,status,visibility,price,seller_id,created_at').order('created_at', { ascending: false }).limit(1000),
+    supabase.from('marketplace_assets').select('id,status,expected_size,actual_size,created_at').limit(2000),
   ]);
   if (results.some((result) => result.error)) throw results.find((result) => result.error).error;
-  return res.status(200).json({ success: true, disputes: results[0].data, sellers: results[1].data, events: results[2].data });
+  const orders = results[3].data || [];
+  const paid = orders.filter((order) => order.payment_status === 'paid');
+  const uniqueBuyers = new Set(paid.map((order) => order.buyer_id)).size;
+  return res.status(200).json({ success: true, days, generatedAt: new Date().toISOString(), disputes: results[0].data, sellers: results[1].data, events: results[2].data, orders, listings: results[4].data || [], assets: results[5].data || [], summary: {
+    grossVolume: paid.reduce((sum, order) => sum + Number(order.amount || 0), 0),
+    platformRevenue: paid.reduce((sum, order) => sum + Number(order.platform_fee || 0), 0),
+    orders: paid.length,
+    uniqueBuyers,
+    heldValue: orders.filter((order) => order.funds_status === 'held').reduce((sum, order) => sum + Number(order.seller_amount || 0), 0),
+    refundedValue: orders.filter((order) => order.payment_status === 'refunded').reduce((sum, order) => sum + Number(order.amount || 0), 0),
+  }});
 }
 
 async function resaleWorkspace(req, res) {
