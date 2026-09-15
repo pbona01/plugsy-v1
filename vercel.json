@@ -78,6 +78,32 @@
       ],
       "destination": "/api/link-preview?kind=portfolio&slug=:slug"
     },
+    {
+      "source": "/marketplace/product/:id",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": {
+            "re": "(facebookexternalhit|Facebot|facebot|Twitterbot|twitterbot|LinkedInBot|linkedinbot|Slackbot|slackbot|WhatsApp|whatsapp|TelegramBot|telegrambot|Discordbot|discordbot|Applebot|applebot|Googlebot|googlebot|Bingbot|bingbot|bot|Bot|crawler|Crawler|spider|Spider)"
+          }
+        }
+      ],
+      "destination": "/api/link-preview?kind=marketplace&id=:id"
+    },
+    {
+      "source": "/marketplace/private/:accessToken",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": {
+            "re": "(facebookexternalhit|Facebot|facebot|Twitterbot|twitterbot|LinkedInBot|linkedinbot|Slackbot|slackbot|WhatsApp|whatsapp|TelegramBot|telegrambot|Discordbot|discordbot|Applebot|applebot|Googlebot|googlebot|Bingbot|bingbot|bot|Bot|crawler|Crawler|spider|Spider)"
+          }
+        }
+      ],
+      "destination": "/api/link-preview?kind=marketplace&accessToken=:accessToken"
+    },
     { "source": "/api/sync-user", "destination": "/api/wallet?action=sync-user" },
     { "source": "/api/admin(.*)", "destination": "/api/misc?route=admin" },
     { "source": "/api/bookings(.*)", "destination": "/api/misc?route=bookings" },

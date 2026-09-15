@@ -13,6 +13,7 @@ const isUrl = (value) => {
   catch { return false; }
 };
 const idempotencyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
+const marketplaceRulesVersion = "marketplace-rules-v1";
 const listingFields = "id,seller_id,title,slug,summary,description,category,price,currency,cover_image_url,delivery_label,visibility,status,resale_policy,resale_commission_percent,published_at,created_at,updated_at";
 const ownerListingFields = `${listingFields},delivery_url,private_access_token,terms_version,delivery_asset_id`;
 
@@ -99,6 +100,46 @@ export const allowedListingPayload = (body) => {
 
 async function requireActor(req, res) {
   return requireVerifiedClerkUser(req, res);
+}
+
+async function hasAcceptedMarketplaceRules(supabase, userId) {
+  const { data, error } = await supabase
+    .from("marketplace_user_rule_acceptances")
+    .select("rules_version")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.rules_version === marketplaceRulesVersion;
+}
+
+async function marketplaceOnboarding(req, res) {
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const supabase = getClient();
+  const { data, error } = await supabase
+    .from("marketplace_user_rule_acceptances")
+    .select("rules_version,accepted_at")
+    .eq("user_id", actor.userId)
+    .maybeSingle();
+  if (error) throw error;
+  return res.status(200).json({ success: true, accepted: data?.rules_version === marketplaceRulesVersion, acceptedAt: data?.accepted_at || null, rulesVersion: marketplaceRulesVersion });
+}
+
+async function acceptMarketplaceOnboarding(req, res) {
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const body = readBody(req);
+  if (body.rulesAccepted !== true) return send(res, 400, "MARKETPLACE_RULES_REQUIRED", "Read and acknowledge the Marketplace rules to continue.");
+  const supabase = getClient();
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("marketplace_user_rule_acceptances").upsert({
+    user_id: actor.userId,
+    rules_version: marketplaceRulesVersion,
+    accepted_at: now,
+    updated_at: now,
+  }, { onConflict: "user_id" });
+  if (error) throw error;
+  return res.status(200).json({ success: true, accepted: true, rulesVersion: marketplaceRulesVersion });
 }
 
 async function loadSellers(supabase, sellerIds) {
@@ -195,6 +236,7 @@ async function createListing(req, res) {
   const parsed = allowedListingPayload(body);
   if (parsed.error) return send(res, 400, "LISTING_INVALID", parsed.error);
   const supabase = getClient();
+  if (!await hasAcceptedMarketplaceRules(supabase, actor.userId)) return send(res, 403, "MARKETPLACE_RULES_REQUIRED", "Read and acknowledge the Marketplace rules before creating a product.");
   const baseSlug = slugify(parsed.payload.title) || "plugsy-product";
   const slug = `${baseSlug}-${randomUUID().slice(0, 8)}`;
   const { data, error } = await supabase.from("marketplace_listings").insert({ seller_id: actor.userId, slug, ...parsed.payload, status: "draft" }).select(ownerListingFields).single();
@@ -259,6 +301,7 @@ async function purchase(req, res) {
   if (body.acceptedTermsVersion !== 'marketplace-v1') return send(res, 400, "BUYER_TERMS_REQUIRED", "Accept the marketplace buyer-protection terms before purchasing.");
   if (!/^[0-9a-f-]{36}$/i.test(listingId) || !idempotencyPattern.test(idempotencyKey)) return send(res, 400, "PURCHASE_REQUEST_INVALID", "The marketplace purchase request is invalid.");
   const supabase = getClient();
+  if (!await hasAcceptedMarketplaceRules(supabase, actor.userId)) return send(res, 403, "MARKETPLACE_RULES_REQUIRED", "Read and acknowledge the Marketplace rules before purchasing.");
   let resellerUserId = null;
   if (body.resellerCode) {
     if (!/^[a-f0-9]{32}$/i.test(text(body.resellerCode))) return send(res, 400, 'RESELLER_CODE_INVALID', 'The reseller code is invalid.');
@@ -515,6 +558,8 @@ export default async function handler(req, res) {
     if (req.method === "POST" && ['prepare-upload','complete-upload'].includes(action)) return await fileMutation(req,res,action);
     if (req.method === "POST" && ['resolve-dispute','review-seller'].includes(action)) return await adminMutation(req, res, action);
     if (req.method === "GET" && action === "private-listing") return await privateListing(req, res);
+    if (req.method === "GET" && action === "onboarding") return await marketplaceOnboarding(req, res);
+    if (req.method === "POST" && action === "accept-onboarding") return await acceptMarketplaceOnboarding(req, res);
     if (req.method === "GET" && action === "workspace") return await sellerWorkspace(req, res);
     if (req.method === "GET" && action === "library") return await library(req, res);
     if (req.method === "GET" && action === "delivery") return await delivery(req, res);

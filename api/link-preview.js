@@ -242,6 +242,48 @@ async function portfolioPreview(req, res, slug, dependencies = {}) {
   }));
 }
 
+async function marketplacePreview(req, res, { id, accessToken }, dependencies = {}) {
+  const productId = text(id).toLowerCase();
+  const privateToken = text(accessToken).toLowerCase();
+  const isPrivate = /^[a-f0-9]{32}$/.test(privateToken);
+  if (!isPrivate && !/^[0-9a-f-]{36}$/.test(productId)) return sendError(res, 404);
+  const supabase = await getServiceClient(res, dependencies);
+  if (!supabase) return;
+
+  let query = supabase.from("marketplace_listings")
+    .select("id,seller_id,title,summary,description,category,price,currency,cover_image_url,visibility,status,private_access_token");
+  query = isPrivate
+    ? query.eq("private_access_token", privateToken).eq("visibility", "private")
+    : query.eq("id", productId).eq("visibility", "public");
+  const { data: listing, error } = await query.eq("status", "published").maybeSingle();
+  if (error) return sendError(res, 503);
+  if (!listing) return sendError(res, 404);
+  if (!isPrivate) {
+    const { data: seller, error: sellerError } = await supabase
+      .from("marketplace_seller_profiles")
+      .select("verification_status,public_selling_enabled,public_plan_expires_at")
+      .eq("user_id", listing.seller_id)
+      .maybeSingle();
+    if (sellerError) return sendError(res, 503);
+    if (seller?.verification_status !== "verified" || !seller.public_selling_enabled || Date.parse(seller.public_plan_expires_at || "") <= Date.now()) return sendError(res, 404);
+  }
+
+  const price = Number(listing.price || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 });
+  const category = text(listing.category).replace(/[_-]/g, " ");
+  const title = truncate(`${listing.title} | Plugsy Marketplace`, 90);
+  const description = truncate(listing.summary || listing.description || `${category} digital product · ₦${price}`, 180);
+  const path = isPrivate
+    ? `/marketplace/private/${encodeURIComponent(privateToken)}`
+    : `/marketplace/product/${encodeURIComponent(listing.id)}`;
+  return res.status(200).send(renderHtml({
+    title,
+    description,
+    image: listing.cover_image_url || DEFAULT_IMAGE,
+    url: absoluteUrl(req, path),
+    type: "product",
+  }));
+}
+
 export default async function handler(req, res, dependencies = {}) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300");
@@ -254,6 +296,9 @@ export default async function handler(req, res, dependencies = {}) {
   }
   if (kind === "portfolio") {
     return portfolioPreview(req, res, req.query?.slug || url.searchParams.get("slug"), dependencies);
+  }
+  if (kind === "marketplace") {
+    return marketplacePreview(req, res, { id: req.query?.id || url.searchParams.get("id"), accessToken: req.query?.accessToken || url.searchParams.get("accessToken") }, dependencies);
   }
   return sendError(res, 404);
 }
