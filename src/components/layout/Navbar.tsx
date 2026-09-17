@@ -127,8 +127,7 @@ export default function Navbar() {
       { name: "Portfolio", href: "/portfolio", icon: Image },
       ...(userId ? [
         { name: "Chats", href: "/chats", icon: MessageCircle },
-      ] : []),
-      { name: "Support", href: "/chat", icon: LifeBuoy },
+      ] : [{ name: "Support", href: "/chat", icon: LifeBuoy }]),
     ];
   }
 
@@ -244,7 +243,8 @@ export default function Navbar() {
               ) : (
                 <Link
                   to="/login"
-                  className="p-2 bg-brand-surface rounded-full shadow-sm border border-brand-border text-brand-text-secondary hover:text-brand-text"
+                  aria-label="Sign in"
+                  className="grid h-11 w-11 place-items-center rounded-full border border-brand-border bg-brand-surface text-brand-text-secondary shadow-sm hover:text-brand-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
                 >
                   <LogIn className="w-4 h-4" />
                 </Link>
@@ -270,7 +270,9 @@ export default function Navbar() {
             <React.Fragment key={link.name}>
                 <Link
                   to={link.href}
-                  className={`flex-1 flex items-center justify-center ${isActive ? "text-brand-accent" : "text-brand-text-secondary hover:text-brand-text"}`}
+                  aria-label={link.name}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`flex min-h-11 flex-1 items-center justify-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg ${isActive ? "text-brand-accent" : "text-brand-text-secondary hover:text-brand-text"}`}
                 >
                   <div className="flex flex-col items-center justify-center w-full">
                     <div className="relative">
@@ -284,7 +286,7 @@ export default function Navbar() {
                         </span>
                       )}
                     </div>
-                    <span className="text-[9px] font-bold tracking-widest uppercase hidden md:inline">
+                    <span className="mt-1 text-[8px] font-bold tracking-wide uppercase leading-none">
                       {link.name}
                     </span>
                   </div>

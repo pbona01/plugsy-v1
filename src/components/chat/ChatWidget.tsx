@@ -170,7 +170,7 @@ export default function ChatWidget() {
   const userName = user?.firstName || 'Anwar';
 
   return (
-    <div ref={containerRef} className="fixed bottom-24 right-6 sm:right-8 sm:bottom-8 z-[100] font-sans flex flex-col items-end chat-widget-container">
+    <div ref={containerRef} className="fixed bottom-[calc(7.5rem+env(safe-area-inset-bottom))] right-5 sm:right-8 sm:bottom-8 z-[100] font-sans flex flex-col items-end chat-widget-container">
       <AnimatePresence>
         {isOpen && (
           <motion.div

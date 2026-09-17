@@ -40,7 +40,7 @@ export default function OnboardingPage() {
             initial={{ opacity: 0, y: 25 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.1, ease: "easeOut" }}
-            className="font-display text-4xl sm:text-5xl md:text-7xl font-black tracking-tight leading-[1.1] md:leading-[1.05] text-slate-900 dark:text-white mb-6"
+            className="font-display text-[2.25rem] sm:text-5xl md:text-7xl font-black tracking-tight leading-[1.08] md:leading-[1.05] text-slate-900 dark:text-white mb-6"
           >
             Verified portfolios &amp; <br className="hidden sm:inline" />
             premium subscriptions, <br className="hidden sm:inline" />
@@ -66,7 +66,7 @@ export default function OnboardingPage() {
           >
             <Link
               to="/register"
-              className="px-8 py-4 bg-[#0066ff] text-white font-bold rounded-xl text-center hover:bg-[#0066ff]/90 transition-all shadow-[0_8px_24px_rgba(0,102,255,0.25)] hover:shadow-[0_12px_32px_rgba(0,102,255,0.35)] hover:-translate-y-0.5"
+              className="px-8 py-4 bg-[#0066ff] !text-white font-bold rounded-xl text-center hover:bg-[#0066ff]/90 transition-all shadow-[0_8px_24px_rgba(0,102,255,0.25)] hover:shadow-[0_12px_32px_rgba(0,102,255,0.35)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0066ff] focus-visible:ring-offset-2"
             >
               Get Started Free<span className="sr-only">.</span>
             </Link>
@@ -85,7 +85,7 @@ export default function OnboardingPage() {
             transition={{ duration: 1, delay: 0.5 }}
             className="text-xs text-slate-400 dark:text-white/30 font-medium select-none"
           >
-            Secure payments via Paystack · Up to 30% referral payouts
+            Secure checkout via Plugsy Wallet &amp; Flutterwave · Up to 30% referral payouts
           </motion.p>
         </div>
       </section>

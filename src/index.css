@@ -255,7 +255,14 @@
 
   .btn-primary {
     background-color: var(--brand-accent);
-    @apply text-white px-8 py-4 rounded-full font-black uppercase tracking-widest text-xs transition-all shadow-[0_8px_24px_rgba(0,102,255,0.25)] hover:shadow-[0_12px_32px_rgba(0,102,255,0.35)] hover:-translate-y-1 active:scale-[0.98] disabled:opacity-50;
+    color: #ffffff !important;
+    @apply px-8 py-4 rounded-full font-black uppercase tracking-widest text-xs transition-all shadow-[0_8px_24px_rgba(0,102,255,0.25)] hover:shadow-[0_12px_32px_rgba(0,102,255,0.35)] hover:-translate-y-1 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary:focus-visible,
+  .btn-secondary:focus-visible {
+    outline: 2px solid var(--brand-accent);
+    outline-offset: 3px;
   }
 
   .btn-secondary {
@@ -264,6 +271,24 @@
 
   .input {
     @apply w-full border border-brand-border bg-brand-surface text-brand-text px-5 py-3 rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-accent focus:border-transparent transition-all font-medium;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .nav-bottom-match {
+    background: var(--brand-surface);
+    border-color: var(--brand-text-secondary);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 }
 
