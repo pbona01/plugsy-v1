@@ -85,6 +85,7 @@ import { BackgroundGradientAnimationDemo } from "./components/effects/background
 import { BackgroundComponentsDemo } from "./components/effects/background-components-demo";
 import { DemoHeroGeometric } from "./components/effects/shape-landing-hero-demo";
 import Navbar from "./components/layout/Navbar";
+import DashboardBackButton from "./components/layout/DashboardBackButton";
 import Footer from "./components/layout/Footer";
 import ChatWidget from "./components/chat/ChatWidget";
 import NotificationBell from "./components/NotificationBell";
@@ -729,10 +730,36 @@ function AppContent({
   );
 
   const isChatsView = location.pathname.startsWith("/chats");
-  // The glass navigation is the home/dashboard shell. Product, portfolio and
-  // workspace pages own their local navigation so controls never stack or clash.
-  const showGlobalNavigation = location.pathname === "/" || location.pathname === "/dashboard";
-  const isStandalonePage = isVpPage || location.pathname === "/onelink" || location.pathname.startsWith("/one/") || location.pathname.startsWith("/u/");
+  // The top bar is reserved for the main dashboard. The bottom bar remains a
+  // mobile-only map for the handful of top-level destinations it actually
+  // contains; focused flows own their own controls so nothing stacks or hides
+  // the current task.
+  const showTopNavigation = location.pathname === "/dashboard";
+  const bottomNavigationRoutes = new Set(["/", "/dashboard", "/products", "/marketplace", "/portfolio"]);
+  const showBottomNavigation = bottomNavigationRoutes.has(location.pathname) && !isAdminPage;
+  const focusedWorkspaceRoute =
+    location.pathname === "/dashboard" ||
+    location.pathname === "/" ||
+    location.pathname.startsWith("/login") ||
+    location.pathname.startsWith("/register") ||
+    location.pathname.startsWith("/signup") ||
+    location.pathname.startsWith("/onboarding") ||
+    location.pathname.startsWith("/admin") ||
+    location.pathname.startsWith("/chat") ||
+    location.pathname.startsWith("/support") ||
+    location.pathname.startsWith("/status") ||
+    location.pathname.startsWith("/one/") ||
+    location.pathname.startsWith("/u/") ||
+    location.pathname.startsWith("/vp/") ||
+    location.pathname.startsWith("/marketplace/product/") ||
+    location.pathname.startsWith("/marketplace/private/") ||
+    location.pathname.startsWith("/marketplace/guest-") ||
+    location.pathname === "/marketplace/policy" ||
+    /^\/portfolio\/[^/]+\/edit\/?$/.test(location.pathname);
+  const showDashboardBack = Boolean(userId) && !focusedWorkspaceRoute;
+  // Public profiles and public portfolios must stay free of signed-in chrome.
+  // The signed-in OneLink editor still receives the shared Dashboard back control.
+  const isStandalonePage = isVpPage || location.pathname.startsWith("/one/") || location.pathname.startsWith("/u/");
 
   if (isStandalonePage) {
     return (
@@ -745,9 +772,10 @@ function AppContent({
   return (
     <CallProvider>
       <div className={`min-h-screen flex flex-col ${isChatsPage || isChatsView ? "h-screen overflow-hidden" : ""}`}>
-        {showGlobalNavigation && !isAdminPage && !isChatsView && <Navbar />}
+        {(showTopNavigation || showBottomNavigation) && !isChatsView && <Navbar showTopBar={showTopNavigation} showBottomBar={showBottomNavigation} />}
+        <DashboardBackButton visible={showDashboardBack} />
         <main
-          className={`flex-grow ${showGlobalNavigation ? "pt-16" : ""} transition-all duration-300 ease-in-out w-full max-w-[100vw] ${isChatsPage || isChatsView ? "h-full overflow-hidden" : "overflow-x-hidden"}`}
+          className={`flex-grow ${showTopNavigation ? "pt-16" : ""} transition-all duration-300 ease-in-out w-full max-w-[100vw] ${isChatsPage || isChatsView ? "h-full overflow-hidden" : "overflow-x-hidden"}`}
         >
           {mainRoutes}
         </main>

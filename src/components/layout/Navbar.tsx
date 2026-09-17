@@ -22,7 +22,12 @@ import { MarketplaceMark } from "../icons/MarketplaceMark";
 import { isAdmin } from "../../lib/authUtils";
 import { GlassBottomNav } from "apple-liquid-glass-ui";
 
-export default function Navbar() {
+type NavbarProps = {
+  showTopBar?: boolean;
+  showBottomBar?: boolean;
+};
+
+export default function Navbar({ showTopBar = true, showBottomBar = true }: NavbarProps) {
   const { user } = useUser();
   const { userId } = useAuth();
   const { unreadCount } = useUnreadMessages();
@@ -121,7 +126,7 @@ export default function Navbar() {
     ];
   } else {
     mobileLinks = [
-      { name: "Home", href: "/", icon: Home },
+      ...(userId ? [{ name: "Dashboard", href: "/dashboard", icon: LayoutDashboard }] : [{ name: "Home", href: "/", icon: Home }]),
       { name: "Products", href: "/products", icon: Package },
       { name: "Market", href: "/marketplace", icon: MarketplaceMark },
       { name: "Portfolio", href: "/portfolio", icon: Image },
@@ -133,7 +138,7 @@ export default function Navbar() {
 
   return (
     <>
-    <div className="fixed inset-x-0 z-[9999] top-2 sm:top-6 px-4 sm:px-6 pointer-events-none flex justify-center">
+    {showTopBar && <div className="fixed inset-x-0 z-[9999] top-2 sm:top-6 px-4 sm:px-6 pointer-events-none flex justify-center">
       <GlassBottomNav className="nav-bottom-match pointer-events-auto w-full max-w-[360px] md:max-w-7xl grid items-center px-3 py-3 rounded-full overflow-hidden">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-4">
@@ -253,10 +258,10 @@ export default function Navbar() {
           </div>
         </div>
       </GlassBottomNav>
-    </div>
+    </div>}
 
     {/* Immersive Mobile Bottom Navigation */}
-    <div className="md:hidden fixed bottom-6 inset-x-0 z-40 px-4 pointer-events-none flex justify-center">
+    {showBottomBar && <div className="md:hidden fixed bottom-6 inset-x-0 z-40 px-4 pointer-events-none flex justify-center">
       <GlassBottomNav
         className="nav-bottom-match pointer-events-auto flex-1 max-w-[360px] grid items-center px-3 py-3 rounded-full overflow-hidden"
         style={{ gridTemplateColumns: `repeat(${mobileLinks.length}, minmax(0, 1fr))` }}
@@ -295,7 +300,7 @@ export default function Navbar() {
           );
         })}
       </GlassBottomNav>
-    </div>
+    </div>}
     </>
   );
 }
