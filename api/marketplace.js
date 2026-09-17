@@ -76,6 +76,13 @@ export const publicListing = (listing, seller) => ({
   deliveryLabel: listing.delivery_label || "Open product",
   resalePolicy: listing.resale_policy,
   resaleCommissionPercent: listing.resale_commission_percent === null ? null : Number(listing.resale_commission_percent),
+  fee: seller ? (() => {
+    const premium = seller.public_selling_enabled === true && Date.parse(seller.public_plan_expires_at || "") > Date.now();
+    const percent = premium ? 3 : 6;
+    const paidBy = seller.marketplace_fee_paid_by === "seller" ? "seller" : "buyer";
+    const amount = Math.round(Number(listing.price || 0) * percent) / 100;
+    return { percent, paidBy, amount, total: Number(listing.price || 0) + (paidBy === "buyer" ? amount : 0) };
+  })() : null,
   publishedAt: listing.published_at || null,
   seller: seller ? {
     trustScore: trustScoreForSeller(seller),
@@ -169,7 +176,7 @@ async function loadSellers(supabase, sellerIds) {
   if (!ids.length) return new Map();
   const { data, error } = await supabase
     .from("marketplace_seller_profiles")
-    .select("user_id,trust_score,verification_status,public_selling_enabled,public_plan_expires_at,completed_orders_count,upheld_disputes_count")
+    .select("user_id,trust_score,verification_status,public_selling_enabled,public_plan_expires_at,marketplace_fee_paid_by,completed_orders_count,upheld_disputes_count")
     .in("user_id", ids);
   if (error) throw error;
   return new Map((data || []).map((seller) => [seller.user_id, seller]));
@@ -223,7 +230,7 @@ async function sellerWorkspace(req, res) {
   const supabase = getClient();
   const [{ data: listings, error: listingError }, { data: seller, error: sellerError }, { data: sales, error: salesError }] = await Promise.all([
     supabase.from("marketplace_listings").select(ownerListingFields).eq("seller_id", actor.userId).order("updated_at", { ascending: false }),
-    supabase.from("marketplace_seller_profiles").select("verification_status,public_selling_enabled,public_plan_expires_at,trust_score,total_sales_count,completed_orders_count,upheld_disputes_count").eq("user_id", actor.userId).maybeSingle(),
+    supabase.from("marketplace_seller_profiles").select("verification_status,public_selling_enabled,public_plan_expires_at,marketplace_fee_paid_by,trust_score,total_sales_count,completed_orders_count,upheld_disputes_count").eq("user_id", actor.userId).maybeSingle(),
     supabase.from("marketplace_orders").select("id,order_reference,listing_id,buyer_id,amount,seller_amount,platform_fee,reseller_amount,payment_status,funds_status,hold_expires_at,payout_available_at,created_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(250),
   ]);
   if (listingError || sellerError || salesError) throw listingError || sellerError || salesError;
@@ -249,6 +256,20 @@ async function sellerWorkspace(req, res) {
     } : { id: sale.buyer_id, name: "Plugsy buyer", username: null, avatar: null },
   }));
   return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), trust_score: trustScoreForSeller(seller) }, listings: listings || [], sales: safeSales });
+}
+
+async function updateSellerFeePolicy(req, res) {
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const feePaidBy = text(readBody(req).feePaidBy).toLowerCase();
+  if (!['buyer', 'seller'].includes(feePaidBy)) return send(res, 400, 'FEE_POLICY_INVALID', 'Choose whether the marketplace fee is paid by you or your buyer.');
+  const supabase = getClient();
+  const { data, error } = await supabase.from('marketplace_seller_profiles')
+    .upsert({ user_id: actor.userId, marketplace_fee_paid_by: feePaidBy, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+    .select('marketplace_fee_paid_by')
+    .single();
+  if (error) throw error;
+  return res.status(200).json({ success: true, feePaidBy: data.marketplace_fee_paid_by });
 }
 
 async function createListing(req, res) {
@@ -609,19 +630,22 @@ async function adminWorkspace(req, res) {
     supabase.from('marketplace_seller_profiles').select('user_id,verification_status,verification_provider,verification_reference,public_selling_enabled,public_plan_expires_at,total_sales_count,completed_orders_count,upheld_disputes_count').order('updated_at', { ascending: false }).limit(100),
     supabase.from('marketplace_audit_events').select('id,actor_id,action,entity_id,details,created_at').order('created_at', { ascending: false }).limit(50),
     supabase.from('marketplace_orders').select('id,order_reference,buyer_id,seller_id,listing_id,amount,platform_fee,seller_amount,reseller_amount,payment_status,funds_status,created_at,listing:marketplace_listings(title,category)').gte('created_at', since).order('created_at', { ascending: true }).limit(5000),
+    supabase.from('marketplace_guest_orders').select('id,order_reference,seller_id,listing_id,buyer_email,amount,platform_fee,seller_amount,payment_status,funds_status,created_at').gte('created_at', since).order('created_at', { ascending: true }).limit(5000),
     supabase.from('marketplace_listings').select('id,title,category,status,visibility,price,seller_id,created_at').order('created_at', { ascending: false }).limit(1000),
     supabase.from('marketplace_assets').select('id,seller_id,listing_id,original_name,content_type,status,expected_size,actual_size,created_at').order('created_at', { ascending: false }).limit(2000),
   ]);
   if (results.some((result) => result.error)) throw results.find((result) => result.error).error;
   const orders = results[3].data || [];
+  const guestOrders = results[4].data || [];
   const paid = orders.filter((order) => order.payment_status === 'paid');
+  const paidGuestOrders = guestOrders.filter((order) => order.payment_status === 'paid');
   const uniqueBuyers = new Set(paid.map((order) => order.buyer_id)).size;
-  return res.status(200).json({ success: true, days, generatedAt: new Date().toISOString(), disputes: results[0].data, sellers: results[1].data, events: results[2].data, orders, listings: results[4].data || [], assets: results[5].data || [], summary: {
-    grossVolume: paid.reduce((sum, order) => sum + Number(order.amount || 0), 0),
-    platformRevenue: paid.reduce((sum, order) => sum + Number(order.platform_fee || 0), 0),
-    orders: paid.length,
+  return res.status(200).json({ success: true, days, generatedAt: new Date().toISOString(), disputes: results[0].data, sellers: results[1].data, events: results[2].data, orders, guestOrders, listings: results[5].data || [], assets: results[6].data || [], summary: {
+    grossVolume: [...paid, ...paidGuestOrders].reduce((sum, order) => sum + Number(order.amount || 0), 0),
+    platformRevenue: [...paid, ...paidGuestOrders].reduce((sum, order) => sum + Number(order.platform_fee || 0), 0),
+    orders: paid.length + paidGuestOrders.length,
     uniqueBuyers,
-    heldValue: orders.filter((order) => order.funds_status === 'held').reduce((sum, order) => sum + Number(order.seller_amount || 0), 0),
+    heldValue: [...orders, ...guestOrders].filter((order) => order.funds_status === 'held').reduce((sum, order) => sum + Number(order.seller_amount || 0), 0),
     refundedValue: orders.filter((order) => order.payment_status === 'refunded').reduce((sum, order) => sum + Number(order.amount || 0), 0),
   }});
 }
@@ -742,6 +766,7 @@ export default async function handler(req, res) {
     if (req.method === "POST" && action === "guest-checkout") return await guestCheckout(req, res);
     if ((req.method === "GET" || req.method === "POST") && action === "verify-guest-checkout") return await verifyGuestCheckout(req, res);
     if (req.method === "POST" && action === "create-listing") return await createListing(req, res);
+    if (req.method === "POST" && action === "update-fee-policy") return await updateSellerFeePolicy(req, res);
     if (req.method === "PATCH" && action === "update-listing") return await updateListing(req, res);
     if (req.method === "POST" && action === "publish") return await publishListing(req, res);
     if (req.method === "POST" && action === "purchase") return await purchase(req, res);

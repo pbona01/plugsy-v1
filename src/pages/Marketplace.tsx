@@ -87,6 +87,7 @@ export default function Marketplace() {
   const [isListingOpen, setIsListingOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [savingFeePolicy, setSavingFeePolicy] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [reportOrderId, setReportOrderId] = useState<string | null>(null);
@@ -246,6 +247,19 @@ export default function Marketplace() {
     }
   };
 
+  const setFeePolicy = async (feePaidBy: "buyer" | "seller") => {
+    setSavingFeePolicy(true);
+    try {
+      await request("/api/marketplace?action=update-fee-policy", { method: "POST", body: JSON.stringify({ feePaidBy }) });
+      setWorkspace((current) => current ? { ...current, seller: { ...current.seller, marketplace_fee_paid_by: feePaidBy } } : current);
+      toast.success(feePaidBy === "buyer" ? "Marketplace fee will be shown to buyers at checkout." : "Marketplace fee will be deducted from your earnings.");
+    } catch (error: any) {
+      toast.error(error.message || "Your fee preference could not be saved.");
+    } finally {
+      setSavingFeePolicy(false);
+    }
+  };
+
   const buyListing = async (listing: Listing) => {
     if (!userId) return navigate(`/login?redirect=/marketplace`);
     if (!window.confirm(`Buy ${listing.title} for ${formatNaira(listing.price)} from your Plugsy Wallet? You will have 10 hours to report a genuine issue.`)) return;
@@ -324,6 +338,11 @@ export default function Marketplace() {
       {mode === 'sell' && workspace && <ListingFileUploader listings={workspace.listings} onComplete={loadWorkspace} />}
       {mode === 'sell' && workspace && <SellerPremiumPlan seller={workspace.seller} onComplete={loadWorkspace} />}
       {mode === 'sell' && workspace && <SellerVerification seller={workspace.seller} onComplete={loadWorkspace} />}
+
+      {mode === 'sell' && workspace && <section className="mx-auto mt-6 max-w-7xl rounded-2xl border border-brand-border bg-brand-surface p-5 sm:p-6">
+        <p className="text-[10px] font-black uppercase tracking-[.2em] text-brand-accent">Marketplace fees</p>
+        <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h3 className="text-lg font-black">Choose who pays the platform fee</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-brand-text-secondary">Your base product price stays yours. Active Premium sellers pay 3%; other sellers pay 6%. Choose whether it is added clearly at checkout or taken from your earnings.</p></div><div className="grid gap-2 sm:grid-cols-2">{([['buyer','Pass fee to buyer'],['seller','I will cover the fee']] as const).map(([value,label]) => <button key={value} disabled={savingFeePolicy} onClick={() => void setFeePolicy(value)} className={`min-w-44 rounded-xl border px-4 py-3 text-left text-xs font-black transition disabled:opacity-50 ${((workspace.seller?.marketplace_fee_paid_by || 'buyer') === value) ? 'border-brand-accent bg-brand-accent/10 text-brand-accent' : 'border-brand-border text-brand-text-secondary hover:border-brand-accent/50'}`}><span className="block">{label}</span><span className="mt-1 block text-[10px] font-medium text-brand-text-secondary">{value === 'buyer' ? 'Shown before payment' : 'Deducted from your payout'}</span></button>)}</div></div>
+      </section>}
 
       {mode === "sell" && workspace && <section className="mx-auto mt-6 max-w-7xl rounded-2xl border border-brand-border bg-brand-surface p-5">
         <h3 className="text-lg font-bold">Manage product details</h3>

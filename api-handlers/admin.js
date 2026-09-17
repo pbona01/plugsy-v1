@@ -1281,31 +1281,30 @@ const PAID_ORDER_STATUSES = new Set(["paid", "confirmed", "success", "successful
 
 function getAnalyticsPeriod(range, now = new Date()) {
   const selectedRange = ANALYTICS_RANGES.has(range) ? range : "7d";
-  const start = new Date(now);
-  start.setUTCMinutes(0, 0, 0);
+  const end = new Date(now);
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   if (selectedRange === "7d") start.setUTCDate(start.getUTCDate() - 6);
   if (selectedRange === "30d") start.setUTCDate(start.getUTCDate() - 29);
-  if (selectedRange === "12m") {
-    start.setUTCDate(1);
-    start.setUTCMonth(start.getUTCMonth() - 11);
-  }
+  if (selectedRange === "12m") start.setUTCMonth(0, 1);
   const previousStart = new Date(start);
   if (selectedRange === "day") previousStart.setUTCDate(previousStart.getUTCDate() - 1);
   if (selectedRange === "7d") previousStart.setUTCDate(previousStart.getUTCDate() - 7);
   if (selectedRange === "30d") previousStart.setUTCDate(previousStart.getUTCDate() - 30);
-  if (selectedRange === "12m") previousStart.setUTCMonth(previousStart.getUTCMonth() - 12);
+  if (selectedRange === "12m") previousStart.setTime(start.getTime());
   return {
     range: selectedRange,
     start,
-    end: now,
+    end,
     previousStart,
-    label: { day: "Today", "7d": "Last 7 days", "30d": "Last 30 days", "12m": "Last 12 months" }[selectedRange],
+    label: { day: "Today", "7d": "Last 7 days", "30d": "Last 30 days", "12m": `${now.getUTCFullYear()} year to date` }[selectedRange],
   };
 }
 
 function makeAnalyticsBuckets(period) {
   const buckets = [];
-  const bucketCount = period.range === "day" ? 24 : period.range === "12m" ? 12 : period.range === "30d" ? 30 : 7;
+  const bucketCount = period.range === "day" ? 24 : period.range === "12m"
+    ? ((period.end.getUTCFullYear() - period.start.getUTCFullYear()) * 12) + period.end.getUTCMonth() - period.start.getUTCMonth() + 1
+    : period.range === "30d" ? 30 : 7;
   for (let index = 0; index < bucketCount; index += 1) {
     const date = new Date(period.start);
     if (period.range === "day") date.setUTCHours(index);
@@ -1359,14 +1358,20 @@ export async function handleAnalytics(req, res, dependencies = {}) {
     const period = getAnalyticsPeriod(requestedRange);
     const queryStart = period.previousStart.toISOString();
     const queryEnd = period.end.toISOString();
-    const [orderCountResult, portfolioCountResult] = await Promise.all([
+    const [orderCountResult, portfolioCountResult, marketplaceOrderCountResult, marketplaceGuestOrderCountResult] = await Promise.all([
       supabase.from("orders").select("id", { count: "exact", head: true }).gte("created_at", queryStart).lte("created_at", queryEnd),
       supabase.from("portfolio_purchases").select("id", { count: "exact", head: true }).gte("created_at", queryStart).lte("created_at", queryEnd),
+      supabase.from("marketplace_orders").select("id", { count: "exact", head: true }).gte("created_at", queryStart).lte("created_at", queryEnd),
+      supabase.from("marketplace_guest_orders").select("id", { count: "exact", head: true }).gte("created_at", queryStart).lte("created_at", queryEnd),
     ]);
-    if (orderCountResult?.error || portfolioCountResult?.error || !Number.isSafeInteger(orderCountResult?.count) || !Number.isSafeInteger(portfolioCountResult?.count)) {
+    if (
+      orderCountResult?.error || portfolioCountResult?.error || marketplaceOrderCountResult?.error || marketplaceGuestOrderCountResult?.error
+      || !Number.isSafeInteger(orderCountResult?.count) || !Number.isSafeInteger(portfolioCountResult?.count)
+      || !Number.isSafeInteger(marketplaceOrderCountResult?.count) || !Number.isSafeInteger(marketplaceGuestOrderCountResult?.count)
+    ) {
       throw new AdminOverviewFailure("ADMIN_OVERVIEW_DATABASE_ERROR");
     }
-    const [orders, portfolioPurchases] = await Promise.all([
+    const [orders, portfolioPurchases, marketplaceOrders, marketplaceGuestOrders] = await Promise.all([
       fetchBoundedRows((from, to) => supabase
         .from("orders")
         .select("id,status,amount,product_name,created_at")
@@ -1383,20 +1388,51 @@ export async function handleAnalytics(req, res, dependencies = {}) {
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to), { expectedCount: portfolioCountResult.count }),
+      fetchBoundedRows((from, to) => supabase
+        .from("marketplace_orders")
+        .select("id,payment_status,funds_status,amount,listing_snapshot,created_at")
+        .gte("created_at", queryStart)
+        .lte("created_at", queryEnd)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to), { expectedCount: marketplaceOrderCountResult.count }),
+      fetchBoundedRows((from, to) => supabase
+        .from("marketplace_guest_orders")
+        .select("id,payment_status,amount,listing_snapshot,created_at")
+        .gte("created_at", queryStart)
+        .lte("created_at", queryEnd)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to), { expectedCount: marketplaceGuestOrderCountResult.count }),
     ]);
     const currentSales = [];
     const previousSales = [];
-    const addSale = (record, name, isPaid = true) => {
-      if (!isPaid) return;
+    let currentPendingPayments = 0;
+    const addSale = (record, name, isPaid = true, isPending = false) => {
       const createdAt = new Date(record?.created_at || "");
       const amount = Number(record?.amount || 0);
       if (Number.isNaN(createdAt.getTime()) || !Number.isFinite(amount) || amount < 0) return;
+      if (!isPaid) {
+        if (isPending && createdAt >= period.start && createdAt <= period.end) currentPendingPayments += 1;
+        return;
+      }
       const sale = { name: textValue(name) || "Unnamed product", amount, createdAt };
       if (createdAt >= period.start && createdAt <= period.end) currentSales.push(sale);
       else if (createdAt >= period.previousStart && createdAt < period.start) previousSales.push(sale);
     };
-    orders.forEach((order) => addSale(order, order.product_name, PAID_ORDER_STATUSES.has(textValue(order.status).toLowerCase())));
+    orders.forEach((order) => {
+      const status = textValue(order.status).toLowerCase();
+      addSale(order, order.product_name, PAID_ORDER_STATUSES.has(status), status === "pending");
+    });
     portfolioPurchases.forEach((purchase) => addSale(purchase, categoryLabel(purchase.category)));
+    marketplaceOrders.forEach((order) => {
+      const paymentStatus = textValue(order.payment_status).toLowerCase();
+      addSale(order, order?.listing_snapshot?.title || "Marketplace product", paymentStatus === "paid", paymentStatus === "pending");
+    });
+    marketplaceGuestOrders.forEach((order) => {
+      const paymentStatus = textValue(order.payment_status).toLowerCase();
+      addSale(order, order?.listing_snapshot?.title || "Marketplace product", paymentStatus === "paid", paymentStatus === "pending");
+    });
     const buckets = makeAnalyticsBuckets(period);
     const bucketMap = new Map(buckets.map((bucket) => [bucket.key, bucket]));
     const products = new Map();
@@ -1413,10 +1449,13 @@ export async function handleAnalytics(req, res, dependencies = {}) {
       label: period.label,
       series: buckets.map(({ key, ...bucket }) => bucket),
       successfulPayments: currentSales.length,
+      pendingPayments: currentPendingPayments,
+      recordedPayments: currentSales.length + currentPendingPayments,
       totalRevenue,
       averageOrder: currentSales.length ? totalRevenue / currentSales.length : 0,
-      revenueChange: analyticsPercentChange(totalRevenue, previousRevenue),
-      orderChange: analyticsPercentChange(currentSales.length, previousSales.length),
+      comparisonAvailable: period.range !== "12m",
+      revenueChange: period.range === "12m" ? null : analyticsPercentChange(totalRevenue, previousRevenue),
+      orderChange: period.range === "12m" ? null : analyticsPercentChange(currentSales.length, previousSales.length),
       topProducts: [...products.entries()]
         .sort((left, right) => right[1].orders - left[1].orders || right[1].revenue - left[1].revenue)
         .slice(0, 6),

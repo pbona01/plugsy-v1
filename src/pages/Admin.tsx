@@ -790,14 +790,16 @@ export default function Admin() {
     const countryName = (code: string) => { try { return new Intl.DisplayNames(['en'], { type: 'region' }).of(code) || code; } catch { return code; } };
     const locations = new Map<string, number>();
     safeArray(allUsers).forEach((entry) => { const code = String(entry.location || '').trim().toUpperCase(); if (/^[A-Z]{2}$/.test(code)) locations.set(countryName(code), (locations.get(countryName(code)) || 0) + 1); });
-    const selectedRangeLabel = { day: 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days', '12m': 'Last 12 months' }[analyticsRange];
+    const selectedRangeLabel = { day: 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days', '12m': `${new Date().getFullYear()} year to date` }[analyticsRange];
     return {
       loaded: Boolean(analyticsData),
       label: analyticsData?.label || selectedRangeLabel,
       series: Array.isArray(analyticsData?.series) ? analyticsData.series : [],
       successfulPayments: Number(analyticsData?.successfulPayments || 0),
+      pendingPayments: Number(analyticsData?.pendingPayments || 0),
       totalRevenue: Number(analyticsData?.totalRevenue || 0),
       averageOrder: Number(analyticsData?.averageOrder || 0),
+      comparisonAvailable: analyticsData?.comparisonAvailable !== false,
       revenueChange: analyticsData?.revenueChange ?? 0,
       orderChange: analyticsData?.orderChange ?? 0,
       topProducts: Array.isArray(analyticsData?.topProducts) ? analyticsData.topProducts : [],
@@ -1518,18 +1520,18 @@ export default function Admin() {
                 <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                   <div><h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">Analytics</h2><p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">Verified business performance</p></div>
                   <div className="flex items-center gap-1 rounded-2xl border border-brand-border bg-brand-surface p-1" aria-label="Analytics period">
-                    {[['day','Today'],['7d','7 days'],['30d','30 days'],['12m','12 months']].map(([value, label]) => <button key={value} onClick={() => setAnalyticsRange(value as typeof analyticsRange)} className={cn("rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-wider transition-all", analyticsRange === value ? "bg-brand-accent text-white shadow-lg" : "text-brand-text-secondary hover:text-brand-text")}>{label}</button>)}
+                    {[['day','Today'],['7d','7 days'],['30d','30 days'],['12m','2026 YTD']].map(([value, label]) => <button key={value} onClick={() => setAnalyticsRange(value as typeof analyticsRange)} className={cn("rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-wider transition-all", analyticsRange === value ? "bg-brand-accent text-white shadow-lg" : "text-brand-text-secondary hover:text-brand-text")}>{value === '12m' ? `${new Date().getFullYear()} YTD` : label}</button>)}
                   </div>
                 </header>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6">
                     {[
-                      { icon: DollarSign, label: `Sales volume · ${analytics.label}`, val: analytics.loaded ? formatCurrency(analytics.totalRevenue) : '—', color: 'text-emerald-400', change: analytics.loaded ? analytics.revenueChange : undefined },
-                      { icon: CreditCard, label: `Successful payments · ${analytics.label}`, val: analytics.loaded ? analytics.successfulPayments.toLocaleString() : '—', color: 'text-blue-400', change: analytics.loaded ? analytics.orderChange : undefined },
+                      { icon: DollarSign, label: `Sales volume · ${analytics.label}`, val: analytics.loaded ? formatCurrency(analytics.totalRevenue) : '—', color: 'text-emerald-400', change: analytics.loaded && analytics.comparisonAvailable ? analytics.revenueChange : undefined },
+                      { icon: CreditCard, label: `Successful payments · ${analytics.label}`, val: analytics.loaded ? analytics.successfulPayments.toLocaleString() : '—', color: 'text-blue-400', change: analytics.loaded && analytics.comparisonAvailable ? analytics.orderChange : undefined },
                       { icon: TrendingUp, label: 'Average order value', val: analytics.loaded ? formatCurrency(analytics.averageOrder) : '—', color: 'text-violet-400' },
                       { icon: UsersIcon, label: 'Registered users', val: overviewMetrics ? Number(dbStats.registeredUsers).toLocaleString() : '—', color: 'text-cyan-400' },
                       { icon: Crown, label: 'Active subscriptions', val: overviewMetrics ? Number(dbStats.activeSubscriptions).toLocaleString() : '—', color: 'text-brand-accent', tab: 'subscriptions' },
-                      { icon: Clock, label: 'Pending orders', val: overviewMetrics ? Number(dbStats.pendingOrders).toLocaleString() : '—', color: 'text-amber-400', tab: 'pending' },
+                      { icon: Clock, label: `Payments processing · ${analytics.label}`, val: analytics.loaded ? analytics.pendingPayments.toLocaleString() : '—', color: 'text-amber-400' },
                       { icon: MessageSquare, label: 'Action required', val: overviewMetrics ? Number(dbStats.actionRequiredChats).toLocaleString() : '—', color: 'text-rose-400', tab: 'chats' },
                       { icon: UsersIcon, label: 'Online now', val: Math.max(onlineSignedInCount, Number(overviewMetrics?.recentlyActiveUsers || 0)).toLocaleString(), color: 'text-teal-400' }
                     ].map((stat, i) => (
