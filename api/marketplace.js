@@ -182,6 +182,47 @@ async function loadSellers(supabase, sellerIds) {
   return new Map((data || []).map((seller) => [seller.user_id, seller]));
 }
 
+async function followedSellers(req, res) {
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const supabase = getClient();
+  const { data, error } = await supabase
+    .from('marketplace_seller_follows')
+    .select('seller_id')
+    .eq('follower_id', actor.userId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return res.status(200).json({ success: true, sellerIds: (data || []).map((row) => row.seller_id) });
+}
+
+async function setSellerFollow(req, res) {
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const body = readBody(req);
+  const sellerId = text(body.sellerId);
+  const follow = body.follow === true;
+  if (!/^user_[A-Za-z0-9]+$/.test(sellerId)) return send(res, 400, 'SELLER_ID_INVALID', 'Choose a valid seller.');
+  if (sellerId === actor.userId) return send(res, 400, 'SELF_FOLLOW_NOT_ALLOWED', 'You cannot follow your own store.');
+  const supabase = getClient();
+  const { data: seller, error: sellerError } = await supabase
+    .from('marketplace_seller_profiles')
+    .select('user_id')
+    .eq('user_id', sellerId)
+    .maybeSingle();
+  if (sellerError) throw sellerError;
+  if (!seller) return send(res, 404, 'SELLER_NOT_FOUND', 'This seller is no longer available.');
+  if (follow) {
+    const { error } = await supabase.from('marketplace_seller_follows')
+      .upsert({ follower_id: actor.userId, seller_id: sellerId }, { onConflict: 'follower_id,seller_id', ignoreDuplicates: true });
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from('marketplace_seller_follows')
+      .delete().eq('follower_id', actor.userId).eq('seller_id', sellerId);
+    if (error) throw error;
+  }
+  return res.status(200).json({ success: true, following: follow, sellerId });
+}
+
 async function browse(req, res) {
   const supabase = getClient();
   const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
@@ -760,6 +801,7 @@ export default async function handler(req, res) {
     if (req.method === "GET" && action === "onboarding") return await marketplaceOnboarding(req, res);
     if (req.method === "POST" && action === "accept-onboarding") return await acceptMarketplaceOnboarding(req, res);
     if (req.method === "GET" && action === "workspace") return await sellerWorkspace(req, res);
+    if (req.method === "GET" && action === "followed-sellers") return await followedSellers(req, res);
     if (req.method === "GET" && action === "library") return await library(req, res);
     if (req.method === "GET" && action === "delivery") return await delivery(req, res);
     if (req.method === "GET" && action === "guest-delivery") return await guestDelivery(req, res);
@@ -770,6 +812,7 @@ export default async function handler(req, res) {
     if (req.method === "PATCH" && action === "update-listing") return await updateListing(req, res);
     if (req.method === "POST" && action === "publish") return await publishListing(req, res);
     if (req.method === "POST" && action === "purchase") return await purchase(req, res);
+    if (req.method === "POST" && action === "follow-seller") return await setSellerFollow(req, res);
     if (req.method === 'POST' && action === 'activate-premium') return await activatePremium(req,res);
     if (req.method === 'POST' && ['start-verification','check-verification'].includes(action)) return await sellerVerification(req,res,action);
     if (req.method === "POST" && action === "open-dispute") return await openDispute(req, res);

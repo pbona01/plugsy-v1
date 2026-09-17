@@ -729,6 +729,9 @@ function AppContent({
   );
 
   const isChatsView = location.pathname.startsWith("/chats");
+  // The glass navigation is the home/dashboard shell. Product, portfolio and
+  // workspace pages own their local navigation so controls never stack or clash.
+  const showGlobalNavigation = location.pathname === "/" || location.pathname === "/dashboard";
   const isStandalonePage = isVpPage || location.pathname === "/onelink" || location.pathname.startsWith("/one/") || location.pathname.startsWith("/u/");
 
   if (isStandalonePage) {
@@ -742,9 +745,9 @@ function AppContent({
   return (
     <CallProvider>
       <div className={`min-h-screen flex flex-col ${isChatsPage || isChatsView ? "h-screen overflow-hidden" : ""}`}>
-        {!isAdminPage && !isChatsView && <Navbar />}
+        {showGlobalNavigation && !isAdminPage && !isChatsView && <Navbar />}
         <main
-          className={`flex-grow ${isAdminPage || isChatsView ? "" : "pt-16"} transition-all duration-300 ease-in-out w-full max-w-[100vw] ${isChatsPage || isChatsView ? "h-full overflow-hidden" : "overflow-x-hidden"}`}
+          className={`flex-grow ${showGlobalNavigation ? "pt-16" : ""} transition-all duration-300 ease-in-out w-full max-w-[100vw] ${isChatsPage || isChatsView ? "h-full overflow-hidden" : "overflow-x-hidden"}`}
         >
           {mainRoutes}
         </main>

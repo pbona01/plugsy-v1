@@ -3,7 +3,7 @@ import { Helmet } from "react-helmet-async";
 import { useAuth } from "@clerk/clerk-react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { AlertCircle, ArrowRight, CheckCircle2, ChevronRight, CircleDollarSign, Clock3, Copy, FileKey2, Library, Loader2, LockKeyhole, Plus, Search, ShieldCheck, Sparkles, Store, X } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, ChevronRight, CircleDollarSign, Clock3, Copy, FileKey2, Library, Loader2, LockKeyhole, Plus, Search, ShieldCheck, Sparkles, Store, UserPlus, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { MarketplaceMark } from "../components/icons/MarketplaceMark";
 import ResaleWorkspace from "../components/marketplace/ResaleWorkspace";
@@ -15,6 +15,7 @@ import MarketplaceCookieConsent from '../components/marketplace/MarketplaceCooki
 
 type Listing = {
   id: string;
+  sellerId: string;
   title: string;
   slug: string;
   summary: string;
@@ -84,6 +85,8 @@ export default function Marketplace() {
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [libraryItems, setLibraryItems] = useState<any[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
+  const [followedSellerIds, setFollowedSellerIds] = useState<Set<string>>(new Set());
+  const [followingSellerId, setFollowingSellerId] = useState<string | null>(null);
   const [isListingOpen, setIsListingOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -193,6 +196,16 @@ export default function Marketplace() {
     }
   }, [request, userId]);
 
+  const loadFollowedSellers = useCallback(async () => {
+    if (!userId) { setFollowedSellerIds(new Set()); return; }
+    try {
+      const payload = await request('/api/marketplace?action=followed-sellers');
+      setFollowedSellerIds(new Set(payload.sellerIds || []));
+    } catch {
+      // Following is an enhancement; browsing must still work when it is unavailable.
+    }
+  }, [request, userId]);
+
   useEffect(() => { void loadListings(); }, [loadListings]);
   useEffect(() => {
     if (!accessToken && !sharedProductId) { setPrivateListing(null); return; }
@@ -209,12 +222,31 @@ export default function Marketplace() {
   }, [accessToken, sharedProductId]);
   useEffect(() => { if (mode === "sell") void loadWorkspace(); }, [loadWorkspace, mode]);
   useEffect(() => { if (mode === "library") void loadLibrary(); }, [loadLibrary, mode]);
+  useEffect(() => { void loadFollowedSellers(); }, [loadFollowedSellers]);
 
   const shownListings = useMemo(() => privateListing ? [privateListing] : listings, [listings, privateListing]);
 
   const openSeller = () => {
     if (!userId) return navigate("/login?redirect=/marketplace");
     navigate("/marketplace/seller");
+  };
+
+  const setSellerFollowing = async (sellerId: string, follow: boolean) => {
+    if (!userId) return navigate('/login?redirect=/marketplace');
+    setFollowingSellerId(sellerId);
+    try {
+      await request('/api/marketplace?action=follow-seller', { method: 'POST', body: JSON.stringify({ sellerId, follow }) });
+      setFollowedSellerIds((current) => {
+        const next = new Set(current);
+        if (follow) next.add(sellerId); else next.delete(sellerId);
+        return next;
+      });
+      toast.success(follow ? 'Seller followed. New products will appear in your updates.' : 'Seller unfollowed.');
+    } catch (error: any) {
+      toast.error(error.message || 'We could not update that follow.');
+    } finally {
+      setFollowingSellerId(null);
+    }
   };
 
   const createListing = async (event: React.FormEvent) => {
@@ -312,19 +344,13 @@ export default function Marketplace() {
     <main className="min-h-screen bg-brand-bg px-4 pb-28 pt-28 text-brand-text sm:px-6 lg:px-8">
       <Helmet><title>Plugsy Marketplace | Digital products, protected</title><meta name="description" content="Buy and sell digital products with Plugsy buyer protection." /></Helmet>
       <div className="mx-auto max-w-7xl">
-        <section className="rounded-[1.75rem] border border-brand-border bg-brand-surface p-4 shadow-xl sm:p-5">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-brand-accent text-white"><MarketplaceMark size={21} /></span><div><p className="text-[10px] font-black uppercase tracking-[.18em] text-brand-accent">Plugsy Marketplace</p><h1 className="mt-0.5 text-xl font-black tracking-tight sm:text-2xl">Buy digital products with confidence</h1></div></div>
-            <Link to="/marketplace/policy" className="text-[10px] font-black uppercase tracking-wider text-brand-text-secondary transition hover:text-brand-accent">Rules & protection</Link>
-          </div>
-          <div className="mt-4 inline-flex w-full max-w-xl rounded-2xl border border-brand-border bg-brand-bg p-1.5"><button onClick={() => navigate("/marketplace")} aria-pressed={mode === "buy"} className={`flex h-11 flex-1 items-center justify-center gap-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent sm:text-xs ${mode === "buy" ? "bg-brand-text text-brand-bg shadow-lg" : "text-brand-text-secondary hover:text-brand-text"}`}><Search size={15} /> Buy</button>{userId && <button onClick={() => navigate("/marketplace/buyer")} aria-pressed={mode === "library"} className={`flex h-11 flex-1 items-center justify-center gap-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent sm:text-xs ${mode === "library" ? "bg-brand-text text-brand-bg shadow-lg" : "text-brand-text-secondary hover:bg-brand-accent/10 hover:text-brand-accent"}`}><Library size={15} /> My purchases</button>}<button onClick={openSeller} className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl text-[10px] font-black uppercase tracking-wider text-brand-text-secondary transition hover:bg-brand-accent/10 hover:text-brand-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent sm:text-xs"><Store size={15} /> Sell</button></div>
-        </section>
-        <p className="mt-3 border-l-2 border-amber-500/70 px-3 py-1 text-xs leading-5 text-brand-text-secondary">Preview mode: explore products and prepare listings now. Purchases open after final launch checks.</p>
+        <header className="flex items-center justify-between gap-4 py-2"><div className="flex items-center gap-2.5"><span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-accent text-white"><MarketplaceMark size={18} /></span><div><p className="text-[9px] font-black uppercase tracking-[.18em] text-brand-accent">Plugsy Marketplace</p><h1 className="mt-0.5 text-lg font-black tracking-tight sm:text-xl">Digital products</h1></div></div><div className="flex items-center gap-3"><Link to="/marketplace/policy" className="text-[10px] font-black uppercase tracking-wider text-brand-text-secondary transition hover:text-brand-accent">Rules</Link>{userId && <button onClick={() => navigate('/marketplace/buyer')} aria-label="Open my purchases" className={`grid h-10 w-10 place-items-center rounded-xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent ${mode === 'library' ? 'border-brand-accent bg-brand-accent/10 text-brand-accent' : 'border-brand-border text-brand-text-secondary hover:border-brand-accent/50 hover:text-brand-accent'}`}><Library size={17} /></button>}</div></header>
+        <div className="sticky top-[5.5rem] z-30 -mx-4 border-y border-brand-border bg-brand-bg/95 px-4 py-3 backdrop-blur-xl sm:mx-0 sm:rounded-2xl sm:border sm:px-3 sm:shadow-sm lg:top-24"><div className="inline-flex rounded-2xl border border-brand-border bg-brand-surface p-1"><button onClick={() => navigate("/marketplace")} aria-pressed={mode === "buy"} className={`flex h-10 min-w-24 items-center justify-center gap-2 rounded-xl px-4 text-xs font-black transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent ${mode === "buy" ? "bg-brand-text text-brand-bg shadow-sm" : "text-brand-text-secondary hover:text-brand-text"}`}><Search size={15} /> Buy</button><button onClick={openSeller} className={`flex h-10 min-w-24 items-center justify-center gap-2 rounded-xl px-4 text-xs font-black transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent ${mode === 'sell' ? 'bg-brand-text text-brand-bg shadow-sm' : 'text-brand-text-secondary hover:text-brand-text'}`}><Store size={15} /> Sell</button></div></div>
 
         {mode === "buy" && <section className="mt-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><p className="text-[11px] font-black uppercase tracking-[.2em] text-brand-accent">{privateListing ? "Private product" : "Buy"}</p><h2 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">{privateListing ? "A product shared with you" : "Explore all products"}</h2><p className="mt-1 text-sm text-brand-text-secondary">Clear prices, protected checkout and delivery to your library.</p></div>{!privateListing && <div className="relative w-full lg:w-80"><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text-secondary" size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search all products" className="h-12 w-full rounded-xl border border-brand-border bg-brand-surface pl-11 pr-4 text-sm outline-none transition focus:border-brand-accent" /></div>}</div>
           {!privateListing && <div className="relative mt-5"><div className="flex gap-2 overflow-x-auto pb-2 pr-10 [scrollbar-width:thin]" aria-label="Product categories. Scroll horizontally to see more.">{categories.map((category) => <button key={category} onClick={() => setActiveCategory(category)} aria-pressed={activeCategory === category} className={`min-h-11 shrink-0 rounded-full border px-4 py-2 text-[10px] font-black uppercase tracking-wider transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent ${activeCategory === category ? "border-brand-accent bg-brand-accent text-white" : "border-brand-border bg-brand-surface text-brand-text-secondary hover:border-brand-accent/50"}`}>{category}</button>)}</div><div aria-hidden="true" className="pointer-events-none absolute bottom-2 right-0 top-0 w-12 bg-gradient-to-l from-brand-bg via-brand-bg/85 to-transparent" /></div>}
-          <div className="mt-7 space-y-3">{loadingListings ? Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-2xl border border-brand-border bg-brand-surface" />) : shownListings.length ? shownListings.map((listing) => <article key={listing.id} className="group overflow-hidden rounded-2xl border border-brand-border bg-brand-surface transition duration-300 hover:border-brand-accent/45 hover:shadow-xl"><div className="flex flex-col sm:flex-row"><div className="relative h-36 shrink-0 overflow-hidden bg-gradient-to-br from-brand-accent/25 via-brand-surface to-cyan-400/20 sm:h-auto sm:w-44">{listing.coverImageUrl ? <img src={listing.coverImageUrl} alt="" className="h-full w-full object-cover transition duration-500 group-hover:scale-105" /> : <MarketplaceMark className="absolute bottom-5 right-5 text-brand-accent/50" size={62} />}<span className="absolute left-3 top-3 rounded-full border border-white/20 bg-black/30 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-white backdrop-blur">{listing.category.replace(/[_-]/g, " ")}</span></div><div className="flex min-w-0 flex-1 flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-x-3 gap-y-1"><h3 className="text-lg font-black tracking-tight sm:text-xl">{listing.title}</h3>{listing.seller.verified && <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-emerald-500"><CheckCircle2 size={12} /> Verified</span>}</div><p className="mt-2 line-clamp-2 max-w-2xl text-sm leading-6 text-brand-text-secondary">{listing.summary || listing.description}</p><div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-bold text-brand-text-secondary"><span>{listing.deliveryLabel}</span><span className="text-brand-border">•</span><span className="inline-flex items-center gap-1 text-brand-accent"><ShieldCheck size={12} /> {listing.seller.trustScore === null ? "New seller" : `Trust ${listing.seller.trustScore}/100`}</span></div></div><div className="flex shrink-0 items-center justify-between gap-4 sm:flex-col sm:items-end"><span className="text-xl font-black text-brand-text">{formatNaira(listing.price)}</span><button disabled={pendingAction === listing.id} onClick={() => void buyListing(listing)} className="btn-primary flex h-10 items-center gap-2 px-5 text-[10px] font-black uppercase tracking-wider disabled:opacity-60">{pendingAction === listing.id ? <Loader2 className="animate-spin" size={14} /> : "Buy"}<ArrowRight size={14} /></button></div></div></div></article>) : <div className="rounded-3xl border border-dashed border-brand-border bg-brand-surface p-12 text-center"><MarketplaceMark className="mx-auto text-brand-accent" size={42} /><h3 className="mt-5 text-xl font-black">No products found yet</h3><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-brand-text-secondary">This marketplace is opening with carefully approved sellers. Try another category, or be one of the first sellers.</p><button onClick={openSeller} className="mt-6 text-xs font-black uppercase tracking-wider text-brand-accent">Create a private listing <ChevronRight className="inline" size={14} /></button></div>}</div>
+          <div className="mt-7 space-y-3">{loadingListings ? Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-2xl border border-brand-border bg-brand-surface" />) : shownListings.length ? shownListings.map((listing) => <article key={listing.id} className="group overflow-hidden rounded-2xl border border-brand-border bg-brand-surface transition duration-300 hover:border-brand-accent/45 hover:shadow-xl"><div className="flex flex-col sm:flex-row"><div className="relative h-36 shrink-0 overflow-hidden bg-gradient-to-br from-brand-accent/25 via-brand-surface to-cyan-400/20 sm:h-auto sm:w-44">{listing.coverImageUrl ? <img src={listing.coverImageUrl} alt="" className="h-full w-full object-cover transition duration-500 group-hover:scale-105" /> : <MarketplaceMark className="absolute bottom-5 right-5 text-brand-accent/50" size={62} />}<span className="absolute left-3 top-3 rounded-full border border-white/20 bg-black/30 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-white backdrop-blur">{listing.category.replace(/[_-]/g, " ")}</span></div><div className="flex min-w-0 flex-1 flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-x-3 gap-y-1"><h3 className="text-lg font-black tracking-tight sm:text-xl">{listing.title}</h3>{listing.seller.verified && <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-emerald-500"><CheckCircle2 size={12} /> Verified</span>}</div><p className="mt-2 line-clamp-2 max-w-2xl text-sm leading-6 text-brand-text-secondary">{listing.summary || listing.description}</p><div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-bold text-brand-text-secondary"><span>{listing.deliveryLabel}</span><span className="text-brand-border">•</span><span className="inline-flex items-center gap-1 text-brand-accent"><ShieldCheck size={12} /> {listing.seller.trustScore === null ? "New seller" : `Trust ${listing.seller.trustScore}/100`}</span><button disabled={followingSellerId === listing.sellerId} onClick={() => void setSellerFollowing(listing.sellerId, !followedSellerIds.has(listing.sellerId))} className={`ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[9px] font-black uppercase tracking-wide transition disabled:opacity-50 ${followedSellerIds.has(listing.sellerId) ? 'border-brand-accent/35 bg-brand-accent/10 text-brand-accent' : 'border-brand-border text-brand-text-secondary hover:border-brand-accent/50 hover:text-brand-accent'}`}><UserPlus size={12} /> {followingSellerId === listing.sellerId ? 'Saving' : followedSellerIds.has(listing.sellerId) ? 'Following' : 'Follow seller'}</button></div></div><div className="flex shrink-0 items-center justify-between gap-4 sm:flex-col sm:items-end"><span className="text-xl font-black text-brand-text">{formatNaira(listing.price)}</span><button disabled={pendingAction === listing.id} onClick={() => void buyListing(listing)} className="btn-primary flex h-10 items-center gap-2 px-5 text-[10px] font-black uppercase tracking-wider disabled:opacity-60">{pendingAction === listing.id ? <Loader2 className="animate-spin" size={14} /> : "Buy"}<ArrowRight size={14} /></button></div></div></div></article>) : <div className="rounded-3xl border border-dashed border-brand-border bg-brand-surface p-12 text-center"><MarketplaceMark className="mx-auto text-brand-accent" size={42} /><h3 className="mt-5 text-xl font-black">No products found yet</h3><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-brand-text-secondary">This marketplace is opening with carefully approved sellers. Try another category, or be one of the first sellers.</p><button onClick={openSeller} className="mt-6 text-xs font-black uppercase tracking-wider text-brand-accent">Create a private listing <ChevronRight className="inline" size={14} /></button></div>}</div>
           <div className="mt-8 grid gap-4 md:grid-cols-3">{[[ShieldCheck, "10-hour buyer protection", "Report a genuine issue before seller funds are released."], [LockKeyhole, "Your purchase stays yours", "Your product appears in My library after a successful order."], [CircleDollarSign, "Resale with clear terms", "Creators choose if and how a product can be resold."]].map(([Icon, title, copy]: any) => <div key={title} className="rounded-2xl border border-brand-border bg-brand-surface p-5"><Icon size={19} className="text-brand-accent" /><h3 className="mt-4 font-black">{title}</h3><p className="mt-2 text-xs leading-5 text-brand-text-secondary">{copy}</p></div>)}</div>
         </section>}
 
