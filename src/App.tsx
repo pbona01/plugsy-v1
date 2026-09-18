@@ -758,6 +758,12 @@ function AppContent({
     location.pathname.startsWith("/marketplace/creator/") ||
     location.pathname.startsWith("/marketplace/guest-") ||
     location.pathname === "/marketplace/policy" ||
+    location.pathname === "/orders" ||
+    location.pathname === "/wallet/history" ||
+    location.pathname === "/portfolio/new" ||
+    location.pathname === "/checkout/confirm" ||
+    location.pathname === "/payment/callback" ||
+    location.pathname === "/portfolio/callback" ||
     /^\/portfolio\/[^/]+\/edit\/?$/.test(location.pathname);
   const showDashboardBack = Boolean(userId) && !focusedWorkspaceRoute;
   // Public profiles and public portfolios must stay free of signed-in chrome.
