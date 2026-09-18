@@ -115,6 +115,7 @@ export default function Chat() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [supportProfileOpen, setSupportProfileOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
@@ -830,23 +831,20 @@ export default function Chat() {
           className="w-full h-full flex flex-col border-[0.5px] border-black/10 dark:border-white/10 rounded-none sm:rounded-2xl overflow-hidden relative backdrop-blur-2xl backdrop-saturate-[1.5] bg-white/60 dark:bg-transparent shadow-[inset_0_1.5px_2px_0px_rgba(255,255,255,0.6)] dark:shadow-none"
         >
           {/* Top Header inside the glass panel */}
-          <LiquidGlassNav className="liquid-glass px-6 py-4 border-b border-black/10 dark:border-white/5 bg-white/40 dark:bg-white/[0.02] shadow-[inset_0_1.5px_2px_0px_rgba(255,255,255,0.6)] dark:shadow-none overflow-hidden">
-            <div className="flex items-center justify-between">
+          <LiquidGlassNav className="liquid-glass px-4 py-3 border-b border-black/10 dark:border-white/5 bg-white/40 dark:bg-white/[0.02] shadow-[inset_0_1.5px_2px_0px_rgba(255,255,255,0.6)] dark:shadow-none overflow-visible">
+            <div className="flex items-center justify-between gap-3">
               <Link
                 to="/dashboard"
-                className="inline-flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-white/50 hover:text-slate-900 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition-all bg-black/5 dark:bg-white/5 sm:bg-transparent border sm:border-none border-black/10 dark:border-white/10"
+                aria-label="Back to Dashboard"
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-black/10 bg-white/40 text-slate-600 transition hover:bg-black/5 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white"
               >
-                <ArrowLeft size={16} /> <span className="hidden sm:inline">Back to </span>Dashboard
+                <ArrowLeft size={18} />
               </Link>
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                  Plugsy Support • Connected
-                </span>
-              </div>
+              <button onClick={() => setSupportProfileOpen((open) => !open)} aria-expanded={supportProfileOpen} className="relative flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1 text-left transition hover:bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent dark:hover:bg-white/5">
+                <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-black/10 bg-slate-950 dark:border-white/15"><Logo className="h-7 w-7" /></span>
+                <span className="min-w-0"><span className="flex items-center gap-1.5 truncate text-sm font-black text-slate-900 dark:text-white">Plugsy Support <CheckCircle2 className="shrink-0 text-brand-accent" size={15} fill="currentColor"/></span><span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-emerald-500"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500"/>Official support</span></span>
+              </button>
+              {supportProfileOpen && <div className="absolute right-4 top-[4.6rem] z-30 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-black/10 bg-white p-4 shadow-xl dark:border-white/10 dark:bg-[#15151a]"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-full bg-slate-950"><Logo className="h-7 w-7"/></span><div><p className="text-sm font-black text-slate-900 dark:text-white">Plugsy Support <CheckCircle2 className="inline text-brand-accent" size={14} fill="currentColor"/></p><p className="text-xs text-slate-500 dark:text-white/50">Official Plugsy account</p></div></div><p className="mt-3 text-xs leading-5 text-slate-600 dark:text-white/65">Your orders and messages stay in this secure conversation. We will never ask for your password or wallet PIN.</p></div>}
             </div>
           </LiquidGlassNav>
 

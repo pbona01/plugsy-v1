@@ -30,8 +30,8 @@ export default function SellerPremiumPlan({ seller, onComplete }: { seller: any;
   return <section className="mx-auto mt-6 max-w-7xl rounded-2xl border border-brand-accent/25 bg-brand-surface p-5">
     <h3 className="flex items-center gap-2 text-lg font-bold"><ShieldCheck size={20} /> Premium public publishing</h3>
     <p className="mt-2 text-sm text-brand-text-secondary">₦1,500 for one month. Only needed to publish in the public marketplace. Private product links are free. No automatic renewal.</p>
-    <p className="mt-3 text-xs text-brand-text-secondary">{active ? `Active until ${expires!.toLocaleDateString()}.` : 'Seller verification is required before activating this plan.'} Expiry does not remove products already purchased from buyer libraries.</p>
-    <button onClick={() => void activate()} disabled={busy || active || seller?.verification_status !== 'verified'} className="btn-primary mt-4 h-11 px-5 text-sm disabled:opacity-50">{busy ? 'Activating…' : active ? 'Plan active' : 'Activate for ₦1,500'}</button>
+    <p className="mt-3 text-xs text-brand-text-secondary">{active ? `Active until ${expires!.toLocaleDateString()}.` : 'Step 1 of 2: activate your plan first, then complete identity verification.'} Public publishing opens only when both steps are complete. Expiry does not remove products already purchased from buyer libraries.</p>
+    <button onClick={() => void activate()} disabled={busy || active} className="btn-primary mt-4 h-11 px-5 text-sm disabled:opacity-50">{busy ? 'Activating…' : active ? 'Plan active — verify next' : 'Activate for ₦1,500'}</button>
     <p className="mt-2 text-xs text-brand-text-secondary">Paid activation stays disabled during the marketplace preview.</p>
   </section>;
 }

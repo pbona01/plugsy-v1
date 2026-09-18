@@ -88,6 +88,10 @@ export const publicListing = (listing, seller) => ({
     trustScore: trustScoreForSeller(seller),
     verified: seller.verification_status === "verified",
     completedOrders: Number(seller.completed_orders_count || 0),
+    id: seller.user_id,
+    name: seller.display_name || "Plugsy creator",
+    username: seller.username || null,
+    avatar: seller.avatar_url || null,
   } : { trustScore: null, verified: false, completedOrders: 0 },
 });
 
@@ -174,12 +178,27 @@ async function acceptMarketplaceOnboarding(req, res) {
 async function loadSellers(supabase, sellerIds) {
   const ids = [...new Set(sellerIds.map(text).filter(Boolean))];
   if (!ids.length) return new Map();
-  const { data, error } = await supabase
-    .from("marketplace_seller_profiles")
-    .select("user_id,trust_score,verification_status,public_selling_enabled,public_plan_expires_at,marketplace_fee_paid_by,completed_orders_count,upheld_disputes_count")
-    .in("user_id", ids);
-  if (error) throw error;
-  return new Map((data || []).map((seller) => [seller.user_id, seller]));
+  const [sellerResult, profileResult] = await Promise.all([
+    supabase
+      .from("marketplace_seller_profiles")
+      .select("user_id,trust_score,verification_status,public_selling_enabled,public_plan_expires_at,marketplace_fee_paid_by,completed_orders_count,upheld_disputes_count")
+      .in("user_id", ids),
+    supabase
+      .from("profile_directory_v1")
+      .select("clerk_id,username,full_name,profile_pic_url,image_url")
+      .in("clerk_id", ids),
+  ]);
+  if (sellerResult.error || profileResult.error) throw sellerResult.error || profileResult.error;
+  const profiles = new Map((profileResult.data || []).map((profile) => [profile.clerk_id, profile]));
+  return new Map((sellerResult.data || []).map((seller) => {
+    const profile = profiles.get(seller.user_id);
+    return [seller.user_id, {
+      ...seller,
+      display_name: profile?.full_name || profile?.username || "Plugsy creator",
+      username: profile?.username || null,
+      avatar_url: profile?.profile_pic_url || profile?.image_url || null,
+    }];
+  }));
 }
 
 async function followedSellers(req, res) {
@@ -221,6 +240,88 @@ async function setSellerFollow(req, res) {
     if (error) throw error;
   }
   return res.status(200).json({ success: true, following: follow, sellerId });
+}
+
+async function creatorProfile(req, res) {
+  const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
+  const sellerId = text(req.query?.sellerId || url.searchParams.get("sellerId"));
+  if (!/^user_[A-Za-z0-9]+$/.test(sellerId)) return send(res, 404, "CREATOR_NOT_FOUND", "This creator is unavailable.");
+  const supabase = getClient();
+  const sellers = await loadSellers(supabase, [sellerId]);
+  const seller = sellers.get(sellerId);
+  if (!seller) return send(res, 404, "CREATOR_NOT_FOUND", "This creator is unavailable.");
+  const [{ data: listings, error: listingError }, { count, error: followerError }, { data: followingRows, error: followingError }] = await Promise.all([
+    supabase.from("marketplace_listings").select(listingFields).eq("seller_id", sellerId).eq("visibility", "public").eq("status", "published").order("published_at", { ascending: false }).limit(48),
+    supabase.from("marketplace_seller_follows").select("seller_id", { count: "exact", head: true }).eq("seller_id", sellerId),
+    supabase.from("marketplace_seller_follows").select("seller_id").eq("follower_id", sellerId).order("created_at", { ascending: false }).limit(12),
+  ]);
+  if (listingError || followerError || followingError) throw listingError || followerError || followingError;
+  const followingIds = (followingRows || []).map((row) => row.seller_id);
+  const followingCreators = await loadSellers(supabase, followingIds);
+  return res.status(200).json({
+    success: true,
+    creator: {
+      id: sellerId,
+      name: seller.display_name || "Plugsy creator",
+      username: seller.username || null,
+      avatar: seller.avatar_url || null,
+      verified: seller.verification_status === "verified",
+      trustScore: trustScoreForSeller(seller),
+      completedOrders: Number(seller.completed_orders_count || 0),
+      followers: Number(count || 0),
+      following: followingIds.length,
+    },
+    listings: (listings || []).filter((listing) => canPublishPublicly(seller)).map((listing) => publicListing(listing, seller)),
+    followingCreators: followingIds.map((id) => {
+      const creator = followingCreators.get(id);
+      return creator ? { id, name: creator.display_name || "Plugsy creator", username: creator.username || null, avatar: creator.avatar_url || null, verified: creator.verification_status === "verified" } : null;
+    }).filter(Boolean),
+  });
+}
+
+async function followingFeed(req, res) {
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const supabase = getClient();
+  const { data: follows, error: followError } = await supabase.from("marketplace_seller_follows").select("seller_id").eq("follower_id", actor.userId).order("created_at", { ascending: false }).limit(100);
+  if (followError) throw followError;
+  const sellerIds = (follows || []).map((row) => row.seller_id);
+  if (!sellerIds.length) return res.status(200).json({ success: true, listings: [] });
+  const { data, error } = await supabase.from("marketplace_listings").select(listingFields).in("seller_id", sellerIds).eq("visibility", "public").eq("status", "published").order("published_at", { ascending: false }).limit(48);
+  if (error) throw error;
+  const sellers = await loadSellers(supabase, sellerIds);
+  return res.status(200).json({ success: true, listings: (data || []).filter((listing) => canPublishPublicly(sellers.get(listing.seller_id))).map((listing) => publicListing(listing, sellers.get(listing.seller_id))) });
+}
+
+async function listingComments(req, res) {
+  const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
+  const listingId = text(req.query?.listingId || url.searchParams.get("listingId"));
+  if (!/^[0-9a-f-]{36}$/i.test(listingId)) return send(res, 400, "COMMENT_LISTING_INVALID", "Choose a valid product.");
+  const supabase = getClient();
+  if (req.method === "GET") {
+    const { data, error } = await supabase.from("marketplace_listing_comments").select("id,author_id,body,created_at").eq("listing_id", listingId).order("created_at", { ascending: false }).limit(100);
+    if (error) throw error;
+    const authorIds = [...new Set((data || []).map((comment) => comment.author_id))];
+    const { data: profiles, error: profileError } = authorIds.length ? await supabase.from("profile_directory_v1").select("clerk_id,username,full_name,profile_pic_url,image_url").in("clerk_id", authorIds) : { data: [], error: null };
+    if (profileError) throw profileError;
+    const profileById = new Map((profiles || []).map((profile) => [profile.clerk_id, profile]));
+    return res.status(200).json({ success: true, comments: (data || []).map((comment) => {
+      const author = profileById.get(comment.author_id);
+      return { id: comment.id, body: comment.body, createdAt: comment.created_at, author: { id: comment.author_id, name: author?.full_name || author?.username || "Plugsy member", username: author?.username || null, avatar: author?.profile_pic_url || author?.image_url || null } };
+    }) });
+  }
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const body = text(readBody(req).body);
+  if (body.length < 1 || body.length > 800) return send(res, 400, "COMMENT_INVALID", "Write a comment between 1 and 800 characters.");
+  const { data: listing, error: listingError } = await supabase.from("marketplace_listings").select("id,seller_id,visibility,status").eq("id", listingId).maybeSingle();
+  if (listingError) throw listingError;
+  if (!listing || listing.visibility !== "public" || listing.status !== "published") return send(res, 404, "COMMENT_PRODUCT_UNAVAILABLE", "Comments are only available on live Marketplace products.");
+  const sellers = await loadSellers(supabase, [listing.seller_id]);
+  if (!canPublishPublicly(sellers.get(listing.seller_id))) return send(res, 404, "COMMENT_PRODUCT_UNAVAILABLE", "Comments are only available on live Marketplace products.");
+  const { data, error } = await supabase.from("marketplace_listing_comments").insert({ listing_id: listingId, author_id: actor.userId, body }).select("id,body,created_at").single();
+  if (error) throw error;
+  return res.status(201).json({ success: true, comment: { id: data.id, body: data.body, createdAt: data.created_at, author: { id: actor.userId, name: actor.name || "Plugsy member", username: null, avatar: null } } });
 }
 
 async function browse(req, res) {
@@ -792,6 +893,9 @@ export default async function handler(req, res) {
   try {
     if (req.method === "GET" && action === "browse") return await browse(req, res);
     if (req.method === "GET" && action === "product") return await productListing(req,res);
+    if (req.method === "GET" && action === "creator") return await creatorProfile(req, res);
+    if (req.method === "GET" && action === "following") return await followingFeed(req, res);
+    if ((req.method === "GET" || req.method === "POST") && action === "comments") return await listingComments(req, res);
     if (req.method === "GET" && action === "admin-workspace") return await adminWorkspace(req, res);
     if (req.method === "GET" && action === "resale-workspace") return await resaleWorkspace(req,res);
     if (req.method === "POST" && ['request-resale','decide-resale'].includes(action)) return await resaleMutation(req,res,action);

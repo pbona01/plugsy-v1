@@ -75,6 +75,7 @@ const Wallet = lazyWithDeploymentRecovery(() => import("./pages/Wallet").then((m
 const WalletCallback = lazyWithDeploymentRecovery(() => import("./pages/WalletCallback").then((module) => ({ default: module.WalletCallback })));
 const Marketplace = lazyWithDeploymentRecovery(() => import("./pages/Marketplace"));
 const MarketplaceProductPage = lazyWithDeploymentRecovery(() => import("./pages/MarketplaceProductPage"));
+const MarketplaceCreatorProfile = lazyWithDeploymentRecovery(() => import("./pages/MarketplaceCreatorProfile"));
 const MarketplaceGuestCheckout = lazyWithDeploymentRecovery(() => import("./pages/MarketplaceGuestCheckout"));
 const MarketplaceGuestDelivery = lazyWithDeploymentRecovery(() => import("./pages/MarketplaceGuestDelivery"));
 const SellerDashboard = lazyWithDeploymentRecovery(() => import("./pages/SellerDashboard"));
@@ -498,6 +499,7 @@ function AppContent({
           <Route path="/marketplace/seller" element={userId ? <SellerDashboard /> : <Navigate to="/login?redirect=/marketplace/seller" replace />} />
           <Route path="/marketplace/policy" element={<MarketplacePolicy />} />
           <Route path="/marketplace/product/:id" element={<MarketplaceProductPage />} />
+          <Route path="/marketplace/creator/:sellerId" element={<MarketplaceCreatorProfile />} />
           <Route path="/marketplace/private/:accessToken" element={<MarketplaceProductPage />} />
           <Route path="/marketplace/guest-checkout" element={<MarketplaceGuestCheckout />} />
           <Route path="/marketplace/guest-delivery/:token" element={<MarketplaceGuestDelivery />} />
@@ -753,6 +755,7 @@ function AppContent({
     location.pathname.startsWith("/vp/") ||
     location.pathname.startsWith("/marketplace/product/") ||
     location.pathname.startsWith("/marketplace/private/") ||
+    location.pathname.startsWith("/marketplace/creator/") ||
     location.pathname.startsWith("/marketplace/guest-") ||
     location.pathname === "/marketplace/policy" ||
     /^\/portfolio\/[^/]+\/edit\/?$/.test(location.pathname);
