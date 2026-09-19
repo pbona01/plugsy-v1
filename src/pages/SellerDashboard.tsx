@@ -11,7 +11,7 @@ import { compressAndUpload } from "../utils/uploadMedia";
 type Tab = "home" | "products" | "orders" | "setup";
 const money = (n: number) => `₦${Number(n || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 })}`;
 const emptyForm = { title:"", summary:"", description:"", category:"templates", price:"", coverImageUrl:"", deliveryUrl:"", deliveryLabel:"Open product", visibility:"private", resalePolicy:"not_allowed", resaleCommissionPercent:"" };
-const categories = ["templates","courses","design","video","social_media","business","creator_tools"];
+const categories = ["templates","courses","design","video","comics","social_media","business","creator_tools"];
 
 export default function SellerDashboard() {
   const { getToken } = useAuth();
