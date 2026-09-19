@@ -113,11 +113,11 @@ export default function PortfolioDashboard() {
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5 }}
-          className="max-w-7xl mx-auto px-4 pb-8 pt-24 md:px-8 md:pb-8 md:pt-28"
+          className="max-w-7xl mx-auto p-4 md:p-8"
         >
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
             <div>
-              <h1 className="text-3xl font-serif text-slate-900 dark:text-[#F5F5F7] tracking-tight">Your Verification Portfolios</h1>
+              <h1 className="pr-16 text-3xl font-serif tracking-tight text-slate-900 dark:text-[#F5F5F7] sm:pr-0">Your Verification Portfolios</h1>
               <p className="text-slate-600 dark:text-white/60 mt-2">Manage your skill proof and track client engagement.</p>
             </div>
             <Link 

@@ -370,12 +370,13 @@ async function sellerWorkspace(req, res) {
   const actor = await requireActor(req, res);
   if (!actor) return;
   const supabase = getClient();
-  const [{ data: listings, error: listingError }, { data: seller, error: sellerError }, { data: sales, error: salesError }] = await Promise.all([
+  const [{ data: listings, error: listingError }, { data: seller, error: sellerError }, { data: sales, error: salesError }, { data: guestSales, error: guestSalesError }] = await Promise.all([
     supabase.from("marketplace_listings").select(ownerListingFields).eq("seller_id", actor.userId).order("updated_at", { ascending: false }),
     supabase.from("marketplace_seller_profiles").select("verification_status,public_selling_enabled,public_plan_expires_at,marketplace_fee_paid_by,trust_score,total_sales_count,completed_orders_count,upheld_disputes_count").eq("user_id", actor.userId).maybeSingle(),
     supabase.from("marketplace_orders").select("id,order_reference,listing_id,buyer_id,amount,seller_amount,platform_fee,reseller_amount,payment_status,funds_status,hold_expires_at,payout_available_at,created_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(250),
+    supabase.from("marketplace_guest_orders").select("id,order_reference,listing_id,buyer_email,amount,seller_amount,platform_fee,payment_status,funds_status,hold_expires_at,payout_available_at,created_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(250),
   ]);
-  if (listingError || sellerError || salesError) throw listingError || sellerError || salesError;
+  if (listingError || sellerError || salesError || guestSalesError) throw listingError || sellerError || salesError || guestSalesError;
   const buyerIds = [...new Set((sales || []).map((sale) => text(sale.buyer_id)).filter(Boolean))];
   let buyers = new Map();
   if (buyerIds.length) {
@@ -397,7 +398,15 @@ async function sellerWorkspace(req, res) {
       avatar: buyers.get(sale.buyer_id).profile_pic_url || buyers.get(sale.buyer_id).image_url || null,
     } : { id: sale.buyer_id, name: "Plugsy buyer", username: null, avatar: null },
   }));
-  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), trust_score: trustScoreForSeller(seller) }, listings: listings || [], sales: safeSales });
+  const safeGuestSales = (guestSales || []).map((sale) => ({
+    ...sale,
+    buyer_id: null,
+    guest: true,
+    product_title: listingNames.get(sale.listing_id) || "Digital product",
+    buyer: { id: null, name: sale.buyer_email || "Guest buyer", username: null, avatar: null },
+  }));
+  const allSales = [...safeSales, ...safeGuestSales].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), trust_score: trustScoreForSeller(seller) }, listings: listings || [], sales: allSales });
 }
 
 async function updateSellerFeePolicy(req, res) {
@@ -526,6 +535,10 @@ async function purchase(req, res) {
     const [status, code, message] = purchaseFailure(error || data?.error);
     return send(res, status, code, message);
   }
+  // A receipt is helpful, but an email-provider delay must never make a paid
+  // wallet purchase look unsuccessful or trigger a second charge attempt.
+  try { await flushMarketplaceEmails(supabase); }
+  catch (emailError) { console.error("[marketplace] receipt email pending", emailError?.message || emailError); }
   return res.status(200).json({ success: true, purchase: data });
 }
 
@@ -733,21 +746,23 @@ async function releaseDue(req, res) {
   const receivedSecret = text(req.headers?.authorization).replace(/^Bearer\s+/i, "");
   if (!secretsMatch(expectedSecret, receivedSecret)) return send(res, 401, "CRON_UNAUTHORIZED", "Not authorized.");
   const supabase = getClient();
-  const { data, error } = await supabase.rpc("marketplace_release_due_orders_v1", { p_limit: 250 });
-  if (error) throw error;
-  const { data: guestData, error: guestError } = await supabase.rpc("marketplace_release_due_guest_orders_v1", { p_limit: 250 });
-  if (guestError) throw guestError;
-  return res.status(200).json({ success: true, released: Number(data || 0) + Number(guestData || 0) });
+  const [walletResult, guestResult] = await Promise.all([
+    supabase.rpc("marketplace_release_due_orders_v1", { p_limit: 250 }),
+    supabase.rpc("marketplace_release_due_guest_orders_v1", { p_limit: 250 }),
+  ]);
+  if (walletResult.error || guestResult.error) throw walletResult.error || guestResult.error;
+  let email = { sent: 0, failed: 0, skipped: true };
+  try { email = await flushMarketplaceEmails(supabase); }
+  catch (emailError) { console.error("[marketplace] payout email pending", emailError?.message || emailError); }
+  return res.status(200).json({ success: true, released: Number(walletResult.data || 0) + Number(guestResult.data || 0), email });
 }
 
 const secretsMatch = (expected, received) => Boolean(expected) && Buffer.byteLength(expected) === Buffer.byteLength(received) && timingSafeEqual(Buffer.from(expected), Buffer.from(received));
 
-async function processEmails(req,res) {
-  const secret=text(req.headers?.authorization).replace(/^Bearer\s+/i,'');
-  if(!secretsMatch(text(process.env.CRON_SECRET),secret)) return send(res,401,'CRON_UNAUTHORIZED','Not authorized.');
-  if(process.env.MARKETPLACE_PAYMENTS_ENABLED!=='true' || !text(process.env.RESEND_API_KEY)) return send(res,403,'EMAIL_WORKER_DISABLED','Marketplace email delivery is not enabled.');
-  const supabase=getClient(); const resend=new Resend(process.env.RESEND_API_KEY);
-  const {data:jobs,error}=await supabase.rpc('marketplace_claim_emails_v1',{p_limit:10}); if(error) throw error;
+async function flushMarketplaceEmails(supabase, limit = 25) {
+  if(process.env.MARKETPLACE_PAYMENTS_ENABLED!=='true' || !text(process.env.RESEND_API_KEY)) return { sent: 0, failed: 0, skipped: true };
+  const resend=new Resend(process.env.RESEND_API_KEY);
+  const {data:jobs,error}=await supabase.rpc('marketplace_claim_emails_v1',{p_limit:Math.min(25, Math.max(1, Number(limit) || 25))}); if(error) throw error;
   let sent=0; let failed=0;
   for(const job of jobs||[]) {
     let messageId=null; let failure=null;
@@ -757,7 +772,14 @@ async function processEmails(req,res) {
     if(result.error) throw result.error;
     if(messageId&&result.data) sent++; else failed++;
   }
-  return res.status(200).json({success:true,sent,failed});
+  return { sent, failed, skipped: false };
+}
+
+async function processEmails(req,res) {
+  const secret=text(req.headers?.authorization).replace(/^Bearer\s+/i,'');
+  if(!secretsMatch(text(process.env.CRON_SECRET),secret)) return send(res,401,'CRON_UNAUTHORIZED','Not authorized.');
+  const result = await flushMarketplaceEmails(getClient());
+  return res.status(200).json({ success: true, ...result });
 }
 
 async function adminWorkspace(req, res) {
@@ -920,8 +942,8 @@ export default async function handler(req, res) {
     if (req.method === 'POST' && action === 'activate-premium') return await activatePremium(req,res);
     if (req.method === 'POST' && ['start-verification','check-verification'].includes(action)) return await sellerVerification(req,res,action);
     if (req.method === "POST" && action === "open-dispute") return await openDispute(req, res);
-    if (req.method === "POST" && action === "release-due") return await releaseDue(req, res);
-    if (req.method === "POST" && action === "process-emails") return await processEmails(req,res);
+    if (["GET", "POST"].includes(req.method) && action === "release-due") return await releaseDue(req, res);
+    if (["GET", "POST"].includes(req.method) && action === "process-emails") return await processEmails(req,res);
     return send(res, 404, "MARKETPLACE_ACTION_NOT_FOUND", "That marketplace action does not exist.");
   } catch (error) {
     console.error("[marketplace] request failed", { action, message: error?.message || error });

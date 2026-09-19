@@ -39,6 +39,9 @@ export default function ChatWidget() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // The mobile tab bar already exposes Chats on these workspace home screens.
+  // Keeping a second floating launcher there obscures card actions near the bottom.
+  const usesPersistentMobileNavigation = ["/dashboard", "/products", "/marketplace", "/portfolio"].includes(location.pathname);
 
   useEffect(() => {
     const handleOpenChat = () => setIsOpen(true);
@@ -170,7 +173,7 @@ export default function ChatWidget() {
   const userName = user?.firstName || 'Anwar';
 
   return (
-    <div ref={containerRef} className="fixed bottom-[calc(7.5rem+env(safe-area-inset-bottom))] right-5 sm:right-8 sm:bottom-8 z-[100] font-sans flex flex-col items-end chat-widget-container">
+    <div ref={containerRef} className={`fixed bottom-[calc(7.5rem+env(safe-area-inset-bottom))] right-5 z-[100] font-sans ${usesPersistentMobileNavigation ? "hidden md:flex" : "flex"} flex-col items-end sm:right-8 sm:bottom-8 chat-widget-container`}>
       <AnimatePresence>
         {isOpen && (
           <motion.div

@@ -782,7 +782,7 @@ function AppContent({
     <CallProvider>
       <div className={`min-h-screen flex flex-col ${isChatsPage || isChatsView ? "h-screen overflow-hidden" : ""}`}>
         {(showTopNavigation || showBottomNavigation) && !isChatsView && <Navbar showTopBar={showTopNavigation} showBottomBar={showBottomNavigation} />}
-        <DashboardBackButton visible={showDashboardBack} />
+        <DashboardBackButton visible={showDashboardBack} alignRight={location.pathname === "/portfolio"} />
         <main
           className={`flex-grow ${showTopNavigation ? "pt-16" : ""} transition-all duration-300 ease-in-out w-full max-w-[100vw] ${isChatsPage || isChatsView ? "h-full overflow-hidden" : "overflow-x-hidden"}`}
         >
