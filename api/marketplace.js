@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Resend } from "resend";
-import { buildMarketplaceEmail, buildMarketplaceGuestEmail } from "./_marketplaceEmail.js";
+import { buildMarketplaceEmail, buildMarketplaceGuestEmail, buildMarketplaceProductUpdateEmail } from "./_marketplaceEmail.js";
 import { dojahOutcome, fetchDojahVerification } from './_marketplaceVerification.js';
 import { validateMarketplaceFile, createUploadUrl, verifyUploadedFile, createDownloadUrl } from './_marketplaceStorage.js';
 import { scanMarketplaceAsset, checkMarketplaceAssetScan } from './_marketplaceScanner.js';
@@ -26,6 +26,37 @@ const getClient = () => {
   if (!url || !key) throw new Error("MARKETPLACE_CONFIG_REQUIRED");
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, db: { schema: "public" } });
 };
+
+async function loadListingDeliveries(supabase, listingId) {
+  const { data, error } = await supabase.from('marketplace_listing_deliveries')
+    .select('id,kind,asset_id,delivery_url,label,sort_order,created_at,updated_at')
+    .eq('listing_id', listingId).order('sort_order', { ascending: true }).order('created_at', { ascending: true });
+  if (error && error.code !== '42P01') throw error;
+  return data || [];
+}
+
+async function queueProductUpdateNotifications(supabase, listingId, title) {
+  const [{ data: orders, error: orderError }, { data: guestOrders, error: guestError }] = await Promise.all([
+    supabase.from('marketplace_orders').select('buyer_id').eq('listing_id', listingId).eq('payment_status', 'paid'),
+    supabase.from('marketplace_guest_orders').select('buyer_email').eq('listing_id', listingId).eq('payment_status', 'paid'),
+  ]);
+  if (orderError || guestError) throw orderError || guestError;
+  const buyerIds = [...new Set((orders || []).map((row) => text(row.buyer_id)).filter(Boolean))];
+  let profiles = [];
+  if (buyerIds.length) {
+    const result = await supabase.from('profiles').select('clerk_id,email').in('clerk_id', buyerIds);
+    if (result.error) throw result.error;
+    profiles = result.data || [];
+  }
+  const rows = [
+    ...profiles.filter((profile) => isEmail(profile.email)).map((profile) => ({ listing_id: listingId, buyer_id: profile.clerk_id, title, message: `The seller updated ${title}. You can download the latest version from your Plugsy library.` })),
+    ...(guestOrders || []).filter((row) => isEmail(row.buyer_email)).map((row) => ({ listing_id: listingId, buyer_email: row.buyer_email, title, message: `The seller updated ${title}. Open your original Plugsy delivery email to download the latest version.` })),
+  ];
+  if (!rows.length) return 0;
+  const { error } = await supabase.from('marketplace_product_update_notifications').insert(rows);
+  if (error && error.code !== '42P01') throw error;
+  return rows.length;
+}
 
 const readBody = (req) => {
   if (req.body && typeof req.body === "object") return req.body;
@@ -373,8 +404,8 @@ async function sellerWorkspace(req, res) {
   const [{ data: listings, error: listingError }, { data: seller, error: sellerError }, { data: sales, error: salesError }, { data: guestSales, error: guestSalesError }] = await Promise.all([
     supabase.from("marketplace_listings").select(ownerListingFields).eq("seller_id", actor.userId).order("updated_at", { ascending: false }),
     supabase.from("marketplace_seller_profiles").select("verification_status,public_selling_enabled,public_plan_expires_at,marketplace_fee_paid_by,trust_score,total_sales_count,completed_orders_count,upheld_disputes_count").eq("user_id", actor.userId).maybeSingle(),
-    supabase.from("marketplace_orders").select("id,order_reference,listing_id,buyer_id,amount,seller_amount,platform_fee,reseller_amount,payment_status,funds_status,hold_expires_at,payout_available_at,created_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(250),
-    supabase.from("marketplace_guest_orders").select("id,order_reference,listing_id,buyer_email,amount,seller_amount,platform_fee,payment_status,funds_status,hold_expires_at,payout_available_at,created_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(250),
+    supabase.from("marketplace_orders").select("id,order_reference,listing_id,buyer_id,amount,seller_amount,platform_fee,reseller_amount,payment_status,funds_status,hold_expires_at,payout_available_at,created_at,updated_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(250),
+    supabase.from("marketplace_guest_orders").select("id,order_reference,listing_id,buyer_email,amount,seller_amount,platform_fee,payment_status,funds_status,hold_expires_at,payout_available_at,created_at,updated_at").eq("seller_id", actor.userId).order("created_at", { ascending: false }).limit(250),
   ]);
   if (listingError || sellerError || salesError || guestSalesError) throw listingError || sellerError || salesError || guestSalesError;
   const buyerIds = [...new Set((sales || []).map((sale) => text(sale.buyer_id)).filter(Boolean))];
@@ -406,7 +437,9 @@ async function sellerWorkspace(req, res) {
     buyer: { id: null, name: sale.buyer_email || "Guest buyer", username: null, avatar: null },
   }));
   const allSales = [...safeSales, ...safeGuestSales].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), trust_score: trustScoreForSeller(seller) }, listings: listings || [], sales: allSales });
+  const deliveryResults = await Promise.all((listings || []).map((listing) => loadListingDeliveries(supabase, listing.id)));
+  const listingsWithDeliveries = (listings || []).map((listing, index) => ({ ...listing, delivery_items: deliveryResults[index] || [] }));
+  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), trust_score: trustScoreForSeller(seller) }, listings: listingsWithDeliveries, sales: allSales });
 }
 
 async function updateSellerFeePolicy(req, res) {
@@ -453,6 +486,12 @@ async function updateListing(req, res) {
     .eq("id", listingId).eq("seller_id", actor.userId).select(ownerListingFields).maybeSingle();
   if (error) throw error;
   if (!data) return send(res, 404, "LISTING_NOT_FOUND", "That listing was not found.");
+  try {
+    await queueProductUpdateNotifications(supabase, listingId, data.title);
+    await flushProductUpdateEmails(supabase);
+  } catch (notificationError) {
+    console.error('[marketplace] product update notifications pending', notificationError?.message || notificationError);
+  }
   return res.status(200).json({ success: true, listing: data });
 }
 
@@ -464,11 +503,12 @@ async function publishListing(req, res) {
   const nextStatus = text(body.status || "published");
   if (!/^[0-9a-f-]{36}$/i.test(listingId) || !['published', 'paused', 'archived'].includes(nextStatus)) return send(res, 400, "PUBLISH_REQUEST_INVALID", "Use a valid listing and status.");
   const supabase = getClient();
-  const { data: listing, error: listingError } = await supabase.from("marketplace_listings").select("id,visibility,delivery_url,delivery_asset_id,description").eq("id", listingId).eq("seller_id", actor.userId).maybeSingle();
+  const { data: listing, error: listingError } = await supabase.from("marketplace_listings").select("id,visibility,delivery_url,delivery_asset_id,description,title").eq("id", listingId).eq("seller_id", actor.userId).maybeSingle();
   if (listingError) throw listingError;
   if (!listing) return send(res, 404, "LISTING_NOT_FOUND", "That listing was not found.");
   if (nextStatus === 'published' && text(listing.description).length < 20) return send(res, 400, "PRODUCT_DESCRIPTION_REQUIRED", "Add a clear product description of at least 20 characters before publishing.");
-  if (nextStatus === 'published' && !listing.delivery_url && !listing.delivery_asset_id) return send(res, 400, "DELIVERY_REQUIRED", "Add a delivery link or upload a product file before publishing.");
+  const deliveryItems = nextStatus === 'published' ? await loadListingDeliveries(supabase, listingId) : [];
+  if (nextStatus === 'published' && !listing.delivery_url && !listing.delivery_asset_id && !deliveryItems.length) return send(res, 400, "DELIVERY_REQUIRED", "Add a delivery link or upload a product file before publishing.");
   if (nextStatus === 'published' && listing.delivery_asset_id) {
     let {data:asset,error}=await supabase.from('marketplace_assets').select('status,scan_reference').eq('id',listing.delivery_asset_id).eq('seller_id',actor.userId).maybeSingle();
     if(error) throw error;
@@ -491,6 +531,14 @@ async function publishListing(req, res) {
       const automaticScan = text(asset?.scan_reference).startsWith('virustotal_private:');
       return send(res,409,'FILE_REVIEW_REQUIRED',automaticScan ? 'The automatic security scan is still finishing. Wait a moment, then publish again.' : 'Your uploaded file is awaiting Marketplace security review. Open Admin > Marketplace > File review, approve the file, then publish this product.');
     }
+  }
+  if (nextStatus === 'published' && deliveryItems.some((item) => item.kind === 'file' && item.asset_id && item.asset_id !== listing.delivery_asset_id)) {
+    const assetIds = deliveryItems.filter((item) => item.kind === 'file' && item.asset_id).map((item) => item.asset_id);
+    const { data: assets, error: assetsError } = await supabase.from('marketplace_assets').select('id,status,scan_reference').in('id', assetIds).eq('seller_id', actor.userId);
+    if (assetsError) throw assetsError;
+    const rejected = (assets || []).find((asset) => asset.status === 'rejected');
+    if (rejected) return send(res, 422, 'FILE_REJECTED', 'One of the product files did not pass the Marketplace security scan. Remove it or upload a different file.');
+    if ((assets || []).some((asset) => asset.status !== 'clean')) return send(res, 409, 'FILE_REVIEW_REQUIRED', 'All uploaded product files must pass security review before publishing.');
   }
   if (nextStatus === 'published' && listing.visibility === 'public') {
     const { data: seller, error } = await supabase.from("marketplace_seller_profiles").select("public_selling_enabled,verification_status,public_plan_expires_at").eq("user_id", actor.userId).maybeSingle();
@@ -630,22 +678,32 @@ async function verifyGuestCheckout(req, res) {
   }
 }
 
+async function resolveDeliveryItems(supabase, listingId, snapshot) {
+  const rows = listingId ? await loadListingDeliveries(supabase, listingId) : [];
+  const source = rows.length ? rows : (snapshot?.delivery_asset_id ? [{ kind: 'file', asset_id: snapshot.delivery_asset_id, label: snapshot.delivery_label || 'Download product' }] : snapshot?.delivery_url ? [{ kind: 'link', delivery_url: snapshot.delivery_url, label: snapshot.delivery_label || 'Open product' }] : []);
+  const deliveries = [];
+  for (const row of source) {
+    if (row.kind === 'link') { if (isUrl(row.delivery_url)) deliveries.push({ id: row.id || row.delivery_url, label: row.label, kind: 'link', deliveryUrl: row.delivery_url }); continue; }
+    const { data: asset, error } = await supabase.from('marketplace_assets').select('id,object_key,status,original_name').eq('id', row.asset_id).maybeSingle();
+    if (error) throw error;
+    if (!asset) continue;
+    if (asset.status !== 'clean') continue;
+    deliveries.push({ id: row.id || asset.id, label: row.label || asset.original_name, kind: 'file', deliveryUrl: await createDownloadUrl(asset), originalName: asset.original_name });
+  }
+  return deliveries;
+}
+
 async function guestDelivery(req, res) {
   const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
   const token = text(req.query?.token || url.searchParams.get("token"));
   if (!/^[a-f0-9]{32}$/i.test(token)) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This delivery link is unavailable.");
   const supabase = getClient();
-  const { data: order, error } = await supabase.from("marketplace_guest_orders").select("listing_snapshot").eq("delivery_token", token).eq("payment_status", "paid").maybeSingle();
+  const { data: order, error } = await supabase.from("marketplace_guest_orders").select("listing_id,listing_snapshot").eq("delivery_token", token).eq("payment_status", "paid").maybeSingle();
   if (error) throw error;
   if (!order) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This delivery link is unavailable.");
-  if (order.listing_snapshot?.delivery_asset_id) {
-    const { data: asset, error: assetError } = await supabase.from("marketplace_assets").select("id,object_key,status,original_name").eq("id", order.listing_snapshot.delivery_asset_id).maybeSingle();
-    if (assetError) throw assetError;
-    if (!asset) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This file is no longer available.");
-    return res.status(200).json({ success: true, deliveryUrl: await createDownloadUrl(asset), deliveryLabel: order.listing_snapshot.delivery_label || "Download product" });
-  }
-  if (!isUrl(order.listing_snapshot?.delivery_url)) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This delivery link is unavailable.");
-  return res.status(200).json({ success: true, deliveryUrl: order.listing_snapshot.delivery_url, deliveryLabel: order.listing_snapshot.delivery_label || "Open product" });
+  const deliveries = await resolveDeliveryItems(supabase, order.listing_id, order.listing_snapshot);
+  if (!deliveries.length) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This product delivery is temporarily unavailable.");
+  return res.status(200).json({ success: true, deliveries, deliveryUrl: deliveries[0].deliveryUrl, deliveryLabel: deliveries[0].label });
 }
 
 async function library(req, res) {
@@ -667,19 +725,14 @@ async function delivery(req, res) {
   if (!/^[0-9a-f-]{36}$/i.test(orderId)) return send(res, 400, "ORDER_ID_INVALID", "Choose a valid marketplace order.");
   const supabase = getClient();
   const { data, error } = await supabase.from("marketplace_entitlements")
-    .select("access_status,order:marketplace_orders!inner(id,buyer_id,payment_status,listing_snapshot)")
+    .select("access_status,order:marketplace_orders!inner(id,buyer_id,listing_id,payment_status,listing_snapshot)")
     .eq("order_id", orderId).eq("buyer_id", actor.userId).maybeSingle();
   if (error) throw error;
   const order = Array.isArray(data?.order) ? data.order[0] : data?.order;
   if (!data || data.access_status !== 'active' || order?.payment_status !== 'paid') return send(res, 404, "DELIVERY_NOT_AVAILABLE", "Your product delivery is not available.");
-  if(order.listing_snapshot?.delivery_asset_id) {
-    const {data:asset,error}=await supabase.from('marketplace_assets').select('id,object_key,status,original_name').eq('id',order.listing_snapshot.delivery_asset_id).maybeSingle();
-    if(error) throw error;
-    if(!asset || asset.status!=='clean') return send(res,409,'FILE_NOT_READY','This product file is temporarily unavailable.');
-    return res.status(200).json({success:true,deliveryUrl:await createDownloadUrl(asset),deliveryLabel:order.listing_snapshot.delivery_label});
-  }
-  if(!order.listing_snapshot?.delivery_url) return send(res,404,'DELIVERY_NOT_AVAILABLE','Your product delivery is not available.');
-  return res.status(200).json({ success: true, deliveryUrl: order.listing_snapshot.delivery_url, deliveryLabel: order.listing_snapshot.delivery_label });
+  const deliveries = await resolveDeliveryItems(supabase, order.listing_id, order.listing_snapshot);
+  if (!deliveries.length) return send(res,409,'FILE_NOT_READY','This product delivery is temporarily unavailable.');
+  return res.status(200).json({ success: true, deliveries, deliveryUrl: deliveries[0].deliveryUrl, deliveryLabel: deliveries[0].label });
 }
 
 async function openDispute(req, res) {
@@ -733,11 +786,22 @@ async function activatePremium(req, res) {
   const actor = await requireActor(req,res); if (!actor) return;
   const body = readBody(req);
   if (!idempotencyPattern.test(text(body.idempotencyKey)) || body.acceptedTermsVersion !== 'marketplace-premium-v1') return send(res,400,'PREMIUM_INPUT_INVALID','Accept the seller plan terms before activation.');
-  const {data,error} = await getClient().rpc('marketplace_activate_premium_v1', {
-    p_actor_user_id: actor.userId, p_actor_email: actor.email || '', p_idempotency_key: text(body.idempotencyKey),
+  const planCode = ['monthly', 'yearly'].includes(text(body.planCode)) ? text(body.planCode) : 'monthly';
+  const {data,error} = await getClient().rpc('marketplace_activate_premium_v2', {
+    p_actor_user_id: actor.userId, p_actor_email: actor.email || '', p_idempotency_key: text(body.idempotencyKey), p_plan_code: planCode,
   });
-  if (error) return send(res,409,'PREMIUM_ACTIVATION_UNAVAILABLE','Activation requires a verified seller, an inactive plan and at least ₦1,500 in your Wallet.');
+  if (error) return send(res,409,'PREMIUM_ACTIVATION_UNAVAILABLE',`Activation requires an inactive plan and at least ₦${planCode === 'yearly' ? '13,500' : '1,500'} in your Wallet.`);
   return res.status(200).json({success:true,plan:data});
+}
+
+async function activateStorage(req, res) {
+  if (process.env.MARKETPLACE_PAYMENTS_ENABLED !== 'true') return send(res,403,'MARKETPLACE_PREVIEW','Paid plans are disabled during the marketplace preview.');
+  const actor = await requireActor(req,res); if (!actor) return;
+  const body = readBody(req); const capacityGb = Number(body.capacityGb);
+  if (!idempotencyPattern.test(text(body.idempotencyKey)) || !Number.isInteger(capacityGb) || capacityGb < 1 || capacityGb > 10) return send(res,400,'STORAGE_PLAN_INVALID','Choose storage between 1GB and 10GB.');
+  const { data, error } = await getClient().rpc('marketplace_activate_storage_v1', { p_actor_user_id: actor.userId, p_actor_email: actor.email || '', p_idempotency_key: text(body.idempotencyKey), p_capacity_gb: capacityGb });
+  if (error) return send(res,409,'STORAGE_ACTIVATION_UNAVAILABLE',error.message?.includes('INSUFFICIENT_FUNDS') ? 'You do not have enough money in your Plugsy Wallet for this storage plan.' : 'Storage upgrade is temporarily unavailable.');
+  return res.status(200).json({ success: true, plan: data });
 }
 
 async function releaseDue(req, res) {
@@ -775,11 +839,36 @@ async function flushMarketplaceEmails(supabase, limit = 25) {
   return { sent, failed, skipped: false };
 }
 
+async function flushProductUpdateEmails(supabase, limit = 25) {
+  if (!text(process.env.RESEND_API_KEY)) return { sent: 0, failed: 0, skipped: true };
+  const { data: jobs, error } = await supabase.from('marketplace_product_update_notifications')
+    .select('id,buyer_email,title,message,attempts').in('status', ['pending', 'failed']).lte('next_attempt_at', new Date().toISOString()).order('created_at', { ascending: true }).limit(Math.min(25, Math.max(1, Number(limit) || 25)));
+  if (error) throw error;
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  let sent = 0; let failed = 0;
+  for (const job of jobs || []) {
+    let messageId = null; let lastError = null;
+    try {
+      const result = await resend.emails.send(buildMarketplaceProductUpdateEmail({ recipient: job.buyer_email, title: job.title, message: job.message }), { idempotencyKey: `marketplace-product-update:${job.id}` });
+      if (result.error) throw new Error(result.error.name || 'PRODUCT_UPDATE_EMAIL_FAILED');
+      messageId = result.data?.id || null;
+      if (!messageId) throw new Error('RESEND_MESSAGE_ID_MISSING');
+    } catch (sendError) { lastError = sendError?.message || 'PRODUCT_UPDATE_EMAIL_FAILED'; }
+    const nextAttempts = Number(job.attempts || 0) + 1;
+    const { error: updateError } = await supabase.from('marketplace_product_update_notifications').update({ status: messageId ? 'sent' : nextAttempts >= 8 ? 'failed' : 'pending', attempts: nextAttempts, provider_message_id: messageId, last_error: lastError, next_attempt_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(), sent_at: messageId ? new Date().toISOString() : null }).eq('id', job.id);
+    if (updateError) throw updateError;
+    if (messageId) sent += 1; else failed += 1;
+  }
+  return { sent, failed, skipped: false };
+}
+
 async function processEmails(req,res) {
   const secret=text(req.headers?.authorization).replace(/^Bearer\s+/i,'');
   if(!secretsMatch(text(process.env.CRON_SECRET),secret)) return send(res,401,'CRON_UNAUTHORIZED','Not authorized.');
-  const result = await flushMarketplaceEmails(getClient());
-  return res.status(200).json({ success: true, ...result });
+  const supabase = getClient();
+  const result = await flushMarketplaceEmails(supabase);
+  const updates = await flushProductUpdateEmails(supabase);
+  return res.status(200).json({ success: true, ...result, productUpdates: updates });
 }
 
 async function adminWorkspace(req, res) {
@@ -852,7 +941,11 @@ async function fileMutation(req,res,action) {
     const asset={id:randomUUID(),seller_id:actor.userId,listing_id:listingId,object_key:`marketplace/${actor.userId}/${randomUUID()}/${filename}`,original_name:filename,content_type:body.contentType,expected_size:Number(body.size)};
     const uploadUrl=await createUploadUrl(asset);
     const result=await supabase.rpc('marketplace_reserve_asset_v1',{p_asset_id:asset.id,p_actor_id:actor.userId,p_listing_id:listingId,p_object_key:asset.object_key,p_name:filename,p_type:asset.content_type,p_size:asset.expected_size});
-    if(result.error) return send(res,409,'UPLOAD_QUOTA','Upload limit reached or listing access changed. Current limit: 1 GB and 20 pending uploads per seller.');
+    if(result.error) {
+      const uploadError = text(result.error.message);
+      if (uploadError.includes('SELLER_STORAGE_QUOTA')) return send(res,409,'UPLOAD_QUOTA','Your seller storage is full. You have 3GB included; upgrade storage from Seller setup to continue uploading.');
+      return send(res,409,'UPLOAD_QUOTA','Upload limit reached or listing access changed. You can upload up to 250MB per file and 20 files can be pending review.');
+    }
     return res.status(201).json({success:true,assetId:asset.id,uploadUrl});
   }
   if(!/^[0-9a-f-]{36}$/i.test(text(body.assetId))) return send(res,400,'ASSET_INVALID','Choose a valid upload.');
@@ -860,12 +953,19 @@ async function fileMutation(req,res,action) {
   if(!asset||!['uploading','quarantined'].includes(asset.status)) return send(res,409,'UPLOAD_UNAVAILABLE','This upload is not awaiting confirmation.');
   let actualSize; try{actualSize=await verifyUploadedFile(asset);}catch{ return send(res,409,'UPLOAD_MISMATCH','Upload is missing or does not match the expected file.'); }
   const result=await supabase.rpc('marketplace_complete_asset_v1',{p_actor_id:actor.userId,p_asset_id:asset.id,p_size:actualSize}); if(result.error) throw result.error;
+  const { error: deliveryInsertError } = await supabase.from('marketplace_listing_deliveries').upsert({ listing_id: asset.listing_id, seller_id: actor.userId, kind: 'file', asset_id: asset.id, label: text(body.deliveryLabel) || asset.original_name, sort_order: Number.isFinite(Number(body.sortOrder)) ? Math.max(0, Number(body.sortOrder)) : 0 }, { onConflict: 'id' });
+  if (deliveryInsertError && deliveryInsertError.code !== '42P01') throw deliveryInsertError;
   let scan = { state: 'manual', reason: 'scanner_unavailable' };
   try { scan = await scanMarketplaceAsset({ ...asset, actual_size: actualSize }); } catch (scanError) { const code=text(scanError?.message); console.error('[marketplace] private file scan pending manual review', code || scanError); scan={ state:'manual', reason:code==='VIRUSTOTAL_401'||code==='VIRUSTOTAL_403'?'scanner_access_denied':'scanner_unavailable' }; }
   if (scan.state === 'clean' || scan.state === 'rejected') {
     const { error: scanUpdateError } = await supabase.from('marketplace_assets').update({ status: scan.state, scan_reference: `virustotal_private:${scan.analysisId}`, scanned_at: new Date().toISOString() }).eq('id', asset.id).eq('status', 'quarantined');
     if (scanUpdateError) throw scanUpdateError;
     if (scan.state === 'rejected') return send(res, 422, 'FILE_REJECTED', 'This file did not pass the security scan and cannot be sold.');
+    try {
+      const { data: listingInfo } = await supabase.from('marketplace_listings').select('title').eq('id', asset.listing_id).maybeSingle();
+      await queueProductUpdateNotifications(supabase, asset.listing_id, listingInfo?.title || 'Your purchased product');
+      await flushProductUpdateEmails(supabase);
+    } catch (notificationError) { console.error('[marketplace] file update notifications pending', notificationError?.message || notificationError); }
     return res.status(200).json({success:true,status:'clean',message:'Uploaded and approved by the Marketplace security scan. You can publish this product now.'});
   }
   if (scan.state === 'pending') {
@@ -874,6 +974,20 @@ async function fileMutation(req,res,action) {
   }
   const manualMessage = scan.reason === 'file_too_large' ? 'Uploaded securely. This file is too large for automatic scanning and is awaiting Marketplace security review.' : scan.reason === 'scanner_access_denied' ? 'Uploaded securely, but the automatic scanner could not access your VirusTotal private-scanning plan. This file is awaiting Marketplace security review.' : scan.reason === 'scan_result_incomplete' ? 'Uploaded securely. The scanner returned an incomplete result, so this file is awaiting Marketplace security review.' : 'Uploaded securely. It is awaiting a Marketplace security review before buyers can download it.';
   return res.status(200).json({success:true,status:'quarantined',message:manualMessage});
+}
+
+async function addDeliveryLink(req, res) {
+  const actor = await requireActor(req, res); if (!actor) return;
+  const body = readBody(req); const listingId = text(body.listingId); const url = text(body.url); const label = text(body.label) || 'Open link';
+  if (!/^[0-9a-f-]{36}$/i.test(listingId) || !isUrl(url) || label.length > 120) return send(res, 400, 'DELIVERY_LINK_INVALID', 'Add a valid secure link and a short button name.');
+  const supabase = getClient();
+  const { data: listing, error: listingError } = await supabase.from('marketplace_listings').select('id,title').eq('id', listingId).eq('seller_id', actor.userId).maybeSingle();
+  if (listingError) throw listingError;
+  if (!listing) return send(res, 404, 'LISTING_NOT_FOUND', 'That listing was not found.');
+  const { data, error } = await supabase.from('marketplace_listing_deliveries').insert({ listing_id: listingId, seller_id: actor.userId, kind: 'link', delivery_url: url, label, sort_order: Number.isFinite(Number(body.sortOrder)) ? Math.max(0, Number(body.sortOrder)) : 0 }).select('id,kind,delivery_url,label,sort_order').single();
+  if (error) throw error;
+  try { await queueProductUpdateNotifications(supabase, listingId, listing.title); await flushProductUpdateEmails(supabase); } catch (notificationError) { console.error('[marketplace] delivery link update notifications pending', notificationError?.message || notificationError); }
+  return res.status(201).json({ success: true, delivery: data });
 }
 
 async function adminMutation(req, res, action) {
@@ -922,6 +1036,7 @@ export default async function handler(req, res) {
     if (req.method === "GET" && action === "resale-workspace") return await resaleWorkspace(req,res);
     if (req.method === "POST" && ['request-resale','decide-resale'].includes(action)) return await resaleMutation(req,res,action);
     if (req.method === "POST" && ['prepare-upload','complete-upload'].includes(action)) return await fileMutation(req,res,action);
+    if (req.method === "POST" && action === 'add-delivery-link') return await addDeliveryLink(req, res);
     if (req.method === "POST" && ['resolve-dispute','review-seller','review-asset'].includes(action)) return await adminMutation(req, res, action);
     if (req.method === "GET" && action === "private-listing") return await privateListing(req, res);
     if (req.method === "GET" && action === "onboarding") return await marketplaceOnboarding(req, res);
@@ -940,6 +1055,7 @@ export default async function handler(req, res) {
     if (req.method === "POST" && action === "purchase") return await purchase(req, res);
     if (req.method === "POST" && action === "follow-seller") return await setSellerFollow(req, res);
     if (req.method === 'POST' && action === 'activate-premium') return await activatePremium(req,res);
+    if (req.method === 'POST' && action === 'activate-storage') return await activateStorage(req,res);
     if (req.method === 'POST' && ['start-verification','check-verification'].includes(action)) return await sellerVerification(req,res,action);
     if (req.method === "POST" && action === "open-dispute") return await openDispute(req, res);
     if (["GET", "POST"].includes(req.method) && action === "release-due") return await releaseDue(req, res);

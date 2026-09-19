@@ -14,3 +14,13 @@ export function buildMarketplaceGuestEmail({ recipient, title, amount, reference
   const copy = `Your purchase of ${title} for ₦${Number(amount || 0).toLocaleString('en-NG')} is ready. Use the secure button below to access your product.`;
   return { from: 'Plugsy <hello@plugsy.ng>', to: recipient, subject, text: `${copy}\nOrder: ${reference}\nOpen product: ${deliveryUrl}`, html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:32px"><h1 style="font-size:24px">${escapeHtml(subject)}</h1><p style="line-height:1.7">${escapeHtml(copy)}</p><p>Order: ${escapeHtml(reference)}</p><a href="${escapeHtml(deliveryUrl)}" style="display:inline-block;background:#0066ff;color:white;padding:14px 20px;border-radius:10px;text-decoration:none">Open your product</a><p style="margin-top:24px;color:#666;font-size:13px">For your security, do not forward this link.</p></div>` };
 }
+
+export function buildMarketplaceProductUpdateEmail({ recipient, title, message }) {
+  const subject = `Updated product available — ${title}`;
+  const url = 'https://www.plugsy.ng/marketplace/buyer';
+  return {
+    from: 'Plugsy <hello@plugsy.ng>', to: recipient, subject,
+    text: `${message}\nOpen your Plugsy library: ${url}`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:32px"><h1 style="font-size:24px">${escapeHtml(subject)}</h1><p style="line-height:1.7">${escapeHtml(message)}</p><a href="${url}" style="display:inline-block;background:#0066ff;color:white;padding:14px 20px;border-radius:10px;text-decoration:none">Open My library</a></div>`,
+  };
+}
