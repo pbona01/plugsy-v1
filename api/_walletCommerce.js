@@ -1572,15 +1572,20 @@ export async function handleResetPin(req, res) {
 }
 
 const verifyWalletPin = async (supabase, actorUserId, candidatePin, res) => {
+  const profile = await loadActorProfile(supabase, actorUserId);
+  const state = getPinState(profile);
+  if (!profile || !state.hash) { send(res, 409, "PIN_NOT_SET", "Security PIN is not set."); return false; }
+  const success = constantTimePinMatch(text(candidatePin), state.hash);
+  if (success) {
+    const { error: clearError } = await supabase.rpc("wallet_pin_guard_v1", { p_actor_user_id: actorUserId, p_result: "success" });
+    if (clearError) { send(res, 503, "PIN_SECURITY_UNAVAILABLE", "PIN security is temporarily unavailable."); return false; }
+    return true;
+  }
   const { data: guard, error: guardError } = await supabase.rpc("wallet_pin_guard_v1", { p_actor_user_id: actorUserId, p_result: "check" });
   if (guardError || !guard?.allowed) {
     send(res, 429, "PIN_LOCKED", "Too many PIN attempts. Please wait before trying again.", { retryAfterSeconds: Number(guard?.retry_after_seconds || 900) });
     return false;
   }
-  const profile = await loadActorProfile(supabase, actorUserId);
-  const state = getPinState(profile);
-  if (!profile || !state.hash) { send(res, 409, "PIN_NOT_SET", "Security PIN is not set."); return false; }
-  const success = constantTimePinMatch(text(candidatePin), state.hash);
   const { data: recorded, error: recordError } = await supabase.rpc("wallet_pin_guard_v1", { p_actor_user_id: actorUserId, p_result: success ? "success" : "failure" });
   if (recordError) { send(res, 503, "PIN_SECURITY_UNAVAILABLE", "PIN security is temporarily unavailable."); return false; }
   if (!success) {

@@ -793,9 +793,6 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           </p>
           <form onSubmit={handleUnlockView} className="space-y-4">
             <PlugsyPinKeypad value={viewUnlockPin} onChange={setViewUnlockPin} subtitle="Your PIN stays private on this device." error={viewUnlockError} onForgot={requestPinReset} />
-            {viewUnlockError && (
-              <p className="text-red-500 text-xs font-semibold">{viewUnlockError}</p>
-            )}
             <button
               type="submit"
               disabled={isVerifyingViewPin || viewUnlockPin.length !== 4}
@@ -1596,10 +1593,6 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
 
             <form onSubmit={handleWithdrawSubmit} className="space-y-4">
               <PlugsyPinKeypad value={withdrawPin} onChange={setWithdrawPin} title="Approve withdrawal" subtitle="Plugsy secure confirmation" error={withdrawPinError} onForgot={requestPinReset} />
-
-              {withdrawPinError && (
-                <p className="text-red-500 text-xs font-semibold">{withdrawPinError}</p>
-              )}
 
               <div className="flex gap-3 border-t border-brand-border pt-4 justify-center">
                 <button
