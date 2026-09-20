@@ -1,5 +1,16 @@
 begin;
 
+create table if not exists public.wallet_pin_security_v1 (
+  user_id text primary key,
+  failed_attempts integer not null default 0 check (failed_attempts >= 0),
+  window_started_at timestamptz not null default now(),
+  locked_until timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.wallet_pin_security_v1 enable row level security;
+revoke all on table public.wallet_pin_security_v1 from anon, authenticated;
+
 create or replace function public.wallet_pin_guard_v1(p_actor_user_id text, p_result text)
 returns jsonb
 language plpgsql
