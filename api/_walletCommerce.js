@@ -1529,6 +1529,48 @@ const loadActorProfile = async (supabase, actorUserId) => {
   return error ? null : data;
 };
 
+const pinResetTokenHash = (token) => createHash("sha256").update(String(token || "")).digest("hex");
+
+export async function handleRequestPinReset(req, res) {
+  const context = await requireMutationContext(req, res);
+  if (!context) return;
+  const supabase = getWalletServiceClient(res);
+  if (!supabase) return;
+  const profile = await loadActorProfile(supabase, context.actor.userId);
+  const recipient = text(profile?.email || context.actor.email);
+  if (!profile || !recipient) return send(res, 404, "EMAIL_NOT_AVAILABLE", "We could not find an email address for this wallet.");
+  const rawToken = randomBytes(32).toString("base64url");
+  const { error: revokeError } = await supabase.from("wallet_pin_reset_tokens").update({ used_at: new Date().toISOString() }).eq("user_id", context.actor.userId).is("used_at", null);
+  if (revokeError && revokeError.code !== "42P01") return send(res, 503, "PIN_RESET_UNAVAILABLE", "PIN reset is temporarily unavailable.");
+  const { error: insertError } = await supabase.from("wallet_pin_reset_tokens").insert({ user_id: context.actor.userId, token_hash: pinResetTokenHash(rawToken), expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString() });
+  if (insertError) return send(res, 503, "PIN_RESET_UNAVAILABLE", "PIN reset is temporarily unavailable.");
+  const baseUrl = text(process.env.NEXT_PUBLIC_APP_URL || process.env.VITE_APP_URL) || `https://${text(req.headers?.host) || "www.plugsy.ng"}`;
+  const resetUrl = `${baseUrl.replace(/\/$/, "")}/wallet?pin_reset=${encodeURIComponent(rawToken)}`;
+  const resendKey = text(process.env.RESEND_API_KEY);
+  if (!resendKey) return send(res, 503, "EMAIL_UNAVAILABLE", "Email delivery is temporarily unavailable. Please try again later.");
+  const emailResponse = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ from: "Plugsy Security <security@plugsy.ng>", to: recipient, subject: "Reset your Plugsy wallet PIN", text: `Use this secure link to reset your Plugsy wallet PIN. It expires in 15 minutes: ${resetUrl}\n\nIf you did not request this, ignore this email.`, html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:32px"><h1>Reset your Plugsy wallet PIN</h1><p>This secure link expires in 15 minutes.</p><a href="${resetUrl}" style="display:inline-block;background:#1677ff;color:#fff;padding:14px 20px;border-radius:10px;text-decoration:none">Reset PIN</a><p style="color:#666;font-size:13px">If you did not request this, you can ignore this email.</p></div>` }) });
+  if (!emailResponse.ok) return send(res, 503, "EMAIL_UNAVAILABLE", "We could not send the reset email. Please try again.");
+  return res.status(200).json({ success: true, message: "A secure PIN reset link has been sent to your email." });
+}
+
+export async function handleResetPin(req, res) {
+  if (req.method !== "POST") return send(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
+  const body = await parseBody(req, res);
+  if (!body) return;
+  const token = text(body.token); const pin = text(body.pin);
+  if (token.length < 32 || !/^\d{4}$/.test(pin)) return send(res, 400, "PIN_RESET_INVALID", "Use the secure reset link and enter a four-digit PIN.");
+  const supabase = getWalletServiceClient(res); if (!supabase) return;
+  const { data: reset, error } = await supabase.from("wallet_pin_reset_tokens").select("id,user_id,expires_at,used_at").eq("token_hash", pinResetTokenHash(token)).maybeSingle();
+  if (error || !reset || reset.used_at || new Date(reset.expires_at).getTime() <= Date.now()) return send(res, 410, "PIN_RESET_EXPIRED", "This PIN reset link has expired. Request a new one.");
+  const profile = await loadActorProfile(supabase, reset.user_id); if (!profile) return send(res, 404, "PROFILE_NOT_FOUND", "Profile not found.");
+  const state = getPinState(profile); const hash = encodePin(pin);
+  const update = state.field === "wallet_pin" ? { wallet_pin: hash, updated_at: new Date().toISOString() } : { phone_number: JSON.stringify({ pin: hash, require_pin_view: state.requireView }), updated_at: new Date().toISOString() };
+  const { error: updateError } = await supabase.from("profiles").update(update).eq("clerk_id", reset.user_id);
+  if (updateError) return send(res, 503, "PIN_UPDATE_FAILED", "The security PIN could not be updated.");
+  await supabase.from("wallet_pin_reset_tokens").update({ used_at: new Date().toISOString() }).eq("id", reset.id).is("used_at", null);
+  return res.status(200).json({ success: true, message: "Your Plugsy wallet PIN has been reset." });
+}
+
 const verifyWalletPin = async (supabase, actorUserId, candidatePin, res) => {
   const { data: guard, error: guardError } = await supabase.rpc("wallet_pin_guard_v1", { p_actor_user_id: actorUserId, p_result: "check" });
   if (guardError || !guard?.allowed) {

@@ -28,6 +28,7 @@ import {
   Check, 
   ShoppingCart, 
   X,
+  Delete,
   Copy,
   Loader2
 } from 'lucide-react';
@@ -53,6 +54,20 @@ const getWithdrawalFee = (amount: number): number => {
 
 interface WalletProps {
   showHistoryOnly?: boolean;
+}
+
+function PlugsyPinKeypad({ value, onChange, title = "Plugsy Secure Keypad", subtitle, error, onForgot, submitLabel, onSubmit, busy = false }: { value: string; onChange: (value: string) => void; title?: string; subtitle?: string; error?: string; onForgot?: () => void; submitLabel?: string; onSubmit?: () => void; busy?: boolean }) {
+  const press = (key: string) => {
+    if (busy) return;
+    if (key === "backspace") onChange(value.slice(0, -1));
+    else if (value.length < 4) onChange(value + key);
+  };
+  return <div className="mx-auto w-full max-w-sm rounded-[28px] border border-brand-accent/25 bg-gradient-to-b from-brand-accent/[.10] to-brand-surface p-5 shadow-[0_20px_60px_rgba(22,119,255,.16)]">
+    <div className="text-center"><div className="mx-auto grid h-11 w-11 place-items-center rounded-2xl bg-brand-accent text-white shadow-[0_0_24px_rgba(22,119,255,.45)]"><ShieldCheck size={22}/></div><h3 className="mt-3 text-sm font-black tracking-wide text-brand-text-primary">{title}</h3>{subtitle&&<p className="mt-1 text-[11px] text-brand-text-secondary">{subtitle}</p>}</div>
+    <div className="mt-5 flex justify-center gap-3" aria-label="PIN entry"><span className="sr-only">{value.length} of 4 digits entered</span>{[0,1,2,3].map(index=><span key={index} className={`grid h-11 w-11 place-items-center rounded-xl border text-lg font-black transition-all ${index < value.length ? "border-brand-accent bg-brand-accent/15 text-brand-accent shadow-[0_0_16px_rgba(22,119,255,.2)]" : "border-brand-border bg-brand-background/60 text-transparent"}`}>{index < value.length ? "•" : "0"}</span>)}</div>
+    <div className="mt-5 grid grid-cols-3 gap-2">{["1","2","3","4","5","6","7","8","9"].map(key=><button type="button" key={key} onClick={()=>press(key)} className="h-12 rounded-xl border border-brand-border bg-brand-background/70 text-lg font-black text-brand-text-primary transition hover:-translate-y-0.5 hover:border-brand-accent hover:bg-brand-accent/10 active:scale-95">{key}</button>)}<span/><button type="button" onClick={()=>press("0")} className="h-12 rounded-xl border border-brand-border bg-brand-background/70 text-lg font-black text-brand-text-primary transition hover:-translate-y-0.5 hover:border-brand-accent hover:bg-brand-accent/10 active:scale-95">0</button><button type="button" onClick={()=>press("backspace")} aria-label="Delete last PIN digit" className="grid h-12 place-items-center rounded-xl border border-brand-border bg-brand-background/70 text-brand-text-secondary transition hover:border-brand-accent hover:text-brand-accent active:scale-95"><Delete size={18}/></button></div>
+    {error&&<p role="alert" className="mt-3 text-center text-xs font-semibold text-red-500">{error}</p>}{onForgot&&<button type="button" onClick={onForgot} className="mt-4 block w-full text-center text-xs font-bold text-brand-accent hover:underline">Forgot your wallet PIN?</button>}{onSubmit&&<button type="button" onClick={onSubmit} disabled={busy||value.length!==4} className="mt-4 h-11 w-full rounded-xl bg-brand-accent text-sm font-black text-white transition hover:bg-brand-accent/90 disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Please wait…" : submitLabel || "Continue"}</button>}
+  </div>;
 }
 
 export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
@@ -106,6 +121,12 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   const [pinChangeError, setPinChangeError] = useState('');
   const [pinChangeSuccess, setPinChangeSuccess] = useState('');
   const [isSavingPin, setIsSavingPin] = useState(false);
+  const [isPinResetOpen, setIsPinResetOpen] = useState(false);
+  const [pinResetToken, setPinResetToken] = useState('');
+  const [pinResetInput, setPinResetInput] = useState('');
+  const [pinResetConfirm, setPinResetConfirm] = useState('');
+  const [pinResetError, setPinResetError] = useState('');
+  const [pinResetBusy, setPinResetBusy] = useState(false);
 
   // View Lock State
   const [isViewLocked, setIsViewLocked] = useState(false);
@@ -124,6 +145,11 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
   const [showBankBanner, setShowBankBanner] = useState(true);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('pin_reset');
+    if (token) { setPinResetToken(token); setIsPinResetOpen(true); }
+  }, []);
 
   // Search and filters for full history view
   const [searchQuery, setSearchQuery] = useState('');
@@ -274,6 +300,27 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     } finally {
       setIsSavingPin(false);
     }
+  };
+
+  const requestPinReset = async () => {
+    try {
+      const res = await fetch('/api/wallet?action=request-pin-reset', { method: 'POST', headers: { Authorization: `Bearer ${await getToken()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Could not send the reset email.');
+      toast.success('Reset link sent to your email.');
+    } catch (error: any) { toast.error(error.message || 'Could not send the reset email.'); }
+  };
+
+  const handleResetPin = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!/^\d{4}$/.test(pinResetInput) || pinResetInput !== pinResetConfirm) { setPinResetError('Enter the same four-digit PIN twice.'); return; }
+    setPinResetBusy(true); setPinResetError('');
+    try {
+      const res = await fetch('/api/wallet?action=reset-pin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: pinResetToken, pin: pinResetInput }) });
+      const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.error || 'PIN reset failed.');
+      toast.success('Your Plugsy wallet PIN has been reset.'); setIsPinResetOpen(false); window.history.replaceState({}, '', '/wallet');
+    } catch (error: any) { setPinResetError(error.message || 'PIN reset failed.'); }
+    finally { setPinResetBusy(false); }
   };
 
   const handleUpdatePinSettings = async (requireView: boolean) => {
@@ -745,18 +792,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
             Enter your 4-digit security PIN to access your wallet dashboard.
           </p>
           <form onSubmit={handleUnlockView} className="space-y-4">
-            <div>
-              <input
-                type="password"
-                maxLength={4}
-                value={viewUnlockPin}
-                onChange={(e) => setViewUnlockPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="••••"
-                className="w-32 tracking-[1.5em] pl-6 text-center bg-brand-background border border-brand-border rounded-xl py-3 text-xl font-bold text-brand-text-primary placeholder-brand-text-secondary/50 focus:outline-none focus:border-brand-accent transition-colors mx-auto block"
-                required
-                autoFocus
-              />
-            </div>
+            <PlugsyPinKeypad value={viewUnlockPin} onChange={setViewUnlockPin} subtitle="Your PIN stays private on this device." error={viewUnlockError} onForgot={requestPinReset} />
             {viewUnlockError && (
               <p className="text-red-500 text-xs font-semibold">{viewUnlockError}</p>
             )}
@@ -1058,7 +1094,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
         </div>
       </div>
 
-      {/* 3. ACTION ROW (OPay Style equal-width dark buttons box) */}
+      {/* 3. ACTION ROW (Plugsy wallet actions) */}
       <div className="bg-brand-surface border border-brand-border rounded-2xl p-4 shadow-xs grid grid-cols-3 gap-2">
         <button
           onClick={() => {
@@ -1496,17 +1532,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
                   <p className="text-[11px] text-brand-text-secondary">
                     {pinSet ? 'Update your 4-digit security PIN used to confirm transactions.' : 'Set up a new 4-digit security PIN to secure your wallet transactions.'}
                   </p>
-                  <div className="flex justify-center pt-2">
-                    <input
-                      type="password"
-                      maxLength={4}
-                      value={pinInput}
-                      onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ''))}
-                      placeholder="••••"
-                      className="w-32 tracking-[1.5em] pl-6 text-center bg-brand-background border border-brand-border rounded-xl py-2.5 text-lg font-bold text-brand-text-primary placeholder-brand-text-secondary/50 focus:outline-none focus:border-brand-accent transition-colors"
-                      required={!pinSet}
-                    />
-                  </div>
+                  <div className="pt-2"><PlugsyPinKeypad value={pinInput} onChange={setPinInput} title="Set your Plugsy wallet PIN" subtitle="Use this PIN to approve wallet actions." /></div>
                   <p className="text-[10px] text-brand-text-secondary text-center mt-1">
                     {pinSet ? 'Leave empty if you only want to change PIN requirement settings below.' : 'PIN must be exactly 4 digits.'}
                   </p>
@@ -1569,18 +1595,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
             </p>
 
             <form onSubmit={handleWithdrawSubmit} className="space-y-4">
-              <div className="flex justify-center">
-                <input
-                  type="password"
-                  maxLength={4}
-                  value={withdrawPin}
-                  onChange={(e) => setWithdrawPin(e.target.value.replace(/\D/g, ''))}
-                  placeholder="••••"
-                  className="w-32 tracking-[1.5em] pl-6 text-center bg-brand-background border border-brand-border rounded-xl py-2.5 text-lg font-bold text-brand-text-primary placeholder-brand-text-secondary/50 focus:outline-none focus:border-brand-accent transition-colors mx-auto block"
-                  required
-                  autoFocus
-                />
-              </div>
+              <PlugsyPinKeypad value={withdrawPin} onChange={setWithdrawPin} title="Approve withdrawal" subtitle="Plugsy secure confirmation" error={withdrawPinError} onForgot={requestPinReset} />
 
               {withdrawPinError && (
                 <p className="text-red-500 text-xs font-semibold">{withdrawPinError}</p>
@@ -1606,6 +1621,8 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           </div>
         </div>
       )}
+
+      {isPinResetOpen && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 px-4 backdrop-blur-md"><div className="relative w-full max-w-md rounded-3xl border border-brand-accent/25 bg-brand-surface p-5 shadow-2xl sm:p-7"><button type="button" onClick={()=>{setIsPinResetOpen(false);window.history.replaceState({},'',window.location.pathname);}} className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-xl border border-brand-border text-brand-text-secondary"><X size={16}/></button><div className="mb-5 text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-brand-accent text-white"><ShieldCheck size={24}/></div><h2 className="mt-4 text-xl font-black text-brand-text-primary">Reset your Plugsy PIN</h2><p className="mt-2 text-xs leading-5 text-brand-text-secondary">Choose a new four-digit PIN for your wallet.</p></div><form onSubmit={handleResetPin} className="space-y-4"><PlugsyPinKeypad value={pinResetInput} onChange={setPinResetInput} title="New wallet PIN"/><label className="block text-xs font-bold text-brand-text-secondary">Confirm new PIN<input type="password" inputMode="numeric" maxLength={4} value={pinResetConfirm} onChange={e=>setPinResetConfirm(e.target.value.replace(/\D/g,''))} className="mt-2 h-11 w-full rounded-xl border border-brand-border bg-brand-background px-4 text-center text-lg tracking-[.8em] text-brand-text-primary outline-none focus:border-brand-accent"/></label>{pinResetError&&<p role="alert" className="text-center text-xs font-semibold text-red-500">{pinResetError}</p>}<button disabled={pinResetBusy||pinResetInput.length!==4||pinResetConfirm.length!==4} className="h-11 w-full rounded-xl bg-brand-accent text-sm font-black text-white disabled:opacity-50">{pinResetBusy?'Saving…':'Save new PIN'}</button></form></div></div>}
     </div>
   );
 };

@@ -6,6 +6,8 @@ import {
   handleResolveUsername,
   handleSaveBankAccount,
   handleSetPin,
+  handleRequestPinReset,
+  handleResetPin,
   handleUpdatePinSettings,
   handleUpdateUsername,
   handleVerifyPin,
@@ -293,6 +295,14 @@ export default async function handler(req, res) {
 
   if (action === "set-pin") {
     return handleSetPin(req, res)
+  }
+
+  if (action === "request-pin-reset") {
+    return handleRequestPinReset(req, res)
+  }
+
+  if (action === "reset-pin") {
+    return handleResetPin(req, res)
   }
 
   if (action === "update-pin-settings") {
