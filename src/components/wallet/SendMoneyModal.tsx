@@ -5,6 +5,7 @@ import {
   clearStableIdempotencyKey,
   getStableIdempotencyKey,
 } from "../../utils/idempotency";
+import PlugsyPinKeypad from "./PlugsyPinKeypad";
 
 interface SendMoneyModalProps {
   isOpen: boolean;
@@ -14,6 +15,7 @@ interface SendMoneyModalProps {
   senderEmail: string;
   onSuccess: () => void;
   onOpenFunding: () => void;
+  onForgotPin?: () => void;
 }
 
 export default function SendMoneyModal({
@@ -24,6 +26,7 @@ export default function SendMoneyModal({
   senderEmail,
   onSuccess,
   onOpenFunding,
+  onForgotPin,
 }: SendMoneyModalProps) {
   const [recipientInput, setRecipientInput] = useState("");
   const [resolvedName, setResolvedName] = useState<string | null>(null);
@@ -32,6 +35,7 @@ export default function SendMoneyModal({
 
   const [amountInput, setAmountInput] = useState("");
   const [note, setNote] = useState("");
+  const [pin, setPin] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sentSuccess, setSentSuccess] = useState(false);
@@ -82,6 +86,13 @@ export default function SendMoneyModal({
     return () => clearTimeout(timer);
   }, [recipientInput]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      setPin("");
+      setSendError(null);
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const amount = Number(amountInput) || 0;
@@ -93,6 +104,7 @@ export default function SendMoneyModal({
     resolvedName &&
     amount >= 10 &&
     !isBalanceInsufficient &&
+    pin.length === 4 &&
     !isValidating &&
     !isSending;
 
@@ -103,7 +115,7 @@ export default function SendMoneyModal({
     setIsSending(true);
     setSendError(null);
 
-      try {
+    try {
       const token = await getToken();
       const key = getStableIdempotencyKey(`p2p:${getCleanUsername(recipientInput)}`);
       const res = await fetch("/api/wallet?action=p2p-transfer", {
@@ -117,6 +129,7 @@ export default function SendMoneyModal({
           recipientUsername: getCleanUsername(recipientInput),
           amount,
           note,
+          pin,
         }),
       });
 
@@ -128,7 +141,12 @@ export default function SendMoneyModal({
       clearStableIdempotencyKey(`p2p:${getCleanUsername(recipientInput)}`);
       setSentSuccess(true);
     } catch (err: any) {
-      setSendError(err.message || "Something went wrong");
+      const message = err.message || "Something went wrong";
+      setSendError(
+        /security pin is not set/i.test(message)
+          ? "You have not created a wallet PIN yet. Set one in Wallet Settings before sending money."
+          : message,
+      );
     } finally {
       setIsSending(false);
     }
@@ -143,6 +161,8 @@ export default function SendMoneyModal({
     setResolveError(null);
     setAmountInput("");
     setNote("");
+    setPin("");
+    setSendError(null);
     setSentSuccess(false);
   };
 
@@ -312,6 +332,16 @@ export default function SendMoneyModal({
                 />
               </div>
 
+              <PlugsyPinKeypad
+                value={pin}
+                onChange={setPin}
+                title="Approve transfer"
+                subtitle="Confirm with your Plugsy wallet PIN"
+                error={sendError || undefined}
+                onForgot={onForgotPin}
+                busy={isSending}
+              />
+
               {/* Error messages / warnings */}
               {isBalanceInsufficient && (
                 <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center justify-between text-xs text-red-500">
@@ -330,12 +360,6 @@ export default function SendMoneyModal({
                     Fund Wallet
                   </button>
                 </div>
-              )}
-
-              {sendError && (
-                <p className="text-xs font-semibold text-red-500 bg-red-500/5 p-3 rounded-lg text-center">
-                  {sendError}
-                </p>
               )}
 
               {/* Submit Button */}

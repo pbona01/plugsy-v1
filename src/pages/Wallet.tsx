@@ -28,7 +28,6 @@ import {
   Check, 
   ShoppingCart, 
   X,
-  Delete,
   Copy,
   Loader2
 } from 'lucide-react';
@@ -39,6 +38,7 @@ import {
   getStableIdempotencyKey,
 } from "../utils/idempotency";
 import { syncClerkUserToSupabase } from "../lib/authUtils";
+import PlugsyPinKeypad from "../components/wallet/PlugsyPinKeypad";
 
 const WALLET_FUNDING_PAUSED_MESSAGE =
   "Wallet deposits are temporarily paused while we complete an urgent balance-credit fix. No payment has been initiated.";
@@ -54,20 +54,6 @@ const getWithdrawalFee = (amount: number): number => {
 
 interface WalletProps {
   showHistoryOnly?: boolean;
-}
-
-function PlugsyPinKeypad({ value, onChange, title = "Plugsy Secure Keypad", subtitle, error, onForgot, submitLabel, onSubmit, busy = false }: { value: string; onChange: (value: string) => void; title?: string; subtitle?: string; error?: string; onForgot?: () => void; submitLabel?: string; onSubmit?: () => void; busy?: boolean }) {
-  const press = (key: string) => {
-    if (busy) return;
-    if (key === "backspace") onChange(value.slice(0, -1));
-    else if (value.length < 4) onChange(value + key);
-  };
-  return <div className="mx-auto w-full max-w-sm rounded-[28px] border border-brand-accent/25 bg-gradient-to-b from-brand-accent/[.10] to-brand-surface p-5 shadow-[0_20px_60px_rgba(22,119,255,.16)]">
-    <div className="text-center"><div className="mx-auto grid h-11 w-11 place-items-center rounded-2xl bg-brand-accent text-white shadow-[0_0_24px_rgba(22,119,255,.45)]"><ShieldCheck size={22}/></div><h3 className="mt-3 text-sm font-black tracking-wide text-brand-text-primary">{title}</h3>{subtitle&&<p className="mt-1 text-[11px] text-brand-text-secondary">{subtitle}</p>}</div>
-    <div className="mt-5 flex justify-center gap-3" aria-label="PIN entry"><span className="sr-only">{value.length} of 4 digits entered</span>{[0,1,2,3].map(index=><span key={index} className={`grid h-11 w-11 place-items-center rounded-xl border text-lg font-black transition-all ${index < value.length ? "border-brand-accent bg-brand-accent/15 text-brand-accent shadow-[0_0_16px_rgba(22,119,255,.2)]" : "border-brand-border bg-brand-background/60 text-transparent"}`}>{index < value.length ? "•" : "0"}</span>)}</div>
-    <div className="mt-5 grid grid-cols-3 gap-2">{["1","2","3","4","5","6","7","8","9"].map(key=><button type="button" key={key} onClick={()=>press(key)} className="h-12 rounded-xl border border-brand-border bg-brand-background/70 text-lg font-black text-brand-text-primary transition hover:-translate-y-0.5 hover:border-brand-accent hover:bg-brand-accent/10 active:scale-95">{key}</button>)}<span/><button type="button" onClick={()=>press("0")} className="h-12 rounded-xl border border-brand-border bg-brand-background/70 text-lg font-black text-brand-text-primary transition hover:-translate-y-0.5 hover:border-brand-accent hover:bg-brand-accent/10 active:scale-95">0</button><button type="button" onClick={()=>press("backspace")} aria-label="Delete last PIN digit" className="grid h-12 place-items-center rounded-xl border border-brand-border bg-brand-background/70 text-brand-text-secondary transition hover:border-brand-accent hover:text-brand-accent active:scale-95"><Delete size={18}/></button></div>
-    {error&&<p role="alert" className="mt-3 text-center text-xs font-semibold text-red-500">{error}</p>}{onForgot&&<button type="button" onClick={onForgot} className="mt-4 block w-full text-center text-xs font-bold text-brand-accent hover:underline">Forgot your wallet PIN?</button>}{onSubmit&&<button type="button" onClick={onSubmit} disabled={busy||value.length!==4} className="mt-4 h-11 w-full rounded-xl bg-brand-accent text-sm font-black text-white transition hover:bg-brand-accent/90 disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Please wait…" : submitLabel || "Continue"}</button>}
-  </div>;
 }
 
 export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
@@ -1280,6 +1266,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
         senderEmail={user?.primaryEmailAddress?.emailAddress || ''}
         onSuccess={loadWalletData}
         onOpenFunding={() => setIsFundModalOpen(true)}
+        onForgotPin={requestPinReset}
       />
 
       {/* FUND WALLET MODAL */}
