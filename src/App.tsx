@@ -751,6 +751,7 @@ function AppContent({
     location.pathname.startsWith("/support") ||
     location.pathname.startsWith("/status") ||
     location.pathname.startsWith("/one/") ||
+    location.pathname === "/onelink" ||
     location.pathname.startsWith("/u/") ||
     location.pathname.startsWith("/vp/") ||
     location.pathname.startsWith("/marketplace/product/") ||

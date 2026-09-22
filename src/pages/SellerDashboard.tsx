@@ -25,7 +25,7 @@ export default function SellerDashboard() {
   const load=useCallback(async()=>{try{setData(await request("workspace"));}catch(error:any){toast.error(error.message);}finally{setLoading(false);}},[request]);
   useEffect(()=>{void load();},[load]);
   useEffect(()=>{if(!loading && tab==="home" && !(data?.seller?.public_selling_enabled && data?.seller?.public_plan_expires_at && new Date(data.seller.public_plan_expires_at).getTime()>Date.now()) )setPremiumOpen(true);},[loading,tab,data?.seller?.public_selling_enabled,data?.seller?.public_plan_expires_at]);
-  const listings=data?.listings||[], allSales=data?.sales||[];
+  const listings=data?.listings||[], allSales=(data?.sales||[]).filter((sale:any)=>sale.payment_status === "paid");
   const sales=useMemo(()=>allSales.filter((s:any)=>new Date(s.created_at).getTime()>=Date.now()-period*86400000),[allSales,period]);
   const metrics=useMemo(()=>({revenue:sales.reduce((n:number,s:any)=>n+Number(s.seller_amount||0),0),released:sales.filter((s:any)=>s.funds_status==="released").reduce((n:number,s:any)=>n+Number(s.seller_amount||0),0),held:sales.filter((s:any)=>s.funds_status==="held").reduce((n:number,s:any)=>n+Number(s.seller_amount||0),0),buyers:new Set(sales.map((s:any)=>s.buyer_id||s.buyer_email).filter(Boolean)).size}),[sales]);
   const top=useMemo(()=>Object.values(sales.reduce((m:any,s:any)=>{m[s.listing_id]||={id:s.listing_id,title:s.product_title,orders:0,revenue:0};m[s.listing_id].orders++;m[s.listing_id].revenue+=Number(s.seller_amount||0);return m;},{})).sort((a:any,b:any)=>b.revenue-a.revenue).slice(0,4) as any[],[sales]);
