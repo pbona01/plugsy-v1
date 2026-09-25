@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Resend } from "resend";
 import { buildMarketplaceEmail, buildMarketplaceGuestEmail, buildMarketplaceProductUpdateEmail } from "./_marketplaceEmail.js";
-import { dojahOutcome, fetchDojahVerification } from './_marketplaceVerification.js';
+import { premblyOutcome, verificationMethods, verifyPremblyIdentity } from './_marketplaceVerification.js';
 import { validateMarketplaceFile, createUploadUrl, verifyUploadedFile, createDownloadUrl } from './_marketplaceStorage.js';
 import { scanMarketplaceAsset, checkMarketplaceAssetScan } from './_marketplaceScanner.js';
 import { requireVerifiedClerkUser, requireVerifiedClerkAdmin } from "./_clerkAuth.js";
@@ -755,32 +755,42 @@ async function openDispute(req, res) {
   return res.status(201).json({ success: true, dispute: data });
 }
 
-async function sellerVerification(req,res,action) {
+async function sellerVerification(req,res) {
   const actor = await requireActor(req,res); if (!actor) return;
-  if (process.env.MARKETPLACE_DOJAH_ENABLED !== 'true' || !text(process.env.DOJAH_APP_ID) || !text(process.env.DOJAH_SECRET_KEY) || !text(process.env.DOJAH_PUBLIC_KEY) || !text(process.env.DOJAH_WIDGET_ID)) {
-    return send(res,503,'DOJAH_CONFIG_REQUIRED','Dojah seller verification is not configured yet.');
+  if (req.method !== 'POST' || !text(process.env.PREMBLY_API_KEY)) return send(res,503,'PREMBLY_CONFIG_REQUIRED','Seller verification is not configured yet.');
+  const body = readBody(req);
+  const method = text(body.method);
+  const number = text(body.number).replace(/\s+/g, '');
+  const image = text(body.image).replace(/^data:image\/(?:png|jpeg|jpg);base64,/i, '');
+  if (!verificationMethods[method] || !/^\d{11}$/.test(number) || !/^[A-Za-z0-9+/=]+$/.test(image) || image.length > 4_200_000 || body.accepted !== true) {
+    return send(res,400,'VERIFICATION_INPUT_INVALID','Choose BVN or NIN face validation, enter an 11-digit number, upload a JPG or PNG selfie, and accept the consent notice.');
   }
+
   const supabase=getClient();
   const {data:seller,error}=await supabase.from('marketplace_seller_profiles').select('user_id,verification_status,verification_reference,verification_provider').eq('user_id',actor.userId).maybeSingle();
   if(error) throw error;
   if(seller?.verification_status==='verified') return res.status(200).json({success:true,status:'verified'});
-  if(action==='start-verification') {
-    const reference=seller?.verification_status==='pending' && seller?.verification_provider==='dojah' ? seller.verification_reference : `MP-KYC-${randomUUID()}`;
-    const changes={verification_provider:'dojah',verification_reference:reference,verification_status:'pending',updated_at:new Date().toISOString()};
-    const saved=seller ? await supabase.from('marketplace_seller_profiles').update(changes).eq('user_id',actor.userId).eq('verification_status',seller.verification_status).select('user_id') : await supabase.from('marketplace_seller_profiles').insert({user_id:actor.userId,...changes}).select('user_id');
-    const saveError=saved.error;
-    if(saveError) throw saveError;
-    if(!saved.data?.length) return send(res,409,'VERIFICATION_CHANGED','Verification changed. Refresh before trying again.');
-    return res.status(200).json({success:true,status:'pending',widget:{appId:process.env.DOJAH_APP_ID,publicKey:process.env.DOJAH_PUBLIC_KEY,widgetId:process.env.DOJAH_WIDGET_ID,reference}});
+  if(seller?.verification_status==='pending' && seller?.verification_provider==='prembly') return send(res,409,'VERIFICATION_IN_PROGRESS','Your verification is already being processed. Contact Plugsy Support if it does not update shortly.');
+
+  const reference = `MP-PREMBLY-${randomUUID()}`;
+  const changes={verification_provider:'prembly',verification_reference:reference,verification_status:'pending',updated_at:new Date().toISOString()};
+  const saved=seller ? await supabase.from('marketplace_seller_profiles').update(changes).eq('user_id',actor.userId).eq('verification_status',seller.verification_status).select('user_id') : await supabase.from('marketplace_seller_profiles').insert({user_id:actor.userId,...changes}).select('user_id');
+  if(saved.error) throw saved.error;
+  if(!saved.data?.length) return send(res,409,'VERIFICATION_CHANGED','Verification changed. Refresh before trying again.');
+
+  try {
+    const result = await verifyPremblyIdentity({ method, number, image });
+    const status = premblyOutcome(result, method, number);
+    const providerReference = text(result?.verification?.reference || result?.nin_data?.trackingId || result?.bvn_data?.trackingId || reference).slice(0, 200);
+    const {data:updated,error:updateError}=await supabase.from('marketplace_seller_profiles').update({verification_status:status,verification_reference:providerReference,updated_at:new Date().toISOString()}).eq('user_id',actor.userId).eq('verification_reference',reference).eq('verification_status','pending').select('verification_status');
+    if(updateError) throw updateError;
+    if(!updated?.length) return send(res,409,'VERIFICATION_CHANGED','Verification was updated. Refresh your seller workspace.');
+    return res.status(200).json({success:true,status,method});
+  } catch (error) {
+    // Keep the processing lock rather than risking a duplicate billable face check.
+    if (error?.message === 'PREMBLY_LOOKUP_UNAVAILABLE') return send(res,503,'PREMBLY_LOOKUP_UNAVAILABLE','We could not confirm your verification result. It is being held for review so you are not charged twice.');
+    throw error;
   }
-  if(!seller?.verification_reference || seller.verification_provider!=='dojah') return send(res,409,'VERIFICATION_NOT_STARTED','Start seller verification first.');
-  const result=await fetchDojahVerification(seller.verification_reference);
-  const status=dojahOutcome(result,seller.verification_reference);
-  // Ignore browser callbacks and bind the provider result to the stored session.
-  const {data:updated,error:updateError}=await supabase.from('marketplace_seller_profiles').update({verification_status:status,updated_at:new Date().toISOString()}).eq('user_id',actor.userId).eq('verification_reference',seller.verification_reference).eq('verification_status','pending').select('verification_status');
-  if(updateError) throw updateError;
-  if(!updated?.length) return send(res,409,'VERIFICATION_CHANGED','Verification was updated. Refresh your seller workspace.');
-  return res.status(200).json({success:true,status});
 }
 
 async function activatePremium(req, res) {
@@ -1058,7 +1068,7 @@ export default async function handler(req, res) {
     if (req.method === "POST" && action === "follow-seller") return await setSellerFollow(req, res);
     if (req.method === 'POST' && action === 'activate-premium') return await activatePremium(req,res);
     if (req.method === 'POST' && action === 'activate-storage') return await activateStorage(req,res);
-    if (req.method === 'POST' && ['start-verification','check-verification'].includes(action)) return await sellerVerification(req,res,action);
+    if (req.method === 'POST' && action === 'verify-identity') return await sellerVerification(req,res);
     if (req.method === "POST" && action === "open-dispute") return await openDispute(req, res);
     if (["GET", "POST"].includes(req.method) && action === "release-due") return await releaseDue(req, res);
     if (["GET", "POST"].includes(req.method) && action === "process-emails") return await processEmails(req,res);

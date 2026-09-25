@@ -1,23 +1,32 @@
-export function dojahOutcome(result, reference) {
-  if (!result || result.reference_id !== reference) throw new Error('VERIFICATION_REFERENCE_MISMATCH');
-  if (['Ongoing','Pending'].includes(result.verification_status)) return 'pending';
-  const idType = String(result.id_type || '').toLowerCase().replace(/[^a-z]/g,'');
-  const allowed = ['nin','national','nationalid','passport','internationalpassport','dl','driverslicense','drivinglicense'].includes(idType);
-  const documentPassed = result.data?.id?.status === true;
-  const governmentPassed = idType === 'nin' && result.data?.government_data?.status === true;
-  const failedStep = Object.values(result.data || {}).some(step => step?.status === false);
-  const passed = !failedStep && result.verification_status === 'Completed' && result.status === true && allowed &&
-    (documentPassed || governmentPassed) && result.data?.selfie?.status === true;
-  return passed ? 'verified' : 'rejected';
+const PREMBLY_BASE_URL = 'https://api.prembly.com/verification';
+
+export const verificationMethods = {
+  bvn_face: { endpoint: 'bvn_w_face', label: 'BVN + Face Validation', price: 80 },
+  nin_face: { endpoint: 'nin_w_face', label: 'NIN + Face Validation', price: 150 },
+};
+
+const text = (value) => String(value || '').trim();
+
+export function premblyOutcome(result, method, number) {
+  const submittedNumber = text(number);
+  const identity = method === 'bvn_face' ? (result?.data || result?.bvn_data) : result?.nin_data;
+  const returnedNumber = text(identity?.bvn || identity?.nin || identity?.number);
+  const faceMatched = (result?.face_data || result?.data?.face_data)?.status === true;
+  const providerSucceeded = result?.status === true && String(result?.response_code || '00') === '00';
+  return providerSucceeded && faceMatched && returnedNumber === submittedNumber ? 'verified' : 'rejected';
 }
 
-export async function fetchDojahVerification(reference, fetchImpl = fetch) {
-  const appId = process.env.DOJAH_APP_ID;
-  const secret = process.env.DOJAH_SECRET_KEY;
-  if (!appId || !secret) throw new Error('DOJAH_CONFIG_REQUIRED');
-  const response = await fetchImpl(`https://api.dojah.io/api/v1/kyc/verification?${new URLSearchParams({reference_id:reference})}`, {
-    headers: { AppId: appId, Authorization: secret }, signal: AbortSignal.timeout(15000),
+export async function verifyPremblyIdentity({ method, number, image, fetchImpl = fetch }) {
+  const config = verificationMethods[method];
+  const apiKey = text(process.env.PREMBLY_API_KEY);
+  if (!config || !apiKey) throw new Error('PREMBLY_CONFIG_REQUIRED');
+
+  const response = await fetchImpl(`${PREMBLY_BASE_URL}/${config.endpoint}`, {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json', 'x-api-key': apiKey },
+    body: JSON.stringify({ number, image }),
+    signal: AbortSignal.timeout(20_000),
   });
-  if (!response.ok) throw new Error('DOJAH_LOOKUP_UNAVAILABLE');
+  if (!response.ok) throw new Error('PREMBLY_LOOKUP_UNAVAILABLE');
   return response.json();
 }
