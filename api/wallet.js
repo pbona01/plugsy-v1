@@ -1,6 +1,7 @@
 import {
   getWalletServiceClient,
   handleListBanks,
+  handleMoveFundingToWithdrawable,
   handleP2PTransfer,
   handleResolveBankAccount,
   handleResolveUsername,
@@ -279,6 +280,10 @@ export default async function handler(req, res) {
 
   if (action === "p2p-transfer") {
     return handleP2PTransfer(req, res)
+  }
+
+  if (action === "move-to-withdrawable") {
+    return handleMoveFundingToWithdrawable(req, res)
   }
 
   if (action === "resolve-account") {

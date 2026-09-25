@@ -326,6 +326,9 @@ const rpcErrorResponse = (res, error) => {
       "IDEMPOTENCY_OPERATION_IN_PROGRESS",
     ],
     INSUFFICIENT_FUNDS: [409, "INSUFFICIENT_FUNDS"],
+    INSUFFICIENT_FUNDING_BALANCE: [409, "INSUFFICIENT_FUNDING_BALANCE"],
+    INSUFFICIENT_WITHDRAWABLE_FUNDS: [409, "INSUFFICIENT_WITHDRAWABLE_FUNDS"],
+    FUNDING_CONVERSION_INVALID: [400, "FUNDING_CONVERSION_INVALID"],
     PRODUCT_REQUEST_INVALID: [400, "PRODUCT_REQUEST_INVALID"],
     TRANSFER_REQUEST_INVALID: [400, "TRANSFER_REQUEST_INVALID"],
     WITHDRAWAL_REQUEST_INVALID: [400, "WITHDRAWAL_REQUEST_INVALID"],
@@ -365,6 +368,10 @@ const rpcErrorResponse = (res, error) => {
     stableCode,
     stableCode === "INSUFFICIENT_FUNDS"
       ? "Your wallet balance is insufficient."
+      : stableCode === "INSUFFICIENT_FUNDING_BALANCE"
+        ? "Your Funding Balance is too low for this move."
+        : stableCode === "INSUFFICIENT_WITHDRAWABLE_FUNDS"
+          ? "Your Withdrawable Balance is too low for this withdrawal."
       : "The wallet operation could not be completed.",
   );
 };
@@ -1553,6 +1560,41 @@ export async function handleRequestPinReset(req, res) {
   return res.status(200).json({ success: true, message: "A secure PIN reset link has been sent to your email." });
 }
 
+export async function handleMoveFundingToWithdrawable(req, res) {
+  const context = await requireMutationContext(req, res);
+  if (!context) return;
+
+  const key = requireIdempotency(req, res, context.body);
+  if (!key) return;
+
+  const amount = Number(context.body.amount);
+  if (!Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) !== amount * 100) {
+    return send(res, 400, "FUNDING_CONVERSION_INVALID", "Enter a valid amount to move.");
+  }
+
+  const supabase = getWalletServiceClient(res);
+  if (!supabase) return;
+  if (!(await verifyWalletPin(supabase, context.actor.userId, context.body.pin, res))) return;
+
+  const result = await callRpc(supabase, res, "move_funding_to_withdrawable_v1", {
+    p_actor_user_id: context.actor.userId,
+    p_actor_email: context.actor.email,
+    p_amount: amount,
+    p_idempotency_key: key,
+  });
+  if (!result) return;
+
+  return res.status(200).json({
+    success: true,
+    alreadyProcessed: result.already_processed === true,
+    reference: result.reference,
+    amount: result.amount,
+    fee: result.fee,
+    netAmount: result.net_amount,
+    balanceAfter: result.balance_after,
+  });
+}
+
 export async function handleResetPin(req, res) {
   if (req.method !== "POST") return send(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
   const body = await parseBody(req, res);
@@ -1822,7 +1864,7 @@ export async function handleWithdrawal(req, res) {
   const reservation = await callRpc(
     supabase,
     res,
-    "reserve_wallet_withdrawal_v2",
+    "reserve_wallet_withdrawal_v3",
     {
       p_actor_user_id: context.actor.userId,
       p_actor_email: context.actor.email,

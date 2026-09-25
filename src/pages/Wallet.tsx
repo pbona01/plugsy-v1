@@ -61,6 +61,8 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   const { getToken } = useAuth();
   const navigate = useNavigate();
   const [balance, setBalance] = useState<number>(0);
+  const [fundingBalance, setFundingBalance] = useState<number>(0);
+  const [withdrawableBalance, setWithdrawableBalance] = useState<number>(0);
   const [profile, setProfile] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,9 +130,14 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
   // Modal display toggles
   const [isSendModalOpen, setIsSendModalOpen] = useState(false);
   const [isFundModalOpen, setIsFundModalOpen] = useState(false);
+  const [isMoveFundsOpen, setIsMoveFundsOpen] = useState(false);
   const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
   const [showBankBanner, setShowBankBanner] = useState(true);
+  const [moveFundsAmount, setMoveFundsAmount] = useState('');
+  const [moveFundsPin, setMoveFundsPin] = useState('');
+  const [moveFundsError, setMoveFundsError] = useState('');
+  const [isMovingFunds, setIsMovingFunds] = useState(false);
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get('pin_reset');
@@ -372,8 +379,8 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
       toast.error('Minimum withdrawal is ₦1,000');
       return;
     }
-    if (balance < amount + FEE) {
-      toast.error('Insufficient balance to cover withdrawal and fee');
+    if (withdrawableBalance < amount + FEE) {
+      toast.error('Your Withdrawable Balance must cover the withdrawal and bank fee.');
       return;
     }
 
@@ -432,6 +439,68 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     }
   };
 
+  const applyProfileBalances = (profileData: any) => {
+    // The legacy balance remains the total for older parts of the app. New
+    // profiles expose the two buckets directly; fall back safely while the
+    // migration is being rolled out.
+    const legacyTotal = Number(profileData?.balance ?? 0);
+    const funding = Number(profileData?.funding_balance ?? legacyTotal);
+    const withdrawable = Number(profileData?.withdrawable_balance ?? 0);
+    setFundingBalance(funding);
+    setWithdrawableBalance(withdrawable);
+    setBalance(funding + withdrawable);
+  };
+
+  const handleMoveFundsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = Number(moveFundsAmount);
+    if (!amount || amount <= 0) {
+      setMoveFundsError('Enter an amount to move.');
+      return;
+    }
+    if (amount > fundingBalance) {
+      setMoveFundsError('That amount is more than your Funding Balance.');
+      return;
+    }
+    if (!pinSet) {
+      setIsMoveFundsOpen(false);
+      setIsSettingsOpen(true);
+      toast.error('Set a four-digit wallet PIN before moving money.');
+      return;
+    }
+    if (!/^\d{4}$/.test(moveFundsPin)) {
+      setMoveFundsError('Enter your four-digit wallet PIN.');
+      return;
+    }
+
+    setIsMovingFunds(true);
+    setMoveFundsError('');
+    try {
+      const response = await fetch('/api/wallet?action=move-to-withdrawable', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await getToken()}`,
+          'Idempotency-Key': getStableIdempotencyKey('funding-to-withdrawable'),
+        },
+        body: JSON.stringify({ amount, pin: moveFundsPin }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Could not move your money.');
+
+      clearStableIdempotencyKey('funding-to-withdrawable');
+      toast.success(`₦${Number(result.netAmount).toLocaleString()} moved to Withdrawable Balance.`);
+      setMoveFundsAmount('');
+      setMoveFundsPin('');
+      setIsMoveFundsOpen(false);
+      await loadWalletData();
+    } catch (error: any) {
+      setMoveFundsError(error.message || 'Could not move your money.');
+    } finally {
+      setIsMovingFunds(false);
+    }
+  };
+
   const loadWalletData = async (background = false) => {
     if (!user?.id || walletLoadInFlightRef.current) return;
     walletLoadInFlightRef.current = true;
@@ -464,7 +533,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
       }
 
       setProfile(profileData);
-      setBalance(Number(profileData.balance ?? 0));
+      applyProfileBalances(profileData);
 
       const { data: txData, error: txError } = await supabase
         .from('wallet_transactions')
@@ -520,7 +589,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
             ]);
             if (freshProfile?.clerk_id === user.id) {
               setProfile(freshProfile);
-              setBalance(Number(freshProfile.balance ?? 0));
+              applyProfileBalances(freshProfile);
             }
             if (!freshTransactions.error) {
               currentTransactions = freshTransactions.data || [];
@@ -868,26 +937,28 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           ) : (
             <div className="divide-y divide-brand-border">
               {filteredTransactions.map((tx) => {
-                const isCredit = tx.type === 'fund' || tx.type === 'p2p_receive';
+                const isCredit = tx.type === 'fund' || tx.type === 'p2p_receive' || tx.type === 'commission' || tx.type === 'marketplace_sale';
                 return (
                   <div key={tx.id} className="p-4 sm:p-5 flex items-center justify-between hover:bg-brand-background transition-colors">
                     <div className="flex items-center gap-3.5">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                         tx.type === 'fund' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
                         tx.type === 'p2p_receive' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
+                        tx.type === 'funding_conversion' ? 'bg-violet-500/10 text-violet-500 border border-violet-500/20' :
                         tx.type === 'withdraw' ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
                         tx.type === 'p2p_send' ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20' :
                         'bg-brand-text/5 text-brand-text-secondary border border-brand-border'
                       }`}>
                         {tx.type === 'fund' && <ArrowDownLeft size={18} />}
                         {tx.type === 'p2p_receive' && <ArrowDownLeft size={18} className="rotate-[90deg]" />}
+                        {tx.type === 'funding_conversion' && <ArrowUpRight size={18} />}
                         {tx.type === 'withdraw' && <ArrowUpRight size={18} />}
                         {tx.type === 'p2p_send' && <ArrowUpRight size={18} className="rotate-[-45deg]" />}
-                        {tx.type !== 'fund' && tx.type !== 'p2p_receive' && tx.type !== 'withdraw' && tx.type !== 'p2p_send' && <ShoppingCart size={18} />}
+                        {tx.type !== 'fund' && tx.type !== 'p2p_receive' && tx.type !== 'funding_conversion' && tx.type !== 'withdraw' && tx.type !== 'p2p_send' && <ShoppingCart size={18} />}
                       </div>
                       <div>
                         <p className="font-bold text-sm sm:text-base text-brand-text-primary capitalize">
-                          {tx.description || (tx.type === 'fund' ? 'Wallet Top-up' : tx.type)}
+                          {tx.description || (tx.type === 'fund' ? 'Wallet Top-up' : tx.type === 'funding_conversion' ? 'Moved to Withdrawable Balance' : tx.type)}
                         </p>
                         <p className="text-[10px] font-mono text-brand-text-secondary mt-1 flex items-center gap-1.5 uppercase">
                           <span>{getRelativeTime(tx.created_at)}</span>
@@ -902,8 +973,8 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
                     </div>
                     
                     <div className="text-right">
-                      <p className={`font-black text-sm sm:text-base ${isCredit ? 'text-green-500' : 'text-brand-text-primary'}`}>
-                        {isCredit ? '+' : '-'}₦{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      <p className={`font-black text-sm sm:text-base ${isCredit ? 'text-green-500' : tx.type === 'funding_conversion' ? 'text-violet-500' : 'text-brand-text-primary'}`}>
+                        {tx.type === 'funding_conversion' ? '↗' : isCredit ? '+' : '-'}₦{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
                       <span className={`inline-block py-0.5 px-2 rounded-md text-[9px] font-black uppercase tracking-wider mt-1.5 ${
                         tx.status === 'success' ? 'bg-green-500/10 text-green-500' :
@@ -1077,8 +1148,36 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
         </div>
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-2xl border border-brand-border bg-brand-surface p-4 shadow-xs">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-brand-text-secondary">Funding Balance</p>
+              <p className="mt-1 text-xl font-black text-brand-text-primary">
+                {balanceVisible ? `₦${fundingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '••••••••'}
+              </p>
+            </div>
+            <div className="rounded-xl border border-brand-accent/20 bg-brand-accent/10 p-2 text-brand-accent"><WalletIcon size={17} /></div>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-brand-text-secondary">Deposits for Plugsy payments. Move money to Withdrawable when you need to send it to a bank.</p>
+          <button type="button" onClick={() => { setMoveFundsError(''); setIsMoveFundsOpen(true); }} className="mt-3 text-xs font-black text-brand-accent hover:underline">Move to Withdrawable →</button>
+        </div>
+        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-4 shadow-xs">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-brand-text-secondary">Withdrawable Balance</p>
+              <p className="mt-1 text-xl font-black text-brand-text-primary">
+                {balanceVisible ? `₦${withdrawableBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '••••••••'}
+              </p>
+            </div>
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-2 text-emerald-500"><Building2 size={17} /></div>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-brand-text-secondary">Earnings, commissions and Plugsy transfers. This is the balance you can withdraw to your bank.</p>
+        </div>
+      </div>
+
       {/* 3. ACTION ROW (Plugsy wallet actions) */}
-      <div className="bg-brand-surface border border-brand-border rounded-2xl p-4 shadow-xs grid grid-cols-3 gap-2">
+      <div className="bg-brand-surface border border-brand-border rounded-2xl p-4 shadow-xs grid grid-cols-2 sm:grid-cols-4 gap-2">
         <button
           onClick={() => {
             if (!profile?.wallet_tag) {
@@ -1124,6 +1223,16 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           <span className="text-xs font-bold text-brand-text-primary">Add Money</span>
           <span className="text-[9px] text-brand-text-secondary mt-0.5">Via Flutterwave</span>
         </button>
+        <button
+          onClick={() => { setMoveFundsError(''); setIsMoveFundsOpen(true); }}
+          className="flex flex-col items-center justify-center p-3 rounded-xl hover:bg-brand-text/5 transition-all text-center group"
+        >
+          <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 group-hover:scale-105 group-active:scale-95 text-violet-500 flex items-center justify-center transition-all mb-2 shadow-xs">
+            <ArrowUpRight size={20} className="stroke-[2.5px]" />
+          </div>
+          <span className="text-xs font-bold text-brand-text-primary">Move Funds</span>
+          <span className="text-[9px] text-brand-text-secondary mt-0.5">3.5% processing</span>
+        </button>
       </div>
 
       {hasWithdrawalBankAccount && (
@@ -1164,7 +1273,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
             <div className="space-y-0.5">
               <span className="font-bold block text-brand-text-primary">Link your Bank Account</span>
               <span className="text-brand-text-secondary text-[11px] block">
-                Required for withdrawing earnings from your balance instantly to any Nigerian bank.
+                Required for withdrawing your Withdrawable Balance to any Nigerian bank.
               </span>
             </div>
           </div>
@@ -1209,26 +1318,28 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           ) : (
             <div className="divide-y divide-brand-border">
               {transactions.slice(0, 20).map((tx) => {
-                const isCredit = tx.type === 'fund' || tx.type === 'p2p_receive';
+                const isCredit = tx.type === 'fund' || tx.type === 'p2p_receive' || tx.type === 'commission' || tx.type === 'marketplace_sale';
                 return (
                   <div key={tx.id} className="p-4 sm:p-5 flex items-center justify-between hover:bg-brand-background/40 transition-colors">
                     <div className="flex items-center gap-3.5">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                         tx.type === 'fund' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
                         tx.type === 'p2p_receive' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
+                        tx.type === 'funding_conversion' ? 'bg-violet-500/10 text-violet-500 border border-violet-500/20' :
                         tx.type === 'withdraw' ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
                         tx.type === 'p2p_send' ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20' :
                         'bg-brand-text/5 text-brand-text-secondary border border-brand-border'
                       }`}>
                         {tx.type === 'fund' && <ArrowDownLeft size={18} />}
                         {tx.type === 'p2p_receive' && <ArrowDownLeft size={18} className="rotate-[90deg]" />}
+                        {tx.type === 'funding_conversion' && <ArrowUpRight size={18} />}
                         {tx.type === 'withdraw' && <ArrowUpRight size={18} />}
                         {tx.type === 'p2p_send' && <ArrowUpRight size={18} className="rotate-[-45deg]" />}
-                        {tx.type !== 'fund' && tx.type !== 'p2p_receive' && tx.type !== 'withdraw' && tx.type !== 'p2p_send' && <ShoppingCart size={18} />}
+                        {tx.type !== 'fund' && tx.type !== 'p2p_receive' && tx.type !== 'funding_conversion' && tx.type !== 'withdraw' && tx.type !== 'p2p_send' && <ShoppingCart size={18} />}
                       </div>
                       <div>
                         <p className="font-bold text-sm text-brand-text-primary capitalize">
-                          {tx.description || (tx.type === 'fund' ? 'Wallet Top-up' : tx.type)}
+                          {tx.description || (tx.type === 'fund' ? 'Wallet Top-up' : tx.type === 'funding_conversion' ? 'Moved to Withdrawable Balance' : tx.type)}
                         </p>
                         <p className="text-[10px] text-brand-text-secondary mt-0.5">
                           {getRelativeTime(tx.created_at)}
@@ -1237,8 +1348,8 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
                     </div>
                     
                     <div className="text-right">
-                      <p className={`font-black text-sm sm:text-base ${isCredit ? 'text-green-500' : 'text-brand-text-primary'}`}>
-                        {isCredit ? '+' : '-'}₦{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      <p className={`font-black text-sm sm:text-base ${isCredit ? 'text-green-500' : tx.type === 'funding_conversion' ? 'text-violet-500' : 'text-brand-text-primary'}`}>
+                        {tx.type === 'funding_conversion' ? '↗' : isCredit ? '+' : '-'}₦{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
                       <span className={`inline-block py-0.5 px-2 rounded-md text-[9px] font-black uppercase tracking-wider mt-1 ${
                         tx.status === 'success' ? 'bg-green-500/10 text-green-500' :
@@ -1297,7 +1408,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
                     required
                   />
                 </div>
-                <p className="text-[10px] text-brand-text-secondary mt-1.5 pl-1">Minimum deposit is ₦100</p>
+                <p className="text-[10px] text-brand-text-secondary mt-1.5 pl-1">Minimum deposit is ₦100. Deposits enter your Funding Balance.</p>
               </div>
 
               {fundError && (
@@ -1325,6 +1436,46 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
         </div>
       )}
 
+      {isMoveFundsOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-xs p-0 sm:p-4">
+          <div className="absolute inset-0" onClick={() => !isMovingFunds && setIsMoveFundsOpen(false)} />
+          <div className="relative w-full max-w-md bg-brand-surface border border-brand-border rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 p-6 space-y-5">
+            <div className="flex justify-between items-center pb-2 border-b border-brand-border">
+              <div>
+                <h3 className="text-base font-black uppercase tracking-widest text-brand-text-primary">Move to Withdrawable</h3>
+                <p className="mt-1 text-xs text-brand-text-secondary">Funding Balance → Withdrawable Balance</p>
+              </div>
+              <button disabled={isMovingFunds} onClick={() => setIsMoveFundsOpen(false)} className="text-brand-text-secondary hover:text-brand-text disabled:opacity-50"><X size={20} /></button>
+            </div>
+            <form onSubmit={handleMoveFundsSubmit} className="space-y-4">
+              <div className="rounded-xl border border-brand-accent/20 bg-brand-accent/[0.06] p-3 text-xs leading-5 text-brand-text-secondary">
+                A 3.5% payment processing fee applies. The remaining amount becomes available for bank withdrawal immediately.
+              </div>
+              <div>
+                <div className="flex justify-between gap-3">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-brand-text-secondary block mb-2">Amount to move</label>
+                  <span className="text-[10px] font-bold text-brand-text-secondary">Available: ₦{fundingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text-secondary font-bold">₦</span>
+                  <input type="number" min="1" max={fundingBalance} step="any" value={moveFundsAmount} onChange={(event) => setMoveFundsAmount(event.target.value)} placeholder="0.00" className="w-full bg-brand-background border border-brand-border rounded-xl py-3 pl-8 pr-4 text-brand-text-primary focus:outline-none focus:border-brand-accent font-semibold" required />
+                </div>
+              </div>
+              {Number(moveFundsAmount) > 0 && (
+                <div className="rounded-xl border border-brand-border bg-brand-background/50 p-3.5 text-xs space-y-2">
+                  <div className="flex justify-between text-brand-text-secondary"><span>Processing fee (3.5%)</span><span>₦{(Number(moveFundsAmount) * 0.035).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                  <div className="flex justify-between border-t border-brand-border pt-2 font-black text-brand-text-primary"><span>You will receive</span><span className="text-emerald-500">₦{(Number(moveFundsAmount) * 0.965).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                </div>
+              )}
+              <PlugsyPinKeypad value={moveFundsPin} onChange={setMoveFundsPin} title="Confirm move" subtitle="Use your Plugsy wallet PIN." error={moveFundsError} onForgot={requestPinReset} busy={isMovingFunds} />
+              <button type="submit" disabled={isMovingFunds || !moveFundsAmount || moveFundsPin.length !== 4} className="w-full bg-brand-accent hover:bg-brand-accent/95 disabled:opacity-50 text-white font-black uppercase tracking-wider text-xs py-3.5 rounded-xl transition-all cursor-pointer">
+                {isMovingFunds ? 'Moving money...' : 'Move to Withdrawable'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* WITHDRAW TO BANK MODAL */}
       {isWithdrawModalOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-xs p-0 sm:p-4">
@@ -1338,6 +1489,10 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
             </div>
             
             <form onSubmit={handleWithdrawClick} className="space-y-4">
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-3 text-xs leading-5 text-brand-text-secondary">
+                <span className="font-bold text-brand-text-primary">Available to withdraw: ₦{withdrawableBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span><br />
+                Only your Withdrawable Balance can be sent to a bank. Move deposits from Funding Balance first if needed.
+              </div>
               {hasWithdrawalBankAccount && (
                 <div className="bg-brand-text/5 border border-brand-border rounded-xl p-3.5 flex items-center gap-3">
                   <Building2 size={18} className="text-brand-accent" />
