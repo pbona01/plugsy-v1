@@ -1,21 +1,38 @@
 -- Correct wallet balance buckets v1
 -- One-time repair for the first bucket migration. Historic wallet balances existed
--- before Plugsy could identify their source, so this repair preserves them as
--- Withdrawable rather than making legacy funds look like fresh deposits.
+-- before Plugsy could identify their source, so this repair preserves safe legacy
+-- balances as Withdrawable rather than making them look like fresh deposits.
 
 begin;
 
 alter table public.profiles
   add column if not exists wallet_balance_legacy_reclassified_at timestamptz;
 
-update public.profiles
-set withdrawable_balance = coalesce(withdrawable_balance, 0) + coalesce(funding_balance, 0),
+-- Do not make a real, recent direct deposit withdrawable. Accounts that funded
+-- after the original split are intentionally left unchanged for reconciliation.
+-- Every other account only contains a legacy total and can be repaired safely.
+with safe_legacy_profiles as (
+  select p.clerk_id
+  from public.profiles p
+  where p.wallet_balance_buckets_initialized_at is not null
+    and p.wallet_balance_legacy_reclassified_at is null
+    and not exists (
+      select 1
+      from public.wallet_transactions wt
+      where wt.user_id = p.clerk_id
+        and wt.type = 'fund'
+        and wt.status in ('success', 'confirmed', 'completed', 'paid')
+        and wt.created_at >= p.wallet_balance_buckets_initialized_at
+    )
+)
+update public.profiles p
+set withdrawable_balance = coalesce(p.withdrawable_balance, 0) + coalesce(p.funding_balance, 0),
     funding_balance = 0,
-    balance = coalesce(withdrawable_balance, 0) + coalesce(funding_balance, 0),
+    balance = coalesce(p.withdrawable_balance, 0) + coalesce(p.funding_balance, 0),
     wallet_balance_legacy_reclassified_at = now(),
     updated_at = now()
-where wallet_balance_buckets_initialized_at is not null
-  and wallet_balance_legacy_reclassified_at is null;
+from safe_legacy_profiles safe
+where p.clerk_id = safe.clerk_id;
 
 -- P2P transfers may spend either balance. Prefer earnings/withdrawable money
 -- first so a user keeps their direct deposits available for Plugsy purchases.
