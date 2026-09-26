@@ -291,7 +291,7 @@ export default function SendMoneyModal({
                 )}
                 {(!amount || amount >= 10) && (
                   <p className="text-[10px] text-brand-text-secondary mt-1 pl-1">
-                    Minimum transfer is ₦10
+                    Minimum transfer is ₦10. Transfers use your Withdrawable Balance first, then Funding Balance.
                   </p>
                 )}
 

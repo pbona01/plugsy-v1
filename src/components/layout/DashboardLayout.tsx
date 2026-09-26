@@ -23,6 +23,23 @@ export default function DashboardLayout({ children, user }: Props) {
 
   const [isProfileMenuOpen, setIsProfileMenuOpen] = React.useState(false);
 
+  const handleBack = () => {
+    // The seller workspace is a Marketplace destination, not a dashboard page.
+    // Always return to its parent marketplace so direct links and refreshes have
+    // the same predictable escape route.
+    if (location.pathname.startsWith('/marketplace/seller')) {
+      navigate('/marketplace');
+      return;
+    }
+
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+
+    navigate('/dashboard');
+  };
+
   const handleLogout = async () => {
     try {
       await signOut();
@@ -105,7 +122,7 @@ export default function DashboardLayout({ children, user }: Props) {
         <header className="h-20 border-b border-[var(--brand-border)] bg-[var(--brand-bg)]/80 backdrop-blur-md sticky top-0 z-10 hidden md:flex items-center justify-between px-8">
           <div className="flex-1 max-w-xl flex items-center">
              <button 
-               onClick={() => window.history.back()} 
+               onClick={handleBack}
                className="mr-4 p-2 rounded-full hover:bg-[var(--brand-text)]/5 transition-colors text-[var(--brand-text)]/60 hover:text-[var(--brand-text)]"
                title="Go Back"
              >
@@ -186,7 +203,7 @@ export default function DashboardLayout({ children, user }: Props) {
         <header className="md:hidden h-16 border-b border-[var(--brand-border)] bg-[var(--brand-bg)] flex items-center justify-between px-4 sticky top-0 z-20">
           <div className="flex items-center gap-2">
             <button 
-              onClick={() => window.history.back()} 
+              onClick={handleBack}
               className="p-1 -ml-1 mr-1 rounded-full hover:bg-[var(--brand-text)]/5 transition-colors text-[var(--brand-text)]/60 hover:text-[var(--brand-text)]"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>

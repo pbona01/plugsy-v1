@@ -1096,7 +1096,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
 
       {/* 2. BALANCE CARD (Hero element with green-to-dark gradient) */}
       <div 
-        className="rounded-3xl p-6 sm:p-8 text-white flex flex-col justify-between shadow-xl relative overflow-hidden"
+        className="rounded-3xl p-5 sm:p-6 text-white flex flex-col justify-between shadow-xl relative overflow-hidden transition-[transform,box-shadow] duration-200 ease-out motion-reduce:transition-none"
         style={{ background: 'linear-gradient(135deg, #16a34a 0%, #0d8a3f 100%)' }}
       >
         <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl pointer-events-none" />
@@ -1116,7 +1116,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
               </button>
             </div>
             
-            <h2 className="text-3xl sm:text-4xl font-black tracking-tight drop-shadow-xs">
+            <h2 className="text-2xl sm:text-3xl font-black tracking-tight drop-shadow-xs">
               {balanceVisible ? (
                 `₦${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
               ) : (
@@ -1134,7 +1134,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           </Link>
         </div>
 
-        <div className="mt-8 flex justify-between items-center z-10 border-t border-white/10 pt-4">
+        <div className="mt-5 flex justify-between items-center z-10 border-t border-white/10 pt-3">
           <p className="text-[10px] text-white/70 font-mono tracking-wider">
             PLUGSY PAY SECURE
           </p>
@@ -1148,36 +1148,22 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-2xl border border-brand-border bg-brand-surface p-4 shadow-xs">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-brand-text-secondary">Funding Balance</p>
-              <p className="mt-1 text-xl font-black text-brand-text-primary">
-                {balanceVisible ? `₦${fundingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '••••••••'}
-              </p>
-            </div>
-            <div className="rounded-xl border border-brand-accent/20 bg-brand-accent/10 p-2 text-brand-accent"><WalletIcon size={17} /></div>
-          </div>
-          <p className="mt-3 text-xs leading-5 text-brand-text-secondary">Deposits for Plugsy payments. Move money to Withdrawable when you need to send it to a bank.</p>
-          <button type="button" onClick={() => { setMoveFundsError(''); setIsMoveFundsOpen(true); }} className="mt-3 text-xs font-black text-brand-accent hover:underline">Move to Withdrawable →</button>
+      <section className="overflow-hidden rounded-2xl border border-brand-border bg-brand-surface shadow-xs">
+        <div className="grid grid-cols-2 divide-x divide-brand-border">
+          <button type="button" onClick={() => { setMoveFundsError(''); setIsMoveFundsOpen(true); }} className="group min-h-[88px] px-4 py-3 text-left transition-colors hover:bg-brand-accent/[.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-accent">
+            <span className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[.13em] text-brand-text-secondary"><WalletIcon size={14} className="text-brand-accent" />Funding</span>
+            <span className="mt-2 block text-lg font-black text-brand-text-primary">{balanceVisible ? `₦${fundingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '••••••••'}</span>
+            <span className="mt-1 block text-[10px] font-semibold text-brand-accent">Use on Plugsy · Move out</span>
+          </button>
+          <button type="button" onClick={() => { if (!hasWithdrawalBankAccount) { setIsBankModalOpen(true); return; } setIsWithdrawModalOpen(true); }} className="group min-h-[88px] px-4 py-3 text-left transition-colors hover:bg-emerald-500/[.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500">
+            <span className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[.13em] text-brand-text-secondary"><Building2 size={14} className="text-emerald-500" />Withdrawable</span>
+            <span className="mt-2 block text-lg font-black text-brand-text-primary">{balanceVisible ? `₦${withdrawableBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '••••••••'}</span>
+            <span className="mt-1 block text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Send · Withdraw</span>
+          </button>
         </div>
-        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-4 shadow-xs">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-brand-text-secondary">Withdrawable Balance</p>
-              <p className="mt-1 text-xl font-black text-brand-text-primary">
-                {balanceVisible ? `₦${withdrawableBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '••••••••'}
-              </p>
-            </div>
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-2 text-emerald-500"><Building2 size={17} /></div>
-          </div>
-          <p className="mt-3 text-xs leading-5 text-brand-text-secondary">Earnings, commissions and Plugsy transfers. This is the balance you can withdraw to your bank.</p>
-        </div>
-      </div>
 
-      {/* 3. ACTION ROW (Plugsy wallet actions) */}
-      <div className="bg-brand-surface border border-brand-border rounded-2xl p-4 shadow-xs grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {/* Compact, thumb-friendly wallet actions. */}
+        <div className="grid grid-cols-4 border-t border-brand-border">
         <button
           onClick={() => {
             if (!profile?.wallet_tag) {
@@ -1186,13 +1172,13 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
             }
             setIsSendModalOpen(true);
           }}
-          className="flex flex-col items-center justify-center p-3 rounded-xl hover:bg-brand-text/5 transition-all text-center group"
+          className="group flex min-h-[92px] flex-col items-center justify-center gap-1.5 px-1 text-center transition-[background-color,transform] duration-150 ease-out hover:bg-brand-text/[.035] active:scale-[.97] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-accent"
         >
-          <div className="w-12 h-12 rounded-2xl bg-brand-accent/10 border border-brand-accent/20 group-hover:scale-105 group-active:scale-95 text-brand-accent flex items-center justify-center transition-all mb-2 shadow-xs">
-            <Send size={20} className="rotate-[-45deg] stroke-[2.5px]" />
+          <div className="grid h-10 w-10 place-items-center rounded-xl border border-brand-accent/20 bg-brand-accent/10 text-brand-accent transition-transform duration-150 group-hover:scale-105 motion-reduce:transition-none">
+            <Send size={18} className="rotate-[-45deg] stroke-[2.5px]" />
           </div>
-          <span className="text-xs font-bold text-brand-text-primary">To Plugsy</span>
-          <span className="text-[9px] text-brand-text-secondary mt-0.5">Free Transfer</span>
+          <span className="text-[10px] font-black text-brand-text-primary">Send</span>
+          <span className="text-[8px] text-brand-text-secondary">Plugsy user</span>
         </button>
 
         <button
@@ -1204,36 +1190,37 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
             }
             setIsWithdrawModalOpen(true);
           }}
-          className="flex flex-col items-center justify-center p-3 rounded-xl hover:bg-brand-text/5 transition-all text-center group"
+          className="group flex min-h-[92px] flex-col items-center justify-center gap-1.5 px-1 text-center transition-[background-color,transform] duration-150 ease-out hover:bg-brand-text/[.035] active:scale-[.97] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500"
         >
-          <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 group-hover:scale-105 group-active:scale-95 text-emerald-500 flex items-center justify-center transition-all mb-2 shadow-xs">
-            <Building size={20} className="stroke-[2.5px]" />
+          <div className="grid h-10 w-10 place-items-center rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-500 transition-transform duration-150 group-hover:scale-105 motion-reduce:transition-none">
+            <Building size={18} className="stroke-[2.5px]" />
           </div>
-          <span className="text-xs font-bold text-brand-text-primary">To Bank</span>
-          <span className="text-[9px] text-brand-text-secondary mt-0.5">Withdraw</span>
+          <span className="text-[10px] font-black text-brand-text-primary">Withdraw</span>
+          <span className="text-[8px] text-brand-text-secondary">To bank</span>
         </button>
 
         <button
           onClick={() => setIsFundModalOpen(true)}
-          className="flex flex-col items-center justify-center p-3 rounded-xl hover:bg-brand-text/5 transition-all text-center group"
+          className="group flex min-h-[92px] flex-col items-center justify-center gap-1.5 px-1 text-center transition-[background-color,transform] duration-150 ease-out hover:bg-brand-text/[.035] active:scale-[.97] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500"
         >
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 group-hover:scale-105 group-active:scale-95 text-amber-500 flex items-center justify-center transition-all mb-2 shadow-xs">
-            <Plus size={22} className="stroke-[2.5px]" />
+          <div className="grid h-10 w-10 place-items-center rounded-xl border border-amber-500/20 bg-amber-500/10 text-amber-500 transition-transform duration-150 group-hover:scale-105 motion-reduce:transition-none">
+            <Plus size={19} className="stroke-[2.5px]" />
           </div>
-          <span className="text-xs font-bold text-brand-text-primary">Add Money</span>
-          <span className="text-[9px] text-brand-text-secondary mt-0.5">Via Flutterwave</span>
+          <span className="text-[10px] font-black text-brand-text-primary">Fund</span>
+          <span className="text-[8px] text-brand-text-secondary">Flutterwave</span>
         </button>
         <button
           onClick={() => { setMoveFundsError(''); setIsMoveFundsOpen(true); }}
-          className="flex flex-col items-center justify-center p-3 rounded-xl hover:bg-brand-text/5 transition-all text-center group"
+          className="group flex min-h-[92px] flex-col items-center justify-center gap-1.5 px-1 text-center transition-[background-color,transform] duration-150 ease-out hover:bg-brand-text/[.035] active:scale-[.97] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500"
         >
-          <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 group-hover:scale-105 group-active:scale-95 text-violet-500 flex items-center justify-center transition-all mb-2 shadow-xs">
-            <ArrowUpRight size={20} className="stroke-[2.5px]" />
+          <div className="grid h-10 w-10 place-items-center rounded-xl border border-violet-500/20 bg-violet-500/10 text-violet-500 transition-transform duration-150 group-hover:scale-105 motion-reduce:transition-none">
+            <ArrowUpRight size={18} className="stroke-[2.5px]" />
           </div>
-          <span className="text-xs font-bold text-brand-text-primary">Move Funds</span>
-          <span className="text-[9px] text-brand-text-secondary mt-0.5">3.5% processing</span>
+          <span className="text-[10px] font-black text-brand-text-primary">Convert</span>
+          <span className="text-[8px] text-brand-text-secondary">3.5% fee</span>
         </button>
-      </div>
+        </div>
+      </section>
 
       {hasWithdrawalBankAccount && (
         <div className="bg-brand-surface border border-brand-border rounded-2xl p-4 flex items-center justify-between gap-4">
