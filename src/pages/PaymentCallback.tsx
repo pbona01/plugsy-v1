@@ -1,15 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
-import { supabase } from '../lib/supabase';
+import { ArrowRight, CheckCircle2, Clock3, Loader2, ShieldCheck } from 'lucide-react';
 
 export default function PaymentCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isLoaded, userId, getToken } = useAuth();
   
-  const [status, setStatus] = useState<'verifying' | 'success' | 'error'>('verifying');
+  const [status, setStatus] = useState<'verifying' | 'success' | 'pending' | 'error'>('verifying');
   const [errorMessage, setErrorMessage] = useState('');
+  const [deliveryPath, setDeliveryPath] = useState('/chat');
 
   const reference = searchParams.get('reference');
 
@@ -44,13 +45,16 @@ export default function PaymentCallback() {
           if (order?.product_name?.toLowerCase().includes('medal')) {
             targetPath = '/medals?success=medal';
           }
+          setDeliveryPath(targetPath);
 
           setTimeout(() => {
             navigate(targetPath, { replace: true });
           }, 2000);
+        } else if (res.ok && data.success && data.pending) {
+          setStatus('pending');
         } else {
           setStatus('error');
-          setErrorMessage(data.error || (data.pending ? "Purchase is still pending." : "Payment verification failed"));
+          setErrorMessage(data.error || "Payment verification failed");
         }
       } catch (err: any) {
         console.error("Verification connection error");
@@ -63,44 +67,43 @@ export default function PaymentCallback() {
   }, [isLoaded, reference, navigate, userId, getToken]);
   
   return (
-    <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
-      <div className="max-w-md w-full p-8 border rounded-xl shadow-sm bg-[var(--brand-card)] border-[var(--brand-border)]">
+    <main className="grid min-h-[75vh] place-items-center bg-brand-bg px-4 py-10 text-brand-text">
+      <section aria-live="polite" className="w-full max-w-md rounded-3xl border border-brand-border bg-brand-surface p-6 text-center shadow-xl sm:p-8">
         
         {status === 'verifying' && (
           <div className="flex flex-col items-center">
-            <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mb-6" />
-            <h2 className="text-xl font-bold text-[var(--brand-text)] capitalize">Verifying Your Payment...</h2>
-            <p className="text-gray-500 mt-2">Please do not close this window.</p>
+            <Loader2 className="mb-6 animate-spin text-brand-accent" size={42} aria-hidden="true" />
+            <h1 className="text-xl font-black">Confirming your payment</h1>
+            <p className="mt-2 text-sm text-brand-text-secondary">Please keep this page open while we check your order.</p>
           </div>
         )}
         
         {status === 'success' && (
           <div className="flex flex-col items-center">
-            <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-6">
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-            </div>
-            <h2 className="text-2xl font-bold text-[var(--brand-text)]">✅ Payment Confirmed!</h2>
-            <p className="text-gray-500 mt-3 mb-2">Redirecting to chat to get your order...</p>
+            <span className="mb-5 grid h-14 w-14 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-500"><CheckCircle2 size={30} aria-hidden="true" /></span>
+            <h1 className="text-2xl font-black">Payment confirmed</h1>
+            <p className="mt-3 text-sm leading-6 text-brand-text-secondary">{deliveryPath.startsWith('/medals')?'Your medal is ready to view.':'Your order is saved. Open Plugsy Chat for your CapCut login details and delivery updates.'}</p>
+            <button onClick={() => navigate(deliveryPath, { replace: true })} className="btn-primary mt-6 flex h-12 w-full items-center justify-center gap-2 text-sm font-bold">{deliveryPath.startsWith('/medals')?'View your medal':'Open Plugsy Chat'} <ArrowRight size={17}/></button>
           </div>
         )}
         
+        {status === 'pending' && <div className="flex flex-col items-center"><Clock3 className="mb-5 text-amber-500" size={38} aria-hidden="true"/><h1 className="text-xl font-black">Order is processing</h1><p className="mt-3 text-sm leading-6 text-brand-text-secondary">Your payment was recorded. We'll show your delivery in Plugsy Chat when it's ready.</p><button onClick={() => navigate('/chat')} className="btn-primary mt-6 h-12 w-full text-sm font-bold">View Plugsy Chat</button></div>}
         {status === 'error' && (
           <div className="flex flex-col items-center">
-            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-6">
-               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-            </div>
-            <h2 className="text-xl font-bold text-red-600">Verification Error</h2>
-            <p className="text-[var(--brand-text-secondary)] mt-2 mb-6">{errorMessage}</p>
+            <ShieldCheck className="mb-5 text-red-500" size={38} aria-hidden="true"/>
+            <h1 className="text-xl font-black">We couldn't confirm your payment</h1>
+            <p className="mt-2 text-sm text-brand-text-secondary">{errorMessage}</p>
+            <p className="mt-3 text-xs text-brand-text-secondary">If money left your wallet, contact support with reference {reference}. Please don't pay again until your order is checked.</p>
             <button 
               onClick={() => navigate('/dashboard')}
-              className="bg-[var(--brand-text)] text-[var(--brand-bg)] font-semibold tracking-tight py-3 px-6 rounded-lg hover:opacity-90 w-full"
+              className="btn-primary mt-6 h-12 w-full text-sm font-bold"
             >
               Go to Dashboard
             </button>
           </div>
         )}
         
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

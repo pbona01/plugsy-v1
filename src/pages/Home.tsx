@@ -178,8 +178,8 @@ export default function Home() {
               <div className="space-y-12">
                 {[
                   { icon: MousePointer2, title: 'Choose your plan', desc: 'Select your preferred CapCut pro plan.' },
-                  { icon: RefreshCw, title: 'Pay with Paystack', desc: 'Securely pay instantly using your card or bank transfer.' },
-                  { icon: Clock, title: 'Instant Activation', desc: 'Our team is notified immediately to prepare your account.' },
+                  { icon: RefreshCw, title: 'Pay from your wallet', desc: 'Fund your Plugsy Wallet, then pay for your plan.' },
+                  { icon: Clock, title: 'Get delivery updates', desc: 'Your order appears in Plugsy Chat while your access is prepared.' },
                   { icon: CheckCircle2, title: 'Confirm & Track', desc: 'Track your premium subscription countdown in the dashboard.' },
                 ].map((item, i) => (
                   <div key={i} className="flex gap-6 group">
@@ -236,8 +236,8 @@ export default function Home() {
                 { q: 'What is Plugsy Portfolio Creation?', a: 'Plugsy Portfolio Creation is coming soon. This feature will allow freelancers and anyone to build a clear, professional profile of their work, helping them showcase their skills and stand out to clients or employers.' },
                 { q: 'How do I login after getting pro access?', a: 'Login through TikTok first, wait for the login code from us, and then log into CapCut using TikTok. You can watch the tutorial here: https://youtu.be/eRENvc0DB8A' },
                 { q: 'What is Plugsy?', a: 'Plugsy is an online platform built to help people connect to affordable services and experiences in a smarter and easier way while still maintaining full value and quality.' },
-                { q: 'How do I get CapCut pro access?', a: 'After payment, your pro login will be sent to you.' },
-                { q: 'How does confirmation work?', a: 'Confirmation is automatic via Paystack. Our team then prepares your premium logins.' },
+                { q: 'How do I get CapCut pro access?', a: 'Choose a plan, pay from your Plugsy Wallet and open Plugsy Chat for your login details and delivery updates.' },
+                { q: 'How does confirmation work?', a: 'Plugsy confirms your wallet purchase and records the order. Our team then prepares your premium login.' },
                 { q: 'When does my subscription countdown start?', a: 'Your subscription countdown begins as soon as our team activates your premium logins.' },
                 { q: 'Will I get a renewal reminder?', a: 'Yes, you will get reminders to renew your plan before it expires to ensure no interruption.' },
                 { q: 'Can I renew before my plan expires?', a: 'Yes, you can initiate a renewal before your current plan expires for seamless access.' },

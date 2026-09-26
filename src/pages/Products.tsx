@@ -159,7 +159,7 @@ export default function Products() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleContinue = async (plan: any) => {
     if (!userId) {
-      navigate("/login?redirect=/products");
+      navigate(`/login?redirect=${encodeURIComponent(`/checkout/confirm?planId=${plan.id}`)}`);
       return;
     }
     navigate(`/checkout/confirm?planId=${plan.id}`);

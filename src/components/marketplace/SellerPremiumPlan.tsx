@@ -6,7 +6,7 @@ import { marketplaceAttempt, clearMarketplaceAttempt } from '../../utils/marketp
 
 const naira = (value: number) => `₦${value.toLocaleString('en-NG')}`;
 
-export default function SellerPremiumPlan({ seller, onComplete }: { seller: any; onComplete: () => Promise<void> }) {
+export default function SellerPremiumPlan({ seller, onComplete }: { seller: any; onComplete: (kind: 'plan' | 'storage') => Promise<void> }) {
   const { userId, getToken } = useAuth();
   const [busy, setBusy] = useState('');
   const [storageGb, setStorageGb] = useState(10);
@@ -24,7 +24,7 @@ export default function SellerPremiumPlan({ seller, onComplete }: { seller: any;
       const response = await fetch('/api/marketplace?action=activate-premium', { method: 'POST', headers: { Authorization: `Bearer ${token || ''}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ idempotencyKey: key, planCode, acceptedTermsVersion: 'marketplace-premium-v1' }) });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || 'Plan activation failed.');
-      clearMarketplaceAttempt(localStorage, userId, `seller-premium-${planCode}`); toast.success(`${planCode === 'yearly' ? 'Yearly' : 'Monthly'} Premium activated.`); await onComplete();
+      clearMarketplaceAttempt(localStorage, userId, `seller-premium-${planCode}`); toast.success('Premium is active. Verify your identity to publish publicly.'); await onComplete('plan');
     } catch (error: any) { toast.error(error.message || 'Plan activation failed.'); } finally { setBusy(''); }
   };
 
@@ -35,7 +35,7 @@ export default function SellerPremiumPlan({ seller, onComplete }: { seller: any;
       const key = marketplaceAttempt(localStorage, userId, `seller-storage-${storageGb}`); const token = await getToken();
       const response = await fetch('/api/marketplace?action=activate-storage', { method: 'POST', headers: { Authorization: `Bearer ${token || ''}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ idempotencyKey: key, capacityGb: storageGb }) });
       const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error || 'Storage upgrade failed.');
-      clearMarketplaceAttempt(localStorage, userId, `seller-storage-${storageGb}`); toast.success(`Storage upgraded to ${result.plan.capacity_gb}GB.`); await onComplete();
+      clearMarketplaceAttempt(localStorage, userId, `seller-storage-${storageGb}`); toast.success(`Storage upgraded to ${result.plan.capacity_gb}GB.`); await onComplete('storage');
     } catch (error: any) { toast.error(error.message || 'Storage upgrade failed.'); } finally { setBusy(''); }
   };
 

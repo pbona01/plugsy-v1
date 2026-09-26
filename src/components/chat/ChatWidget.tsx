@@ -19,8 +19,8 @@ interface Message {
 }
 
 const FAQS = [
-  { q: "How do I pay?", a: "Simply select a plan on the CapCut Pro page and click 'Activate' or 'Buy Now'. You can pay instantly using your card or bank transfer via Paystack." },
-  { q: "How long is confirmation?", a: "Confirmation is instant! Once Paystack confirms your payment, our team is notified automatically." },
+  { q: "How do I pay?", a: "Choose a CapCut plan and pay from your Plugsy Wallet. If needed, fund your wallet first, then return to checkout." },
+  { q: "How long is confirmation?", a: "Your wallet purchase is recorded when payment succeeds. Check Plugsy Chat for delivery updates and your login details." },
   { q: "Is this automatic?", a: "Payment verification is automatic. Our team then prepares and sends your premium logins within minutes." },
   { q: "What is CapCut Max Pro?", a: "It's the ultimate toolkit for creators, removing watermarks and providing all premium features." }
 ];

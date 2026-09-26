@@ -302,9 +302,7 @@ export default function CheckoutConfirm() {
             <h1 className="text-3xl font-black uppercase tracking-tight text-brand-text">
               Checkout <span className="text-brand-accent">Confirm</span>
             </h1>
-            <p className="text-brand-text/40 font-mono text-[9px] uppercase tracking-[0.3em]">
-              Minimalist Verification Block
-            </p>
+            <p className="text-sm text-brand-text-secondary">Review your plan, pay from your wallet, then find your CapCut access in Plugsy Chat.</p>
           </header>
 
           <motion.div
@@ -415,9 +413,7 @@ export default function CheckoutConfirm() {
                     </span>
                   </div>
                 </div>
-                <div className="text-[9px] font-mono text-brand-text/30 text-right uppercase tracking-[0.3em] italic mt-2">
-                  @TruthOverComfort
-                </div>
+                <p className="mt-3 text-right text-xs text-brand-text-secondary">One payment. Your order will appear in your dashboard.</p>
               </div>
             </div>
           </motion.div>
@@ -425,13 +421,15 @@ export default function CheckoutConfirm() {
           <div className="space-y-4 pt-4">
             <motion.div layoutId={`product-cta-${plan.id}`} className="w-full space-y-4">
               {(() => {
-                const walletBalance = profile?.balance || 0;
+                const walletBalance = profile?.funding_balance != null && profile?.withdrawable_balance != null
+                  ? Number(profile.funding_balance) + Number(profile.withdrawable_balance)
+                  : Number(profile?.balance || 0);
                 const price = getDisplayPrice(plan).displayPrice;
-                const canAfford = walletBalance >= price;
+                const canAfford = !profile || walletBalance >= price;
 
                 return (
                   <div>
-                    {/* Payment Method Selector */}
+                    {/* CapCut purchases are charged from the Plugsy wallet. */}
                     <div className="space-y-2 mb-4">
                       <label className="block text-[10px] font-mono uppercase tracking-[0.2em] text-brand-text-secondary">
                         Payment Method
@@ -451,7 +449,7 @@ export default function CheckoutConfirm() {
                           <div>
                             <div className="text-xs font-bold uppercase tracking-wider">Plugsy Wallet</div>
                             <div className="text-[10px] font-mono text-brand-text-secondary mt-0.5">
-                              Bal: ₦{walletBalance.toLocaleString()}
+                              {profile ? `Bal: ₦${walletBalance.toLocaleString()}` : 'Checking balance…'}
                             </div>
                           </div>
                         </button>
@@ -462,7 +460,7 @@ export default function CheckoutConfirm() {
                     {useWallet ? (
                       <div>
                         <button
-                          disabled={processing || isScanning}
+                          disabled={processing || isScanning || !canAfford}
                           onClick={handleContinue}
                           className="w-full py-4 px-6 rounded-xl font-bold text-sm uppercase tracking-wider text-white transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 border-none bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-900/20"
                         >
@@ -472,7 +470,7 @@ export default function CheckoutConfirm() {
                         {!canAfford && (
                           <div className="mt-3 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-center">
                             <p className="text-xs text-red-400 mb-2">
-                              Your wallet balance (₦{walletBalance.toLocaleString()}) is lower than the plan price.
+                              Add ₦{Math.max(0,price-walletBalance).toLocaleString()} to your wallet to complete this purchase.
                             </p>
                             <div className="flex justify-center gap-3">
                               <Link
@@ -513,6 +511,7 @@ export default function CheckoutConfirm() {
           </div>
 
           <footer className="pt-12 text-center space-y-4">
+            <p className="text-xs leading-5 text-brand-text-secondary">After payment: open Plugsy Chat to receive your login details. Keep your order reference if you need help.</p>
             <div className="flex items-center justify-center gap-8 text-brand-text/50">
               <Shield size={14} />
               <CheckCircle2 size={14} />

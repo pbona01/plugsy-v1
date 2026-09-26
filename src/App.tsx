@@ -93,6 +93,7 @@ import NotificationBell from "./components/NotificationBell";
 import InstallApp from "./components/InstallApp";
 import SplashScreen from "./components/SplashScreen";
 import LoadingSplash from "./components/LoadingSplash";
+import { safeAuthRedirect } from "./utils/safeAuthRedirect";
 import RealtimeNotifications from "./components/RealtimeNotifications";
 import { Toaster } from "react-hot-toast";
 import { initOneSignal, clearAppBadge, silentlyLinkOneSignalUser, logoutOneSignalUser } from "./utils/onesignal";
@@ -434,9 +435,9 @@ function AppContent({
       userId &&
       authPaths.some((path) => location.pathname.startsWith(path))
     ) {
-      navigate(isUserAdmin ? "/admin" : "/dashboard", { replace: true });
+      navigate(safeAuthRedirect(new URLSearchParams(location.search).get("redirect"), isUserAdmin ? "/admin" : "/dashboard"), { replace: true });
     }
-  }, [userId, location.pathname, navigate, isUserAdmin]);
+  }, [userId, location.pathname, location.search, navigate, isUserAdmin]);
 
   // Deep linking: navigate to targeted paths from notification payload data on tap
   useEffect(() => {
@@ -510,7 +511,7 @@ function AppContent({
               userId ? (
                 <CheckoutConfirm />
               ) : (
-                <Navigate to="/login?redirect=/checkout/confirm" />
+                <Navigate to={`/login?redirect=${encodeURIComponent(`/checkout/confirm${location.search}`)}`} />
               )
             }
           />
@@ -537,7 +538,7 @@ function AppContent({
               !userId ? (
                 <Login />
               ) : (
-                <Navigate to={isUserAdmin ? "/admin" : "/dashboard"} />
+                <Navigate to={safeAuthRedirect(new URLSearchParams(location.search).get("redirect"), isUserAdmin ? "/admin" : "/dashboard")} />
               )
             }
           />
@@ -547,7 +548,7 @@ function AppContent({
               !userId ? (
                 <Register />
               ) : (
-                <Navigate to={isUserAdmin ? "/admin" : "/dashboard"} />
+                <Navigate to={safeAuthRedirect(new URLSearchParams(location.search).get("redirect"), isUserAdmin ? "/admin" : "/dashboard")} />
               )
             }
           />
@@ -557,7 +558,7 @@ function AppContent({
               !userId ? (
                 <Register />
               ) : (
-                <Navigate to={isUserAdmin ? "/admin" : "/dashboard"} />
+                <Navigate to={safeAuthRedirect(new URLSearchParams(location.search).get("redirect"), isUserAdmin ? "/admin" : "/dashboard")} />
               )
             }
           />
@@ -770,6 +771,9 @@ function AppContent({
   // Public profiles and public portfolios must stay free of signed-in chrome.
   // The signed-in OneLink editor still receives the shared Dashboard back control.
   const isStandalonePage = isVpPage || location.pathname.startsWith("/one/") || location.pathname.startsWith("/u/");
+  const hideFloatingSupport = isMessagingPage || /^\/(login|register|signup|sign-in|sign-up)(\/|$)/.test(location.pathname) ||
+    location.pathname.startsWith("/wallet") || location.pathname.startsWith("/portfolio") || location.pathname.startsWith("/marketplace") ||
+    location.pathname === "/checkout/confirm" || location.pathname === "/payment/callback";
 
   if (isStandalonePage) {
     return (
@@ -789,7 +793,7 @@ function AppContent({
         >
           {mainRoutes}
         </main>
-        {!isMessagingPage && <ChatWidget />}
+        {!hideFloatingSupport && <ChatWidget />}
         <NotificationBell />
         <InstallApp />
       </div>

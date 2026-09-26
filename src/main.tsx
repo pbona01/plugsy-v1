@@ -227,7 +227,6 @@ function ThemedClerkProvider({ children }: { children: React.ReactNode }) {
       frontendApi={fallbackApi}
       afterSignOutUrl="/"
       fallbackRedirectUrl="/dashboard"
-      forceRedirectUrl="/dashboard"
       appearance={{
         baseTheme: theme === 'dark' ? dark : undefined,
       }}

@@ -14,8 +14,8 @@ export default function Footer() {
             to={isSignedIn ? "/dashboard" : "/register"}
             className="flex items-center gap-3 px-8 py-4 bg-brand-accent/10 border border-brand-accent/20 rounded-full font-black uppercase tracking-widest text-brand-accent hover:bg-brand-accent hover:text-white transition-all duration-300 mb-16 shadow-lg shadow-brand-accent/5"
           >
-            <div className="w-2 h-2 rounded-full bg-brand-accent animate-pulse" />
-            Join 1000+ plugged-in users
+            <div className="h-2 w-2 rounded-full bg-brand-accent" />
+            {isSignedIn ? "Open your dashboard" : "Create a free account"}
           </Link>
 
           <Link to="/" className="flex items-center gap-2 group mb-8">

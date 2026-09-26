@@ -115,7 +115,7 @@ export default function OnboardingPage() {
                 CapCut Pro Subscriptions
               </h3>
               <p className="text-sm md:text-base text-slate-600 dark:text-white/60 leading-relaxed mb-8">
-                Get instant access to CapCut's premium editing tools with no watermarks, exclusive effects and pro templates. Pay once, get your login details sent straight to your Plugsy chat within minutes.
+                Choose a CapCut plan, pay from your Plugsy Wallet and follow delivery in Plugsy Chat. Your login details appear there when they are ready.
               </p>
             </div>
             
