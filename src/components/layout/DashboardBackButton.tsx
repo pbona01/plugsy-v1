@@ -26,7 +26,7 @@ export default function DashboardBackButton({ visible, alignRight = false }: Das
     <Link
       to={destination}
       aria-label={label}
-      className={`fixed top-4 z-[80] inline-flex min-h-11 items-center gap-2 rounded-full border border-brand-border bg-brand-surface/95 px-3 text-xs font-black uppercase tracking-wide text-brand-text shadow-lg backdrop-blur-xl transition hover:border-brand-accent/50 hover:text-brand-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg ${alignRight ? "right-4" : "left-4"}`}
+      className={`fixed top-4 z-40 inline-flex min-h-11 items-center gap-2 rounded-full border border-brand-border bg-brand-surface/95 px-3 text-xs font-black uppercase tracking-wide text-brand-text shadow-lg backdrop-blur-xl transition hover:border-brand-accent/50 hover:text-brand-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg ${alignRight ? "right-4" : "left-4"}`}
     >
       <ArrowLeft className="h-4 w-4" aria-hidden="true" />
       <span className="hidden sm:inline">{destination === "/marketplace" ? "Marketplace" : "Dashboard"}</span>
