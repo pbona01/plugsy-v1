@@ -261,7 +261,7 @@ export default function Navbar({ showTopBar = true, showBottomBar = true }: Navb
     </div>}
 
     {/* Immersive Mobile Bottom Navigation */}
-    {showBottomBar && <div className="md:hidden fixed bottom-6 inset-x-0 z-40 px-4 pointer-events-none flex justify-center">
+    {showBottomBar && <div className="md:hidden fixed bottom-[max(1rem,env(safe-area-inset-bottom))] inset-x-0 z-40 px-4 pointer-events-none flex justify-center">
       <GlassBottomNav
         className="nav-bottom-match pointer-events-auto flex-1 max-w-[360px] grid items-center px-3 py-3 rounded-full overflow-hidden"
         style={{ gridTemplateColumns: `repeat(${mobileLinks.length}, minmax(0, 1fr))` }}
@@ -277,14 +277,14 @@ export default function Navbar({ showTopBar = true, showBottomBar = true }: Navb
                   to={link.href}
                   aria-label={link.name}
                   aria-current={isActive ? "page" : undefined}
-                  className={`flex min-h-11 flex-1 items-center justify-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg ${isActive ? "text-brand-accent" : "text-brand-text-secondary hover:text-brand-text"}`}
+                  className={`flex min-h-11 flex-1 items-center justify-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg ${isActive ? "bg-brand-accent/10 text-brand-accent" : "text-brand-text-secondary hover:bg-brand-text/5 hover:text-brand-text"}`}
                 >
                   <div className="flex flex-col items-center justify-center w-full">
                     <div className="relative">
                       {link.icon && <link.icon className="w-[18px] h-[18px] shrink-0" />}
                       {(link.href === "/chat" || link.href === "/admin/chats") && unreadCount > 0 && (
                         <span 
-                          className="absolute -top-1 -right-1.5 w-[14px] h-[14px] rounded-full bg-blue-600 border border-white dark:border-[#0A0A0C] text-white flex items-center justify-center text-[7px] font-black shadow-md animate-pulse"
+                          className="absolute -top-1 -right-1.5 w-[14px] h-[14px] rounded-full bg-blue-600 border border-white dark:border-[#0A0A0C] text-white flex items-center justify-center text-[7px] font-black shadow-md"
                           style={{ zIndex: 40 }}
                         >
                           {unreadCount}

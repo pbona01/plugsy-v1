@@ -6,22 +6,24 @@ import { supabase } from "../lib/supabase";
 import { VPPortfolio } from "../types/verification";
 import { Plus, ArrowRight, Eye, Briefcase, Trash2 } from "lucide-react";
 import { LiquidGlass } from "../components/ui/LiquidGlass";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { SEO } from "../components/seo/SEO";
 
 import { showToast } from "../components/Toast";
 
-const containerVariants = {
+const MOTION_EASE = [0.22, 1, 0.36, 1] as const;
+
+const containerVariants: Variants = {
   hidden: { opacity: 0 },
   show: {
     opacity: 1,
-    transition: { staggerChildren: 0.1 }
+    transition: { staggerChildren: 0.045 }
   }
 };
 
-const itemVariants = {
-  hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } }
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 6 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.22, ease: MOTION_EASE } }
 };
 
 export default function PortfolioDashboard() {
@@ -110,14 +112,14 @@ export default function PortfolioDashboard() {
         <div className="p-8 text-center text-gray-500 min-h-screen flex items-center justify-center uppercase tracking-widest font-mono text-xs">Loading Live Ledger...</div>
       ) : (
         <motion.div 
-          initial={{ opacity: 0, scale: 0.98 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.5 }}
-          className="max-w-7xl mx-auto p-4 md:p-8"
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="max-w-7xl mx-auto p-4 pb-[calc(8rem+env(safe-area-inset-bottom))] md:p-8"
         >
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
             <div>
-              <h1 className="pr-16 text-3xl font-serif tracking-tight text-slate-900 dark:text-[#F5F5F7] sm:pr-0">Your Verification Portfolios</h1>
+              <h1 className="pr-16 text-3xl tracking-tight text-slate-900 dark:text-[#F5F5F7] sm:pr-0">Your Verification Portfolios</h1>
               <p className="text-slate-600 dark:text-white/60 mt-2">Manage your skill proof and track client engagement.</p>
             </div>
             <Link 
@@ -134,7 +136,7 @@ export default function PortfolioDashboard() {
               <div className="mx-auto w-16 h-16 bg-red-100 dark:bg-red-500/10 text-red-500 flex items-center justify-center rounded-2xl mb-6">
                 <Briefcase size={32} />
               </div>
-              <h2 className="text-4xl font-serif text-slate-900 dark:text-white mb-4">Stop Sending CVs.</h2>
+              <h2 className="text-4xl text-slate-900 dark:text-white mb-4">Stop Sending CVs.</h2>
               <div className="w-16 h-1 bg-red-500 mx-auto mb-6"></div>
               <h3 className="text-2xl text-slate-800 dark:text-white/90 font-medium mb-4">Start sending proof.</h3>
               <p className="text-slate-600 dark:text-white/70 mb-8 max-w-md mx-auto leading-relaxed">
@@ -157,9 +159,9 @@ export default function PortfolioDashboard() {
               {portfolios.map((port) => (
                 <motion.div 
                   variants={itemVariants}
-                  whileHover={{ y: -4 }}
+                  whileHover={{ y: -2 }}
                   key={port.id} 
-                  className="bg-brand-bg border flex flex-col border-brand-border rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow"
+                  className="app-card app-card-interactive flex flex-col p-6"
                 >
                   <div className="flex items-start justify-between gap-4 mb-4">
                     <div className="flex flex-wrap items-center gap-2">

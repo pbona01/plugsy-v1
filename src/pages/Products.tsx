@@ -271,7 +271,7 @@ export default function Products() {
                 <motion.div
                   layoutId={`product-card-${plan.id}`}
                   key={plan.id}
-                  className="card-premium p-10 flex flex-col group transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-brand-accent/10 hover:border-brand-accent border-brand-accent/50 ring-1 ring-brand-accent/20"
+                  className="card-premium p-10 flex flex-col group border-brand-accent/50 ring-1 ring-brand-accent/20"
                 >
                   {plan.image_url ? (
                     <img
@@ -408,7 +408,7 @@ export default function Products() {
               {/* Portfolio Product Card placeholder */}
               <motion.div
                 layoutId="product-card-portfolio"
-                className="card-premium p-10 flex flex-col group transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-brand-accent/10 hover:border-brand-accent border-brand-accent/50 ring-1 ring-brand-accent/20"
+                className="card-premium p-10 flex flex-col group border-brand-accent/50 ring-1 ring-brand-accent/20"
               >
                 <div className="w-16 h-16 rounded-2xl bg-brand-accent/10 flex items-center justify-center mb-8">
                   <Video size={32} className="text-brand-accent" />

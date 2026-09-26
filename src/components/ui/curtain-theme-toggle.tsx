@@ -4,11 +4,11 @@ import {
   useState,
   useCallback,
   useRef,
-  useEffect,
   type ReactNode,
   type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
+import { useTheme } from "../../lib/ThemeContext";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ export interface ThemeToggleProps {
   barHeight?: number;
   /** Diameter of the icon button in px. Default: 36 */
   buttonSize?: number;
-  /** Curtain animation duration in ms. Default: 550 */
+  /** Curtain animation duration in ms. Default: 360 */
   duration?: number;
   /** Called after each theme change completes */
   onThemeChange?: (theme: Theme) => void;
@@ -139,15 +139,14 @@ function UserIcon() {
 
 type CurtainPhase = "idle" | "falling" | "rising";
 
-const EASING = "cubic-bezier(0.76, 0, 0.24, 1)";
+const EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 
 export function ThemeToggle({
   variant      = "default",
   appBarProps,
-  defaultTheme = "light",
   barHeight: explicitBarHeight,
   buttonSize   = 36,
-  duration     = 550,
+  duration     = 360,
   onThemeChange,
   children,
 }: ThemeToggleProps) {
@@ -155,24 +154,12 @@ export function ThemeToggle({
   const isIcon = variant === "icon";
   const barHeight = explicitBarHeight ?? (isAppBar ? 60 : 44);
 
-  const [theme, setTheme]     = useState<Theme>(defaultTheme);
+  const { theme, toggleTheme } = useTheme();
   const [phase, setPhase]     = useState<CurtainPhase>("idle");
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
   const curtainColorRef       = useRef<string>("");
   const t                     = TOKENS[theme];
-
-  // Sync with global Tailwind dark class on mount
-  useEffect(() => {
-    if (typeof document !== "undefined") {
-      const isDark = document.documentElement.classList.contains("dark");
-      if (isDark && theme !== "dark") {
-        setTheme("dark");
-      } else if (!isDark && theme !== "light") {
-        setTheme("light");
-      }
-    }
-  }, []);
 
   const toggle = useCallback(() => {
     if (phase !== "idle") return;
@@ -181,21 +168,13 @@ export function ThemeToggle({
     setPhase("falling");
 
     setTimeout(() => {
-      setTheme(next);
+      toggleTheme();
       onThemeChange?.(next);
-      
-      if (typeof document !== "undefined") {
-        if (next === "dark") {
-          document.documentElement.classList.add("dark");
-        } else {
-          document.documentElement.classList.remove("dark");
-        }
-      }
 
       setPhase("rising");
       setTimeout(() => setPhase("idle"), duration + 60);
     }, duration);
-  }, [phase, theme, duration, onThemeChange]);
+  }, [phase, theme, duration, onThemeChange, toggleTheme]);
 
   // ── Derived styles ──────────────────────────────────────────────────────────
 
@@ -224,7 +203,7 @@ export function ThemeToggle({
     fontFamily: "system-ui, -apple-system, sans-serif",
   };
 
-  const btnScale = pressed ? 0.96 : hovered ? 1.1 : 1;
+  const btnScale = pressed ? 0.96 : hovered ? 1.04 : 1;
   const btnStyle: CSSProperties = {
     position: isAppBar || isIcon ? "relative" : "absolute",
     bottom: isAppBar || isIcon ? "auto" : -(buttonSize / 2),

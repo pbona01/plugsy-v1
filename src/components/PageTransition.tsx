@@ -7,10 +7,10 @@ export const PageTransition = ({ children }: { children: ReactNode }) => {
   const reduceMotion = useReducedMotion()
   return (
     <motion.div
-      initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: reduceMotion ? 0 : -4 }}
-      transition={{ duration: reduceMotion ? 0.01 : 0.18, ease: MOTION_EASE }}
+      initial={{ opacity: 0, y: reduceMotion ? 0 : 6, scale: reduceMotion ? 1 : 0.998 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: reduceMotion ? 0 : -2 }}
+      transition={{ duration: reduceMotion ? 0.01 : 0.22, ease: MOTION_EASE }}
     >
       {children}
     </motion.div>
@@ -29,10 +29,10 @@ export const FadeUp = ({
   const reduceMotion = useReducedMotion()
   return (
     <motion.div
-      initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
+      initial={{ opacity: 0, y: reduceMotion ? 0 : 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{
-        duration: reduceMotion ? 0.01 : 0.2,
+        duration: reduceMotion ? 0.01 : 0.22,
         ease: MOTION_EASE,
         delay: reduceMotion ? 0 : delay
       }}
@@ -45,7 +45,7 @@ export const FadeUp = ({
 
 export const StaggerContainer = ({ 
   children,
-  staggerDelay = 0.08,
+  staggerDelay = 0.045,
   className
 }: { 
   children: ReactNode
@@ -73,11 +73,11 @@ export const StaggerItem = ({ children, className }: { children: ReactNode, clas
   <motion.div
     className={className}
     variants={{
-      hidden: { opacity: 0, y: 4 },
+      hidden: { opacity: 0, y: 6 },
       visible: {
         opacity: 1,
         y: 0,
-        transition: { duration: 0.2, ease: MOTION_EASE }
+        transition: { duration: 0.22, ease: MOTION_EASE }
       }
     }}
   >

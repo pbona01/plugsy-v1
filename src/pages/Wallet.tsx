@@ -1094,10 +1094,10 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
         </div>
       )}
 
-      {/* 2. BALANCE CARD (Hero element with green-to-dark gradient) */}
+      {/* 2. BALANCE CARD */}
       <div 
         className="rounded-3xl p-5 sm:p-6 text-white flex flex-col justify-between shadow-xl relative overflow-hidden transition-[transform,box-shadow] duration-200 ease-out motion-reduce:transition-none"
-        style={{ background: 'linear-gradient(135deg, #16a34a 0%, #0d8a3f 100%)' }}
+        style={{ background: 'linear-gradient(135deg, #0877ff 0%, #0048bd 100%)' }}
       >
         <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute -bottom-8 -left-8 w-40 h-40 bg-black/10 rounded-full blur-xl pointer-events-none" />
@@ -1140,7 +1140,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           </p>
           <button
             onClick={() => setIsFundModalOpen(true)}
-            className="bg-white hover:bg-white/95 text-emerald-800 text-xs font-black uppercase tracking-wider px-4 py-2.5 rounded-xl transition-all shadow-md cursor-pointer flex items-center gap-1"
+            className="bg-white hover:bg-white/95 text-blue-700 text-xs font-black uppercase tracking-wider px-4 py-2.5 rounded-xl shadow-md cursor-pointer flex items-center gap-1"
           >
             <Plus size={14} className="stroke-[3px]" />
             Add Money
@@ -1148,7 +1148,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
         </div>
       </div>
 
-      <section className="overflow-hidden rounded-2xl border border-brand-border bg-brand-surface shadow-xs">
+      <section className="app-card overflow-hidden rounded-2xl">
         <div className="grid grid-cols-2 divide-x divide-brand-border">
           <button type="button" onClick={() => { setMoveFundsError(''); setIsMoveFundsOpen(true); }} className="group min-h-[88px] px-4 py-3 text-left transition-colors hover:bg-brand-accent/[.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-accent">
             <span className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[.13em] text-brand-text-secondary"><WalletIcon size={14} className="text-brand-accent" />Funding</span>
@@ -1223,7 +1223,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
       </section>
 
       {hasWithdrawalBankAccount && (
-        <div className="bg-brand-surface border border-brand-border rounded-2xl p-4 flex items-center justify-between gap-4">
+        <div className="app-card p-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <Building2 size={18} className="text-brand-accent shrink-0" />
             <div className="min-w-0">

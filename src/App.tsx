@@ -469,14 +469,14 @@ function AppContent({
   }, [navigate]);
 
   const mainRoutes = (
-    <AnimatePresence initial={false}>
+    <AnimatePresence initial={false} mode="wait">
       <motion.div
         key={location.pathname}
-        initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: reduceMotion ? 0 : -4 }}
-        transition={{ duration: reduceMotion ? 0.01 : 0.18, ease: [0.22, 1, 0.36, 1] }}
-        className="w-full h-full flex-grow flex flex-col overflow-x-hidden"
+        initial={{ opacity: 0, y: reduceMotion ? 0 : 6, scale: reduceMotion ? 1 : 0.998 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: reduceMotion ? 0 : -2, scale: 1 }}
+        transition={{ duration: reduceMotion ? 0.01 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+        className="page-shell w-full h-full flex-grow flex flex-col overflow-x-hidden"
       >
         <GlobalErrorBoundary>
         <Suspense fallback={<LoadingSplash />}>
@@ -789,7 +789,7 @@ function AppContent({
         {(showTopNavigation || showBottomNavigation) && !isChatsView && <Navbar showTopBar={showTopNavigation} showBottomBar={showBottomNavigation} />}
         <DashboardBackButton visible={showDashboardBack} alignRight={location.pathname === "/portfolio"} />
         <main
-          className={`flex-grow ${showTopNavigation ? "pt-16" : ""} transition-all duration-300 ease-in-out w-full max-w-[100vw] ${isChatsPage || isChatsView ? "h-full overflow-hidden" : "overflow-x-hidden"}`}
+          className={`flex-grow ${showTopNavigation ? "pt-16" : ""} w-full max-w-[100vw] ${isChatsPage || isChatsView ? "h-full overflow-hidden" : "overflow-x-hidden"}`}
         >
           {mainRoutes}
         </main>
