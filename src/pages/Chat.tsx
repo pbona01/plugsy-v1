@@ -17,7 +17,6 @@ import {
   User,
   ArrowLeft,
   Loader2,
-  CheckCircle2,
   Clock,
   Key,
   Copy,
@@ -26,8 +25,6 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
-import { GlassTopNav } from "apple-liquid-glass-ui";
-import { LiquidGlassNav } from "../components/ui/LiquidGlassNav";
 import { optimizeCloudinaryUrl } from "../lib/cloudinary";
 import { compressAndUpload } from "../utils/uploadMedia";
 import {
@@ -36,7 +33,6 @@ import {
   ChatMessage,
 } from "../services/chatService";
 import { Logo } from "../components/ui/Logo";
-import { LiquidGlass } from "../components/ui/LiquidGlass";
 import { VoiceNotePlayer } from "../components/chat/VoiceNotePlayer";
 import { useVoiceRecorder } from "../hooks/useVoiceRecorder";
 import {
@@ -65,6 +61,29 @@ const getCleanMessageText = (content: string | null): string => {
 // cursor-pagination experience for high-volume conversations.
 const SUPPORT_CHAT_PAGE_SIZE = 100;
 const SUPPORT_CHAT_MESSAGE_COLUMNS = "id,chat_id,user_id,sender_id,sender_name,sender_role,content,attachment_url,attachment_type,message_type,audio_url,read_by_user,created_at,event";
+
+function VerifiedBadge({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      aria-label="Verified Plugsy account"
+      role="img"
+      width={size}
+      height={size}
+      viewBox="0 0 20 20"
+      className="shrink-0"
+    >
+      <circle cx="10" cy="10" r="9" fill="#0877ff" />
+      <path
+        d="m5.8 10.2 2.55 2.55 5.85-6"
+        fill="none"
+        stroke="#fff"
+        strokeWidth="2.15"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export default function Chat() {
   const renderMessageTextWithLinks = (text: string, isUser: boolean) => {
@@ -820,51 +839,44 @@ export default function Chat() {
   }
 
   return (
-    <div className="fixed inset-0 w-screen h-[100dvh] overflow-hidden bg-slate-50 dark:bg-[#0A0A0C] flex flex-col justify-center items-center p-0 sm:p-4 md:p-6 z-[100]">
-      {/* Standalone messaging pillar in the center of the viewport */}
-      <div className="max-w-4xl mx-auto w-full h-full sm:h-[calc(100dvh-140px)] flex flex-col px-0 sm:px-4 sm:mt-6 transition-all duration-300">
-        
-        {/* Premium LiquidGlass Chat Box wrapper */}
-        <LiquidGlass
-          blur={24}
-          chromaticAberration={2}
-          className="w-full h-full flex flex-col border-[0.5px] border-black/10 dark:border-white/10 rounded-none sm:rounded-2xl overflow-hidden relative backdrop-blur-2xl backdrop-saturate-[1.5] bg-white/60 dark:bg-transparent shadow-[inset_0_1.5px_2px_0px_rgba(255,255,255,0.6)] dark:shadow-none"
-        >
-          {/* Top Header inside the glass panel */}
-          <LiquidGlassNav className="liquid-glass px-4 py-3 border-b border-black/10 dark:border-white/5 bg-white/40 dark:bg-white/[0.02] shadow-[inset_0_1.5px_2px_0px_rgba(255,255,255,0.6)] dark:shadow-none overflow-visible">
-            <div className="flex items-center justify-between gap-3">
+    <div className="fixed inset-0 z-[100] flex h-[100dvh] w-screen items-center justify-center overflow-hidden bg-brand-bg sm:p-4">
+      {/* Focused support workspace */}
+      <div className="mx-auto flex h-full w-full max-w-3xl flex-col sm:h-[calc(100dvh-2rem)]">
+        <section className="relative flex h-full min-h-0 w-full flex-col overflow-hidden border-brand-border bg-brand-bg sm:rounded-[28px] sm:border sm:shadow-[var(--brand-shadow)]">
+          {/* Compact, stationary identity bar */}
+          <header className="relative z-30 flex min-h-[68px] items-center border-b border-brand-border bg-brand-card/90 px-3 py-2.5 backdrop-blur-xl sm:px-4">
+            <div className="flex w-full items-center justify-between gap-2">
               <Link
                 to="/dashboard"
                 aria-label="Back to Dashboard"
-                className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-black/10 bg-white/40 text-slate-600 transition hover:bg-black/5 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-brand-border bg-brand-surface text-brand-text-secondary shadow-sm hover:border-brand-accent/30 hover:text-brand-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
               >
                 <ArrowLeft size={18} />
               </Link>
-              <button onClick={() => setSupportProfileOpen((open) => !open)} aria-expanded={supportProfileOpen} className="relative flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1 text-left transition hover:bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent dark:hover:bg-white/5">
-                <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-black/10 bg-slate-950 dark:border-white/15"><Logo className="h-7 w-7" /></span>
-                <span className="min-w-0"><span className="flex items-center gap-1.5 truncate text-sm font-black text-slate-900 dark:text-white">Plugsy Support <CheckCircle2 className="shrink-0 text-brand-accent" size={15} fill="currentColor"/></span><span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-emerald-500"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500"/>Official support</span></span>
+              <button onClick={() => setSupportProfileOpen((open) => !open)} aria-expanded={supportProfileOpen} className="relative flex min-w-0 flex-1 items-center gap-3 rounded-2xl px-2 py-1 text-left hover:bg-brand-text/[.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent">
+                <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-brand-border bg-black shadow-sm"><Logo className="h-7 w-7" /></span>
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5 truncate text-[15px] font-bold tracking-tight text-brand-text">Plugsy Support <VerifiedBadge size={16} /></span>
+                  <span className="flex items-center gap-1.5 text-[10px] font-semibold text-brand-text-secondary"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500"/>Online · Official support</span>
+                </span>
               </button>
-              {supportProfileOpen && <div className="absolute right-4 top-[4.6rem] z-30 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-black/10 bg-white p-4 shadow-xl dark:border-white/10 dark:bg-[#15151a]"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-full bg-slate-950"><Logo className="h-7 w-7"/></span><div><p className="text-sm font-black text-slate-900 dark:text-white">Plugsy Support <CheckCircle2 className="inline text-brand-accent" size={14} fill="currentColor"/></p><p className="text-xs text-slate-500 dark:text-white/50">Official Plugsy account</p></div></div><p className="mt-3 text-xs leading-5 text-slate-600 dark:text-white/65">Your orders and messages stay in this secure conversation. We will never ask for your password or wallet PIN.</p></div>}
+              {supportProfileOpen && <div className="absolute right-3 top-[4.6rem] z-30 w-[min(21rem,calc(100vw-1.5rem))] rounded-2xl border border-brand-border bg-brand-card p-4 shadow-[var(--brand-shadow-hover)]"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-full bg-black shadow-sm"><Logo className="h-7 w-7"/></span><div><p className="flex items-center gap-1.5 text-sm font-bold text-brand-text">Plugsy Support <VerifiedBadge size={15} /></p><p className="mt-0.5 text-xs text-brand-text-secondary">Verified official Plugsy account</p></div></div><div className="mt-4 rounded-xl bg-brand-accent/[.07] p-3"><p className="text-xs leading-5 text-brand-text-secondary">Your orders and messages stay in this secure conversation. Plugsy will never ask for your wallet PIN.</p></div></div>}
             </div>
-          </LiquidGlassNav>
+          </header>
 
           {/* Fluid Scroll Area for the message stream */}
           <div
             ref={containerRef}
-            className="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-hide bg-[radial-gradient(circle_at_top_right,rgba(0,102,255,0.02),transparent_40%)]"
+            className="flex-1 space-y-4 overflow-y-auto bg-[radial-gradient(circle_at_top_right,rgba(0,102,255,0.04),transparent_38%)] px-4 py-5 scrollbar-hide sm:px-6"
           >
-            {/* Elegant Welcome Info card (embedded in scroll area) */}
-            <div className="flex flex-col items-center gap-4 py-8 border-b border-black/10 dark:border-white/5 pb-8 mb-4">
-              <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center text-slate-800 dark:text-white/80 border border-black/10 dark:border-white/10 shadow-[inset_0_1.5px_2px_0px_rgba(255,255,255,0.6)] dark:shadow-none dark:bg-white/5">
-                <ShieldCheck size={24} className="text-blue-500" />
+            {/* Clear conversation context without interrupting the message stream */}
+            <div className="mx-auto mb-6 flex w-full max-w-xl items-start gap-3 rounded-2xl border border-brand-accent/15 bg-brand-accent/[.055] p-4">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-accent text-white shadow-[0_8px_20px_rgba(0,102,255,.22)]">
+                <ShieldCheck size={19} />
               </div>
-              <div className="text-center max-w-[80%] mx-auto">
-                <div className="text-[12px] font-black uppercase tracking-[0.2em] text-slate-900 dark:text-white/80 mb-3">
-                  Welcome to Plugsy Support!
-                </div>
-                <div className="text-sm font-medium text-slate-600 dark:text-white/40 leading-relaxed">
-                  Your premium CapCut login credentials will appear below. Our typical response is under 5 minutes.
-                </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-sm font-bold text-brand-text">Official Plugsy support <VerifiedBadge size={14} /></div>
+                <p className="mt-1 text-xs leading-5 text-brand-text-secondary">Get help with purchases, deliveries and your account. Our team typically replies in under five minutes.</p>
               </div>
             </div>
 
@@ -886,7 +898,7 @@ export default function Chat() {
                         key={msg.id}
                         className="flex justify-center mt-4"
                       >
-                        <div className="px-4 py-2 bg-white/60 dark:bg-white/5 shadow-[inset_0_1.5px_2px_0px_rgba(255,255,255,0.6)] dark:shadow-none rounded-full border border-black/10 dark:border-white/10 text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-white/40">
+                        <div className="rounded-full border border-brand-border bg-brand-card px-4 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-brand-text-secondary shadow-sm">
                           {msg.message || "System Notification"}
                         </div>
                       </motion.div>
@@ -912,9 +924,9 @@ export default function Chat() {
 
                 return (
                   <motion.div
-                    initial={{ opacity: 0, y: 30 }}
+                    initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3, ease: "easeOut" }}
+                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
                     key={msg.id}
                     className={`flex flex-col ${isUser ? "items-end" : "items-start"} ${isPrevSameSender ? "mt-1 !mt-1" : "mt-5 !mt-5"}`}
                   >
@@ -923,8 +935,7 @@ export default function Chat() {
                     >
                       {!isNextSameSender ? (
                         <div
-                          className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 border border-white/10 ${isBot ? "bg-white/5 text-white/90" : isUser ? "bg-blue-600/20 text-blue-400 border border-blue-500/30" : "bg-white/5 text-white shadow-sm"}`}
-                          style={{ boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border shadow-sm ${isBot ? "border-brand-accent/20 bg-brand-accent/10 text-brand-accent" : isUser ? "border-brand-accent/20 bg-brand-accent/10 text-brand-accent" : "border-brand-border bg-black text-white"}`}
                         >
                           {isBot ? (
                             <ShieldCheck size={18} />
@@ -943,14 +954,14 @@ export default function Chat() {
                       >
                         {!isPrevSameSender && (
                           <div className="flex items-center gap-2 px-1">
-                            <span className="text-[9px] font-bold text-white/30 uppercase tracking-widest leading-none">
+                            <span className="text-[9px] font-bold uppercase leading-none tracking-wider text-brand-text-secondary">
                               {isUser
                                 ? "You"
                                 : isBot
                                   ? "Plugsy Support Bot"
                                   : msg.senderName || "Support Team"}
                             </span>
-                            <span className="text-[8px] font-medium text-white/30 opacity-30 uppercase tracking-widest flex items-center gap-1.5 leading-none">
+                            <span className="flex items-center gap-1.5 text-[8px] font-medium uppercase leading-none tracking-wider text-brand-text-secondary/70">
                               {msg.createdAt
                                 ? new Date(msg.createdAt).toLocaleTimeString(
                                     [],
@@ -1089,7 +1100,7 @@ export default function Chat() {
                           </div>
                         ) : (
                           <div
-                            className={`p-4 px-5 text-[15px] font-medium tracking-tight leading-relaxed transition-all duration-300 ease-in-out border ${isUser ? "rounded-2xl rounded-br-sm bg-blue-600 text-white border-blue-500 shadow-[inset_0_1.5px_2px_0px_rgba(255,255,255,0.6)]" : "rounded-2xl rounded-bl-sm bg-white/60 dark:bg-white/5 text-slate-900 dark:text-white/90 shadow-[inset_0_1.5px_2px_0px_rgba(255,255,255,0.6)] dark:shadow-none border-black/10 dark:border-white/5"} ${msg.status === "pending" ? "opacity-70 scale-95" : ""}`}
+                            className={`border px-4 py-3.5 text-[15px] font-medium leading-relaxed tracking-tight shadow-sm ${isUser ? "rounded-2xl rounded-br-[6px] border-brand-accent bg-brand-accent text-white" : "rounded-2xl rounded-bl-[6px] border-brand-border bg-brand-card text-brand-text"} ${msg.status === "pending" ? "opacity-70 scale-[.98]" : ""}`}
                           >
                             <div className="whitespace-pre-wrap text-left">
                               {msg.message || "..."}
@@ -1135,7 +1146,7 @@ export default function Chat() {
           </div>
 
           {/* Sleek Stationary Input Bar */}
-          <div className="p-4 border-t border-black/10 dark:border-white/5 bg-white/60 dark:bg-black/20 backdrop-blur-md flex-shrink-0 z-20" style={{ paddingBottom: 'max(calc(env(safe-area-inset-bottom) + 1rem), 1rem)' }}>
+          <div className="z-20 flex-shrink-0 border-t border-brand-border bg-brand-card/90 p-3 backdrop-blur-xl sm:p-4" style={{ paddingBottom: 'max(calc(env(safe-area-inset-bottom) + .75rem), .75rem)' }}>
             {/* Real-time typing indicator */}
             <AnimatePresence>
               {typingUsers.size > 0 && (
@@ -1146,11 +1157,11 @@ export default function Chat() {
                   className="flex items-center gap-1.5 pb-2 pl-1"
                 >
                   <div className="flex gap-0.5">
-                    <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-accent" style={{ animationDelay: '0ms' }} />
+                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-accent" style={{ animationDelay: '150ms' }} />
+                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-accent" style={{ animationDelay: '300ms' }} />
                   </div>
-                  <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider whitespace-nowrap">
+                  <span className="whitespace-nowrap text-[10px] font-semibold text-brand-text-secondary">
                     {typingUsers.size === 1 
                       ? [...typingUsers.values()][0] + " is typing..."
                       : [...typingUsers.values()].slice(0, 2).join(", ") + 
@@ -1161,8 +1172,8 @@ export default function Chat() {
             </AnimatePresence>
 
             <form onSubmit={handleSendMessage} className="w-full">
-              <div className="bg-white/90 dark:bg-black/40 border border-black/10 dark:border-white/5 rounded-xl px-4 py-3 flex items-center justify-between gap-3 shadow-[inset_0_1.5px_2px_0px_rgba(255,255,255,0.6)] dark:shadow-inner relative">
-                <label className="text-slate-400 dark:text-white/40 hover:text-slate-900 dark:hover:text-white cursor-pointer transition-colors p-1 shrink-0">
+              <div className="relative flex min-h-14 items-center justify-between gap-2 rounded-2xl border border-brand-border bg-brand-surface px-2.5 py-2 shadow-sm focus-within:border-brand-accent/45 focus-within:ring-2 focus-within:ring-brand-accent/10 sm:gap-3 sm:px-3">
+                <label aria-label="Attach image" className="grid h-10 w-10 shrink-0 cursor-pointer place-items-center rounded-xl text-brand-text-secondary hover:bg-brand-text/5 hover:text-brand-text">
                   <Paperclip size={18} />
                   <input
                     type="file"
@@ -1245,7 +1256,7 @@ export default function Chat() {
                            const blob = await stopRecording();
                            handleAudioUpload(blob);
                          }}
-                         className="flex items-center justify-center w-10 h-10 rounded-xl bg-[#EF4444] text-white hover:bg-red-600 shadow-md shadow-red-500/10 cursor-pointer active:scale-95 transition-all"
+                         className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl bg-brand-accent text-white shadow-[0_6px_16px_rgba(0,102,255,.22)] hover:bg-blue-600 active:scale-95"
                        >
                          <Send size={16} />
                        </button>
@@ -1257,14 +1268,16 @@ export default function Chat() {
                       type="text"
                       value={inputText}
                       onChange={(e) => handleInputChange(e.target.value)}
-                      placeholder="Inject transmission..."
-                      className="flex-1 bg-transparent border-none focus:ring-0 text-sm sm:text-base text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-white/30 focus:outline-none w-full min-w-0"
+                      aria-label="Message Plugsy Support"
+                      placeholder="Message Plugsy Support…"
+                      className="min-w-0 w-full flex-1 border-none bg-transparent text-sm text-brand-text placeholder:text-brand-text-secondary/65 focus:outline-none focus:ring-0 sm:text-[15px]"
                     />
 
                     {inputText.trim() ? (
                       <button
                         type="submit"
-                        className="flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 border bg-[#EF4444] text-white border-transparent hover:bg-red-600 shadow-md shadow-red-500/10 cursor-pointer active:scale-95"
+                        aria-label="Send message"
+                        className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-brand-accent bg-brand-accent text-white shadow-[0_6px_16px_rgba(0,102,255,.22)] hover:bg-blue-600 active:scale-95"
                       >
                         <Send size={16} />
                       </button>
@@ -1272,7 +1285,8 @@ export default function Chat() {
                       <button
                         type="button"
                         onClick={startRecording}
-                        className="flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 border bg-slate-100 text-slate-400 border-slate-200 dark:bg-white/5 dark:text-white/40 dark:border-white/10 hover:bg-red-50 text-red-500 hover:border-red-200 hover:text-red-500 cursor-pointer"
+                        aria-label="Record a voice message"
+                        className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-brand-border bg-brand-card text-brand-text-secondary hover:border-brand-accent/30 hover:bg-brand-accent/10 hover:text-brand-accent"
                       >
                         <Mic size={16} />
                       </button>
@@ -1282,7 +1296,7 @@ export default function Chat() {
               </div>
             </form>
           </div>
-        </LiquidGlass>
+        </section>
       </div>
     </div>
   );
