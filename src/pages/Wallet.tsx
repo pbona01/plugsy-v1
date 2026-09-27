@@ -1424,19 +1424,21 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
       )}
 
       {isMoveFundsOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-xs p-0 sm:p-4">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 p-3 backdrop-blur-sm sm:p-4">
           <div className="absolute inset-0" onClick={() => !isMovingFunds && setIsMoveFundsOpen(false)} />
-          <div className="relative w-full max-w-md bg-brand-surface border border-brand-border rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 p-6 space-y-5">
-            <div className="flex justify-between items-center pb-2 border-b border-brand-border">
+          <div className="relative max-h-[calc(100dvh-1.5rem)] w-full max-w-sm overflow-y-auto rounded-3xl border border-brand-border bg-brand-surface p-4 shadow-2xl animate-in slide-in-from-bottom duration-300 sm:p-5">
+            <div className="flex items-start justify-between gap-3 border-b border-brand-border pb-3">
               <div>
-                <h3 className="text-base font-black uppercase tracking-widest text-brand-text-primary">Move to Withdrawable</h3>
-                <p className="mt-1 text-xs text-brand-text-secondary">Funding Balance → Withdrawable Balance</p>
+                <p className="text-[10px] font-black uppercase tracking-[.16em] text-brand-accent">Wallet transfer</p>
+                <h3 className="mt-1 text-lg font-black tracking-tight text-brand-text-primary">Move to Withdrawable</h3>
+                <p className="mt-1 text-[11px] text-brand-text-secondary">Funding Balance → Withdrawable Balance</p>
               </div>
-              <button disabled={isMovingFunds} onClick={() => setIsMoveFundsOpen(false)} className="text-brand-text-secondary hover:text-brand-text disabled:opacity-50"><X size={20} /></button>
+              <button aria-label="Close" disabled={isMovingFunds} onClick={() => setIsMoveFundsOpen(false)} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-brand-border text-brand-text-secondary hover:bg-brand-text/5 hover:text-brand-text disabled:opacity-50"><X size={17} /></button>
             </div>
-            <form onSubmit={handleMoveFundsSubmit} className="space-y-4">
-              <div className="rounded-xl border border-brand-accent/20 bg-brand-accent/[0.06] p-3 text-xs leading-5 text-brand-text-secondary">
-                A 3.5% payment processing fee applies. The remaining amount becomes available for bank withdrawal immediately.
+            <form onSubmit={handleMoveFundsSubmit} className="mt-3 space-y-3">
+              <div className="flex items-start gap-2.5 rounded-xl border border-brand-accent/20 bg-brand-accent/[0.06] p-3 text-[11px] leading-4 text-brand-text-secondary">
+                <ShieldCheck size={16} className="mt-0.5 shrink-0 text-brand-accent" />
+                <span>A 3.5% processing fee applies. The remaining amount becomes available for bank withdrawal immediately.</span>
               </div>
               <div>
                 <div className="flex justify-between gap-3">
@@ -1445,17 +1447,17 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
                 </div>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text-secondary font-bold">₦</span>
-                  <input type="number" min="1" max={fundingBalance} step="any" value={moveFundsAmount} onChange={(event) => setMoveFundsAmount(event.target.value)} placeholder="0.00" className="w-full bg-brand-background border border-brand-border rounded-xl py-3 pl-8 pr-4 text-brand-text-primary focus:outline-none focus:border-brand-accent font-semibold" required />
+                  <input type="number" min="1" max={fundingBalance} step="any" value={moveFundsAmount} onChange={(event) => setMoveFundsAmount(event.target.value)} placeholder="0.00" className="h-12 w-full rounded-xl border border-brand-border bg-brand-background pl-8 pr-4 text-base font-bold text-brand-text-primary outline-none focus:border-brand-accent focus:ring-2 focus:ring-brand-accent/10" required />
                 </div>
               </div>
               {Number(moveFundsAmount) > 0 && (
-                <div className="rounded-xl border border-brand-border bg-brand-background/50 p-3.5 text-xs space-y-2">
+                <div className="space-y-1.5 rounded-xl border border-brand-border bg-brand-background/50 p-3 text-[11px]">
                   <div className="flex justify-between text-brand-text-secondary"><span>Processing fee (3.5%)</span><span>₦{(Number(moveFundsAmount) * 0.035).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
                   <div className="flex justify-between border-t border-brand-border pt-2 font-black text-brand-text-primary"><span>You will receive</span><span className="text-emerald-500">₦{(Number(moveFundsAmount) * 0.965).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
                 </div>
               )}
-              <PlugsyPinKeypad value={moveFundsPin} onChange={setMoveFundsPin} title="Confirm move" subtitle="Use your Plugsy wallet PIN." error={moveFundsError} onForgot={requestPinReset} busy={isMovingFunds} />
-              <button type="submit" disabled={isMovingFunds || !moveFundsAmount || moveFundsPin.length !== 4} className="w-full bg-brand-accent hover:bg-brand-accent/95 disabled:opacity-50 text-white font-black uppercase tracking-wider text-xs py-3.5 rounded-xl transition-all cursor-pointer">
+              <PlugsyPinKeypad compact value={moveFundsPin} onChange={setMoveFundsPin} title="Confirm with your PIN" subtitle="Securely approve this balance move." error={moveFundsError} onForgot={requestPinReset} busy={isMovingFunds} />
+              <button type="submit" disabled={isMovingFunds || !moveFundsAmount || moveFundsPin.length !== 4} className="h-12 w-full cursor-pointer rounded-xl bg-brand-accent text-xs font-black uppercase tracking-wider text-white hover:bg-brand-accent/95 disabled:cursor-not-allowed disabled:opacity-50">
                 {isMovingFunds ? 'Moving money...' : 'Move to Withdrawable'}
               </button>
             </form>
