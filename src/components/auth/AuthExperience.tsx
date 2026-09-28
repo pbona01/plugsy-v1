@@ -75,7 +75,11 @@ export const plugsyAuthAppearance = {
     alertText: 'text-[12px] font-semibold',
     otpCodeFieldInput: 'h-12 rounded-xl border-brand-border bg-brand-surface/80 text-brand-text',
     formResendCodeLink: 'font-bold text-brand-accent',
-    footer: 'hidden',
+    footer: '!hidden',
+    footerAction: '!hidden',
+    footerActionText: '!hidden',
+    footerActionLink: '!hidden',
+    footerPages: '!hidden',
   },
 };
 
@@ -114,9 +118,9 @@ export function AuthExperience({ mode, children, switchHref }: AuthExperiencePro
             <span className="text-xl font-black tracking-tight">Plugsy<span className="text-[#2f8bff]">.</span></span>
           </Link>
 
-          <div className="relative z-10 mt-auto max-w-2xl pb-7">
+          <div className="relative z-10 my-auto max-w-2xl py-10 xl:py-14">
             <p className="text-[11px] font-black uppercase tracking-[.2em] text-blue-200">One account. Every creator tool.</p>
-            <h2 className="mt-5 max-w-[12ch] text-[clamp(3.25rem,5.3vw,6.6rem)] font-black leading-[.92] tracking-[-.065em] text-white">Turn your work into something people can buy.</h2>
+            <h2 className="mt-5 max-w-[12ch] text-[clamp(3.25rem,4.8vw,5.75rem)] font-black leading-[.92] tracking-[-.065em] text-white">Turn your work into something people can buy.</h2>
             <p className="mt-6 max-w-xl text-base leading-7 text-white/68">Build your public presence, sell digital products and keep every payment in one secure Plugsy space.</p>
 
             <div className="mt-9 grid max-w-2xl grid-cols-3 gap-3">
