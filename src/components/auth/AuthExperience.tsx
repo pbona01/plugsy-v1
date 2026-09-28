@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { ArrowUpRight, Layers3, LockKeyhole, ShoppingBag, WalletCards } from 'lucide-react';
+import { ArrowUpRight, Layers3, ShoppingBag, WalletCards } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Logo } from '../ui/Logo';
 
@@ -48,12 +48,12 @@ export const plugsyAuthAppearance = {
   },
   elements: {
     rootBox: 'w-full',
-    cardBox: 'w-full shadow-none',
-    card: 'w-full gap-4 bg-transparent !p-0 shadow-none',
+    cardBox: 'w-full !shadow-none',
+    card: 'w-full !gap-4 !rounded-none !bg-transparent !p-0 !shadow-none',
     header: 'hidden',
     headerTitle: 'hidden',
     headerSubtitle: 'hidden',
-    main: 'gap-4',
+    main: '!gap-4',
     socialButtons: 'gap-2',
     socialButtonsBlockButton: 'min-h-12 rounded-2xl border border-brand-border bg-brand-surface/80 px-4 text-brand-text shadow-none backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-brand-accent/45 hover:bg-brand-surface focus-visible:ring-2 focus-visible:ring-brand-accent/40',
     socialButtonsBlockButtonText: 'text-sm font-bold',
@@ -141,32 +141,31 @@ export function AuthExperience({ mode, children, switchHref }: AuthExperiencePro
           </div>
         </motion.aside>
 
-        <section className="relative flex min-h-[100dvh] items-center justify-center px-4 py-[max(1.25rem,env(safe-area-inset-top))] sm:px-7 lg:min-h-0 lg:px-8 lg:py-10">
+        <section className="relative flex min-h-[100dvh] items-start justify-center px-5 pb-[max(1.75rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-7 sm:pt-[max(2.5rem,env(safe-area-inset-top))] lg:min-h-0 lg:items-center lg:px-8 lg:py-10">
           <motion.div
             initial={reduceMotion ? false : { opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.45, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
-            className="w-full max-w-[29rem]"
+            className="w-full max-w-[29rem] pt-1 sm:pt-3 lg:pt-0"
           >
-            <div className="mb-7 flex items-center justify-between lg:hidden">
+            <div className="mb-9 flex items-center lg:hidden">
               <Link to="/" aria-label="Go to Plugsy home" className="inline-flex min-h-11 items-center gap-3 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-brand-accent">
-                <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-2xl border border-black/[.07] bg-black p-1.5 shadow-sm dark:border-white/10"><Logo className="h-full w-full object-contain" /></span>
-                <span className="text-xl font-black tracking-tight text-slate-950 dark:text-white">Plugsy<span className="text-brand-accent">.</span></span>
+                <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-xl border border-black/[.07] bg-black p-1.5 shadow-[0_10px_24px_rgba(0,0,0,.2)] dark:border-white/10"><Logo className="h-full w-full object-contain" /></span>
+                <span className="text-[1.35rem] font-black tracking-[-.045em] text-slate-950 dark:text-white">Plugsy<span className="text-brand-accent">.</span></span>
               </Link>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-black/[.07] bg-white/60 px-3 py-2 text-[10px] font-black uppercase tracking-[.12em] text-slate-600 backdrop-blur-xl dark:border-white/10 dark:bg-white/[.05] dark:text-white/60"><LockKeyhole size={12} /> Secure</span>
             </div>
 
-            <header>
+            <header className="max-w-[25rem]">
               <p className="text-[11px] font-black uppercase tracking-[.2em] text-brand-accent">{content.eyebrow}</p>
-              <h1 className="mt-3 text-[clamp(2.45rem,10vw,3.8rem)] font-black leading-[.96] tracking-[-.06em] text-slate-950 dark:text-white">{content.title}</h1>
+              <h1 className="mt-3 text-[clamp(2.25rem,10vw,2.85rem)] font-black leading-[.96] tracking-[-.06em] text-slate-950 sm:text-[clamp(2.65rem,8vw,3.8rem)] dark:text-white">{content.title}</h1>
               <p className="mt-4 max-w-md text-[15px] leading-6 text-slate-600 dark:text-white/58">{content.description}</p>
             </header>
 
-            <div className="mt-7 rounded-[1.75rem] border border-white/70 bg-white/72 p-4 shadow-[0_24px_70px_rgba(38,61,102,.16)] backdrop-blur-2xl sm:p-6 dark:border-white/[.09] dark:bg-[#0d1118]/78 dark:shadow-[0_28px_80px_rgba(0,0,0,.38)]">
+            <div className="mt-6 rounded-[1.5rem] border border-white/70 bg-white/72 p-4 shadow-[0_18px_45px_rgba(38,61,102,.14)] backdrop-blur-2xl sm:mt-7 sm:rounded-[1.75rem] sm:p-6 sm:shadow-[0_24px_70px_rgba(38,61,102,.16)] dark:border-white/[.1] dark:bg-[#0b1019]/88 dark:shadow-[0_24px_60px_rgba(0,0,0,.32)]">
               {children}
             </div>
 
-            <div className="mt-5 flex flex-col items-center gap-3 text-center">
+            <div className="mt-5 flex flex-col items-center gap-2.5 text-center">
               <p className="text-sm text-slate-600 dark:text-white/58">
                 {content.switchLead}{' '}
                 <Link to={switchHref} className="inline-flex min-h-11 items-center gap-1 font-black text-slate-950 underline decoration-brand-accent/50 underline-offset-4 hover:text-brand-accent dark:text-white dark:hover:text-blue-300">
