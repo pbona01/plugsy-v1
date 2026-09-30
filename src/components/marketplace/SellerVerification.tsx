@@ -1,6 +1,7 @@
 import { ChangeEvent, useState } from 'react';
 import { Camera, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@clerk/clerk-react';
+import imageCompression from 'browser-image-compression';
 import toast from 'react-hot-toast';
 
 type Method = 'bvn_face' | 'nin_face';
@@ -24,20 +25,37 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
   const [selfie, setSelfie] = useState<File | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [preparingSelfie, setPreparingSelfie] = useState(false);
   const verified = seller?.verification_status === 'verified';
-  const pending = seller?.verification_status === 'pending';
+  const retryAvailable = seller?.verification_status === 'pending' && seller?.verification_retry_available === true;
+  const pending = seller?.verification_status === 'pending' && !retryAvailable;
   const selected = options.find((option) => option.id === method)!;
   const numberLabel = method === 'bvn_face' ? 'BVN' : 'NIN';
 
-  const chooseSelfie = (event: ChangeEvent<HTMLInputElement>) => {
+  const chooseSelfie = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] || null;
     if (!file) return;
-    if (!['image/jpeg', 'image/png'].includes(file.type) || file.size > 3 * 1024 * 1024) {
-      toast.error('Use a JPG or PNG selfie up to 3 MB.');
+    if (!['image/jpeg', 'image/png'].includes(file.type)) {
+      toast.error('Use a JPG or PNG selfie. HEIC files are not supported yet.');
       event.target.value = '';
       return;
     }
-    setSelfie(file);
+    setPreparingSelfie(true);
+    try {
+      const prepared = await imageCompression(file, {
+        maxSizeMB: 1.2,
+        maxWidthOrHeight: 1600,
+        useWebWorker: true,
+        fileType: 'image/jpeg',
+        initialQuality: 0.9,
+      });
+      setSelfie(new File([prepared], file.name.replace(/\.(png|jpe?g)$/i, '.jpg'), { type: 'image/jpeg' }));
+    } catch {
+      toast.error('That selfie could not be prepared. Please take another clear photo.');
+      event.target.value = '';
+    } finally {
+      setPreparingSelfie(false);
+    }
   };
 
   const submit = async () => {
@@ -56,11 +74,18 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
         body: JSON.stringify({ method, number: cleanNumber, image, accepted: true }),
       });
       const result = await response.json().catch(() => null);
-      if (!response.ok || !result?.success) throw new Error(result?.error || 'Verification is unavailable.');
-      toast(result.status === 'verified' ? 'Identity verified. You can now publish publicly.' : 'We could not verify that face and identity number together. Please check them and try again.');
-      setNumber('');
-      setSelfie(null);
-      setAccepted(false);
+      if (!response.ok || !result?.success) {
+        if (result?.code === 'VERIFICATION_PENDING_RETRY' || result?.code === 'VERIFICATION_IN_PROGRESS') await onComplete();
+        throw new Error(result?.error || 'Verification is unavailable.');
+      }
+      if (result.status === 'verified') {
+        toast.success('Identity verified. You can now publish publicly.');
+        setNumber('');
+        setSelfie(null);
+        setAccepted(false);
+      } else {
+        toast.error('That selfie did not match the identity record. Check the number and take a clear, front-facing photo before retrying.');
+      }
       await onComplete();
     } catch (error: any) {
       toast.error(error.message || 'Verification could not be completed.');
@@ -82,10 +107,12 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
 
       {pending ? (
         <div className="mt-6 rounded-2xl border border-amber-500/25 bg-amber-500/10 p-4 text-sm leading-6 text-brand-text-secondary">
-          <strong className="text-brand-text-primary">Verification is being checked.</strong> We have paused another attempt to avoid duplicate submissions. If it does not update shortly, contact Plugsy Support with your account email.
+          <strong className="text-brand-text-primary">Verification is being checked.</strong> Prembly has not returned a final result yet. A retry will open automatically after five minutes.
         </div>
       ) : !verified && (
-        <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_.95fr]">
+        <div className="mt-6">
+          {retryAvailable && <div className="mb-4 rounded-2xl border border-amber-500/25 bg-amber-500/10 p-4 text-sm leading-6 text-brand-text-secondary"><strong className="text-brand-text-primary">Your previous attempt expired.</strong> It is safe to submit a fresh selfie now.</div>}
+          <div className="grid gap-4 lg:grid-cols-[1fr_.95fr]">
           <div className="grid gap-3 sm:grid-cols-2">
             {options.map((option) => (
               <button key={option.id} type="button" onClick={() => setMethod(option.id)} className={`rounded-2xl border p-4 text-left transition ${method === option.id ? 'border-brand-accent bg-brand-accent/5 shadow-sm' : 'border-brand-border hover:border-brand-accent/40'}`}>
@@ -104,20 +131,21 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
               <span className="flex min-w-0 items-center gap-3">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-accent/10 text-brand-accent"><Camera size={17} /></span>
                 <span className="min-w-0">
-                  <strong className="block truncate text-xs">{selfie ? selfie.name : 'Upload a live selfie'}</strong>
-                  <span className="mt-1 block text-[10px] text-brand-text-secondary">JPG or PNG · maximum 3 MB</span>
+                  <strong className="block truncate text-xs">{preparingSelfie ? 'Preparing your selfie…' : selfie ? selfie.name : 'Take or upload a selfie'}</strong>
+                  <span className="mt-1 block text-[10px] text-brand-text-secondary">JPG or PNG · automatically optimized</span>
                 </span>
               </span>
               <span className="text-xs font-black text-brand-accent">Choose</span>
-              <input type="file" accept="image/jpeg,image/png" className="hidden" onChange={chooseSelfie} />
+              <input type="file" accept="image/jpeg,image/png" capture="user" className="hidden" onChange={(event) => void chooseSelfie(event)} />
             </label>
             <label className="flex cursor-pointer items-start gap-3 text-xs leading-5 text-brand-text-secondary">
               <input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} className="mt-1 h-4 w-4 accent-brand-accent" />
               <span>I confirm this is my identity number and current selfie. I consent to Prembly processing them for identity verification.</span>
             </label>
-            <button type="button" disabled={busy} onClick={() => void submit()} className="btn-primary flex h-12 w-full items-center justify-center gap-2 text-xs font-black uppercase tracking-wider disabled:opacity-50">
+            <button type="button" disabled={busy || preparingSelfie} onClick={() => void submit()} className="btn-primary flex h-12 w-full items-center justify-center gap-2 text-xs font-black uppercase tracking-wider disabled:opacity-50">
               {busy ? <><Loader2 size={16} className="animate-spin" />Checking identity…</> : `Verify with ${selected.title}`}
             </button>
+          </div>
           </div>
         </div>
       )}
