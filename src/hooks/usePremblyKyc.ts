@@ -19,8 +19,13 @@ type PremblyConfig = {
 declare global {
   interface Window {
     IdentityKYC?: { verify: (config: PremblyConfig) => void };
+    loadingOverlay?: unknown;
   }
 }
+
+const isPremblyReady = () => Boolean(
+  window.IdentityKYC?.verify && typeof window.loadingOverlay === 'function',
+);
 
 const removeFailedScript = (script: HTMLScriptElement) => {
   script.dataset.premblyState = 'failed';
@@ -29,7 +34,7 @@ const removeFailedScript = (script: HTMLScriptElement) => {
 };
 
 export const loadPrembly = () => {
-  if (window.IdentityKYC?.verify) return Promise.resolve();
+  if (isPremblyReady()) return Promise.resolve();
   if (loadPromise) return loadPromise;
   loadPromise = new Promise<void>((resolve, reject) => {
     const existingNode = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
@@ -38,26 +43,30 @@ export const loadPrembly = () => {
     const script = existing || document.createElement('script');
     let settled = false;
     let timeout = 0;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
+    let readinessPoll = 0;
+    const cleanup = () => {
       window.clearTimeout(timeout);
-      if (window.IdentityKYC?.verify) {
-        script.dataset.premblyState = 'loaded';
-        resolve();
-      } else {
-        removeFailedScript(script);
-        reject(new Error('Prembly verification did not load. Please try again.'));
-      }
+      window.clearInterval(readinessPoll);
+    };
+    const finish = () => {
+      if (settled || !isPremblyReady()) return;
+      settled = true;
+      cleanup();
+      script.dataset.premblyState = 'loaded';
+      resolve();
     };
     const fail = () => {
       if (settled) return;
       settled = true;
-      window.clearTimeout(timeout);
+      cleanup();
       removeFailedScript(script);
       reject(new Error('Prembly verification could not be loaded. Please check your connection and try again.'));
     };
-    script.addEventListener('load', finish, { once: true });
+    const waitUntilReady = () => {
+      finish();
+      if (!settled && !readinessPoll) readinessPoll = window.setInterval(finish, 50);
+    };
+    script.addEventListener('load', waitUntilReady, { once: true });
     script.addEventListener('error', fail, { once: true });
     if (!existing) {
       script.id = SCRIPT_ID;
@@ -65,9 +74,9 @@ export const loadPrembly = () => {
       script.async = true;
       script.dataset.premblyState = 'loading';
       document.head.appendChild(script);
-    }
+    } else waitUntilReady();
     timeout = window.setTimeout(() => {
-      if (window.IdentityKYC?.verify) finish();
+      if (isPremblyReady()) finish();
       else fail();
     }, 15_000);
   });
