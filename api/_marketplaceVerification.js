@@ -15,6 +15,13 @@ export const getPremblyPublicKey = () => text(
   process.env.PREMBLY_PUBLIC_KEY || process.env.VITE_PREMBLY_WIDGET_KEY,
 );
 
+// Prembly's current SDK guide exposes a widget-specific key alongside the
+// account public key. Keep the public key as a backwards-compatible fallback
+// for existing deployments and sandbox configurations.
+export const getPremblyWidgetKey = () => text(
+  process.env.PREMBLY_WIDGET_KEY || process.env.VITE_PREMBLY_WIDGET_KEY || getPremblyPublicKey(),
+);
+
 export const getPremblyOrganisationId = () => text(
   process.env.PREMBLY_ORGANISATION_ID || process.env.PREMBLY_ORGANIZATION_ID,
 );
@@ -24,11 +31,11 @@ export const getPremblyWidgetId = () => text(
 );
 
 export const hasPremblyWidgetConfiguration = () => Boolean(
-  getPremblyApiKey() && getPremblyPublicKey() && getPremblyOrganisationId() && getPremblyWidgetId(),
+  getPremblyApiKey() && getPremblyPublicKey() && getPremblyWidgetKey() && getPremblyOrganisationId() && getPremblyWidgetId(),
 );
 
 export const premblyClientConfiguration = () => ({
-  widgetKey: getPremblyPublicKey(),
+  widgetKey: getPremblyWidgetKey(),
   widgetId: getPremblyWidgetId(),
   isTest: /^test[_-]/i.test(getPremblyPublicKey()) || /^test[_-]/i.test(getPremblyApiKey()),
 });

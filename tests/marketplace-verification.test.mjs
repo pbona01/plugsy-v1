@@ -4,6 +4,7 @@ import {
   PremblyVerificationError,
   fetchPremblySession,
   getPremblyApiKey,
+  getPremblyWidgetKey,
   hasPremblyWidgetConfiguration,
   premblySessionReference,
   premblyWidgetOutcome,
@@ -58,13 +59,16 @@ test('fetches a Prembly widget session with server-only credentials', async () =
     api: process.env.PREMBLY_API_KEY,
     org: process.env.PREMBLY_ORGANISATION_ID,
     publicKey: process.env.PREMBLY_PUBLIC_KEY,
+    widgetKey: process.env.PREMBLY_WIDGET_KEY,
     widget: process.env.PREMBLY_WIDGET_ID,
   };
   process.env.PREMBLY_API_KEY = 'server-secret';
   process.env.PREMBLY_ORGANISATION_ID = 'organisation-id';
   process.env.PREMBLY_PUBLIC_KEY = 'test_pk_public';
+  process.env.PREMBLY_WIDGET_KEY = 'wdgt_live_widget';
   process.env.PREMBLY_WIDGET_ID = 'widget-id';
   assert.equal(hasPremblyWidgetConfiguration(), true);
+  assert.equal(getPremblyWidgetKey(), 'wdgt_live_widget');
   let request;
   const success = await fetchPremblySession('session_12345', async (url, options) => {
     request = { url, options };
@@ -78,7 +82,7 @@ test('fetches a Prembly widget session with server-only credentials', async () =
   await assert.rejects(() => fetchPremblySession('session_12345', async () => new Response('{}', { status: 401 })),
     (error) => error instanceof PremblyVerificationError && error.code === 'PREMBLY_CREDENTIALS_INVALID');
 
-  for (const [name, value] of Object.entries({ PREMBLY_API_KEY: previous.api, PREMBLY_ORGANISATION_ID: previous.org, PREMBLY_PUBLIC_KEY: previous.publicKey, PREMBLY_WIDGET_ID: previous.widget })) {
+  for (const [name, value] of Object.entries({ PREMBLY_API_KEY: previous.api, PREMBLY_ORGANISATION_ID: previous.org, PREMBLY_PUBLIC_KEY: previous.publicKey, PREMBLY_WIDGET_KEY: previous.widgetKey, PREMBLY_WIDGET_ID: previous.widget })) {
     if (value === undefined) delete process.env[name]; else process.env[name] = value;
   }
 });
