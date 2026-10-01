@@ -792,7 +792,7 @@ async function beginSellerVerification(req, res) {
     isTest: config.isTest,
     email: actor.email,
     firstName: text(actor.clerkUser?.firstName || actor.fullName?.split(' ')[0] || 'Plugsy'),
-    lastName: text(actor.clerkUser?.lastName || actor.fullName?.split(' ').slice(1).join(' ')),
+    lastName: text(actor.clerkUser?.lastName || actor.fullName?.split(' ').slice(1).join(' ')) || 'User',
   });
 }
 
@@ -833,6 +833,22 @@ async function completeSellerVerification(req, res) {
   if (updateError) throw updateError;
   if (!updated?.length) return send(res, 409, 'VERIFICATION_CHANGED', 'Verification was already updated. Refresh your seller workspace.');
   return res.status(200).json({ success: true, status });
+}
+
+async function cancelSellerVerification(req, res) {
+  const actor = await requireActor(req, res); if (!actor) return;
+  const reference = text(readBody(req).reference);
+  if (!/^MP-PREMBLY-[0-9a-f-]{36}$/i.test(reference)) {
+    return send(res, 400, 'VERIFICATION_REFERENCE_INVALID', 'Choose a valid verification attempt.');
+  }
+  const { data, error } = await getClient().from('marketplace_seller_profiles')
+    .update({ verification_status: 'unverified', verification_reference: null, updated_at: new Date().toISOString() })
+    .eq('user_id', actor.userId)
+    .eq('verification_status', 'pending')
+    .eq('verification_reference', reference)
+    .select('verification_status');
+  if (error) throw error;
+  return res.status(200).json({ success: true, status: data?.length ? 'unverified' : 'unchanged' });
 }
 
 async function activatePremium(req, res) {
@@ -1112,6 +1128,7 @@ export default async function handler(req, res) {
     if (req.method === 'POST' && action === 'activate-storage') return await activateStorage(req,res);
     if (req.method === 'POST' && action === 'begin-identity-verification') return await beginSellerVerification(req, res);
     if (req.method === 'POST' && action === 'complete-identity-verification') return await completeSellerVerification(req, res);
+    if (req.method === 'POST' && action === 'cancel-identity-verification') return await cancelSellerVerification(req, res);
     if (req.method === "POST" && action === "open-dispute") return await openDispute(req, res);
     if (["GET", "POST"].includes(req.method) && action === "release-due") return await releaseDue(req, res);
     if (["GET", "POST"].includes(req.method) && action === "process-emails") return await processEmails(req,res);

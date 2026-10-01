@@ -22,31 +22,54 @@ declare global {
   }
 }
 
-const loadPrembly = () => {
+const removeFailedScript = (script: HTMLScriptElement) => {
+  script.dataset.premblyState = 'failed';
+  script.remove();
+  loadPromise = null;
+};
+
+export const loadPrembly = () => {
   if (window.IdentityKYC?.verify) return Promise.resolve();
   if (loadPromise) return loadPromise;
   loadPromise = new Promise<void>((resolve, reject) => {
-    const existing = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
+    const existingNode = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
+    const existing = existingNode?.dataset.premblyState === 'failed' ? null : existingNode;
+    if (!existing && existingNode) existingNode.remove();
     const script = existing || document.createElement('script');
-    const finish = () => window.IdentityKYC?.verify ? resolve() : reject(new Error('Prembly verification did not load.'));
+    let settled = false;
+    let timeout = 0;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      if (window.IdentityKYC?.verify) {
+        script.dataset.premblyState = 'loaded';
+        resolve();
+      } else {
+        removeFailedScript(script);
+        reject(new Error('Prembly verification did not load. Please try again.'));
+      }
+    };
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      removeFailedScript(script);
+      reject(new Error('Prembly verification could not be loaded. Please check your connection and try again.'));
+    };
     script.addEventListener('load', finish, { once: true });
-    script.addEventListener('error', () => {
-      loadPromise = null;
-      reject(new Error('Prembly verification could not be loaded.'));
-    }, { once: true });
+    script.addEventListener('error', fail, { once: true });
     if (!existing) {
       script.id = SCRIPT_ID;
       script.src = SCRIPT_URL;
       script.async = true;
+      script.dataset.premblyState = 'loading';
       document.head.appendChild(script);
     }
-    window.setTimeout(() => {
-      if (window.IdentityKYC?.verify) resolve();
-      else {
-        loadPromise = null;
-        reject(new Error('Prembly verification took too long to load.'));
-      }
-    }, 12_000);
+    timeout = window.setTimeout(() => {
+      if (window.IdentityKYC?.verify) finish();
+      else fail();
+    }, 15_000);
   });
   return loadPromise;
 };
@@ -56,7 +79,8 @@ export default function usePremblyKyc(config: PremblyConfig) {
   return useCallback(async () => {
     try {
       await loadPrembly();
-      window.IdentityKYC?.verify(config);
+      if (!window.IdentityKYC?.verify) throw new Error('Prembly verification is not ready. Please try again.');
+      window.IdentityKYC.verify(config);
     } catch (error: any) {
       config.callback({ code: 'E00', status: 'failed', message: error?.message || 'Prembly verification could not be opened.' });
     }

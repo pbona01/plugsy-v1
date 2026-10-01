@@ -81,16 +81,26 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
     const active = widget;
     setWidget(null);
     if (!active) return;
+    const releaseAttempt = async () => {
+      try {
+        await authenticatedRequest('cancel-identity-verification', { reference: active.reference });
+      } catch {
+        // Workspace refresh below still exposes the normal one-minute retry fallback.
+      }
+      await onComplete();
+    };
     const code = String(response?.code || '').toUpperCase();
     const state = String(response?.status || '').toLowerCase();
     if (code === 'E02' || ['closed', 'cancelled', 'canceled'].includes(state)) {
       setBusy(false);
       toast('Verification closed. You can restart it when you are ready.');
+      await releaseAttempt();
       return;
     }
     if (code === 'E00' || state === 'failed') {
       setBusy(false);
       toast.error(response?.message || 'Prembly could not open the verification window.');
+      await releaseAttempt();
       return;
     }
     const sessionId = sessionIdFrom(response);
