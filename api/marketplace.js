@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Resend } from "resend";
 import { buildMarketplaceEmail, buildMarketplaceGuestEmail, buildMarketplaceProductUpdateEmail } from "./_marketplaceEmail.js";
-import { hasPremblyConfiguration, premblyOutcome, verificationMethods, verifyPremblyIdentity } from './_marketplaceVerification.js';
+import { fetchPremblySession, hasPremblyWidgetConfiguration, premblyClientConfiguration, premblySessionEmail, premblySessionReference, premblyWidgetOutcome } from './_marketplaceVerification.js';
 import { validateMarketplaceFile, createUploadUrl, verifyUploadedFile, createDownloadUrl } from './_marketplaceStorage.js';
 import { scanMarketplaceAsset, checkMarketplaceAssetScan } from './_marketplaceScanner.js';
 import { requireVerifiedClerkUser, requireVerifiedClerkAdmin } from "./_clerkAuth.js";
@@ -443,7 +443,7 @@ async function sellerWorkspace(req, res) {
   const listingsWithDeliveries = (listings || []).map((listing, index) => ({ ...listing, delivery_items: deliveryResults[index] || [] }));
   const pendingSince = Date.parse(seller?.updated_at || '');
   const verificationRetryAvailable = seller?.verification_status === 'pending'
-    && seller?.verification_provider === 'prembly'
+    && ['prembly', 'prembly_widget'].includes(seller?.verification_provider)
     && (!Number.isFinite(pendingSince) || pendingSince <= Date.now() - 5 * 60_000);
   return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), verification_retry_available: verificationRetryAvailable, trust_score: trustScoreForSeller(seller) }, listings: listingsWithDeliveries, sales: allSales });
 }
@@ -759,68 +759,80 @@ async function openDispute(req, res) {
   return res.status(201).json({ success: true, dispute: data });
 }
 
-async function sellerVerification(req,res) {
-  const actor = await requireActor(req,res); if (!actor) return;
-  if (req.method !== 'POST' || !hasPremblyConfiguration()) return send(res,503,'PREMBLY_CONFIG_REQUIRED','Seller verification is not configured yet.');
-  const body = readBody(req);
-  const method = text(body.method);
-  const number = text(body.number).replace(/\s+/g, '');
-  const image = text(body.image).replace(/^data:image\/(?:png|jpeg|jpg);base64,/i, '');
-  if (!verificationMethods[method] || !/^\d{11}$/.test(number) || !/^[A-Za-z0-9+/=]+$/.test(image) || image.length > 4_200_000 || body.accepted !== true) {
-    return send(res,400,'VERIFICATION_INPUT_INVALID','Choose BVN or NIN face validation, enter an 11-digit number, upload a JPG or PNG selfie, and accept the consent notice.');
-  }
-
-  const supabase=getClient();
-  const {data:seller,error}=await supabase.from('marketplace_seller_profiles').select('user_id,verification_status,verification_reference,verification_provider,updated_at').eq('user_id',actor.userId).maybeSingle();
-  if(error) throw error;
-  if(seller?.verification_status==='verified') return res.status(200).json({success:true,status:'verified'});
+async function beginSellerVerification(req, res) {
+  const actor = await requireActor(req, res); if (!actor) return;
+  if (!hasPremblyWidgetConfiguration()) return send(res, 503, 'PREMBLY_CONFIG_REQUIRED', 'Seller verification is not configured yet.');
+  const supabase = getClient();
+  const { data: seller, error } = await supabase.from('marketplace_seller_profiles')
+    .select('user_id,verification_status,verification_provider,updated_at,public_selling_enabled,public_plan_expires_at')
+    .eq('user_id', actor.userId).maybeSingle();
+  if (error) throw error;
+  if (seller?.verification_status === 'verified') return res.status(200).json({ success: true, status: 'verified' });
+  const premiumActive = seller?.public_selling_enabled === true
+    && Date.parse(seller?.public_plan_expires_at || '') > Date.now();
+  if (!premiumActive) return send(res, 403, 'PREMIUM_REQUIRED', 'Activate a Marketplace Premium plan before verifying your seller identity.');
   const pendingSince = Date.parse(seller?.updated_at || '');
-  const pendingIsFresh = seller?.verification_status === 'pending'
-    && seller?.verification_provider === 'prembly'
-    && Number.isFinite(pendingSince)
-    && pendingSince > Date.now() - 5 * 60_000;
-  if(pendingIsFresh) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((pendingSince + 5 * 60_000 - Date.now()) / 1000));
-    return send(res,409,'VERIFICATION_IN_PROGRESS','Your verification is still being processed. Please wait a few minutes before trying again.',{retryAfterSeconds});
+  if (seller?.verification_status === 'pending' && Number.isFinite(pendingSince) && pendingSince > Date.now() - 60_000) {
+    return send(res, 409, 'VERIFICATION_IN_PROGRESS', 'A verification window was just opened. Finish it or wait one minute before starting again.');
   }
-
   const reference = `MP-PREMBLY-${randomUUID()}`;
-  const changes={verification_provider:'prembly',verification_reference:reference,verification_status:'pending',updated_at:new Date().toISOString()};
-  const saved=seller ? await supabase.from('marketplace_seller_profiles').update(changes).eq('user_id',actor.userId).eq('verification_status',seller.verification_status).select('user_id') : await supabase.from('marketplace_seller_profiles').insert({user_id:actor.userId,...changes}).select('user_id');
-  if(saved.error) throw saved.error;
-  if(!saved.data?.length) return send(res,409,'VERIFICATION_CHANGED','Verification changed. Refresh before trying again.');
+  const changes = { verification_provider: 'prembly_widget', verification_reference: reference, verification_status: 'pending', updated_at: new Date().toISOString() };
+  const saved = seller
+    ? await supabase.from('marketplace_seller_profiles').update(changes).eq('user_id', actor.userId).neq('verification_status', 'verified').select('user_id')
+    : await supabase.from('marketplace_seller_profiles').insert({ user_id: actor.userId, ...changes }).select('user_id');
+  if (saved.error) throw saved.error;
+  if (!saved.data?.length) return send(res, 409, 'VERIFICATION_CHANGED', 'Verification changed. Refresh before trying again.');
+  const config = premblyClientConfiguration();
+  return res.status(200).json({
+    success: true,
+    status: 'pending',
+    reference,
+    widgetKey: config.widgetKey,
+    widgetId: config.widgetId,
+    isTest: config.isTest,
+    email: actor.email,
+    firstName: text(actor.clerkUser?.firstName || actor.fullName?.split(' ')[0] || 'Plugsy'),
+    lastName: text(actor.clerkUser?.lastName || actor.fullName?.split(' ').slice(1).join(' ')),
+  });
+}
 
-  try {
-    const result = await verifyPremblyIdentity({ method, number, image });
-    const status = premblyOutcome(result, method, number);
-    const providerReference = text(result?.verification?.reference || result?.nin_data?.trackingId || result?.bvn_data?.trackingId || reference).slice(0, 200);
-    const {data:updated,error:updateError}=await supabase.from('marketplace_seller_profiles').update({verification_status:status,verification_reference:providerReference,updated_at:new Date().toISOString()}).eq('user_id',actor.userId).eq('verification_reference',reference).eq('verification_status','pending').select('verification_status');
-    if(updateError) throw updateError;
-    if(!updated?.length) return send(res,409,'VERIFICATION_CHANGED','Verification was updated. Refresh your seller workspace.');
-    return res.status(200).json({success:true,status,method});
-  } catch (error) {
-    const code = text(error?.code || error?.message).toUpperCase();
-    if (error?.uncertain) {
-      return send(res,503,'VERIFICATION_PENDING_RETRY','Prembly did not return a final result. Wait five minutes, then retry. Your Plugsy Wallet was not charged.',{retryAfterSeconds:300});
-    }
-
-    const fallbackStatus = seller?.verification_status === 'rejected' ? 'rejected' : 'unverified';
-    const {error:resetError}=await supabase.from('marketplace_seller_profiles')
-      .update({verification_status:fallbackStatus,updated_at:new Date().toISOString()})
-      .eq('user_id',actor.userId)
-      .eq('verification_reference',reference)
-      .eq('verification_status','pending');
-    if(resetError) throw resetError;
-
-    if(code==='PREMBLY_INPUT_REJECTED' || code==='PREMBLY_IMAGE_TOO_LARGE') return send(res,422,'VERIFICATION_INPUT_REJECTED','Prembly could not read that identity number or selfie. Use a clear, front-facing JPG or PNG and check the 11-digit number.');
-    if(code==='PREMBLY_RATE_LIMITED') return send(res,429,'VERIFICATION_RATE_LIMITED','Too many verification attempts were made. Wait a few minutes, then try again.');
-    if(code==='PREMBLY_WALLET_EMPTY') return send(res,503,'VERIFICATION_PROVIDER_FUNDING_REQUIRED','Identity verification is temporarily unavailable while the provider account is funded. Please try again later.');
-    if(['PREMBLY_CREDENTIALS_INVALID','PREMBLY_ACCESS_DENIED','PREMBLY_CONFIG_REQUIRED'].includes(code)) return send(res,503,'VERIFICATION_PROVIDER_CONFIG_INVALID','Identity verification is temporarily unavailable because the provider connection needs attention.');
-    if(code==='PREMBLY_SERVICE_UNAVAILABLE' || code==='PREMBLY_LOOKUP_UNAVAILABLE') return send(res,503,'VERIFICATION_PROVIDER_UNAVAILABLE','Prembly is temporarily unavailable. Your attempt was reopened, so you can safely retry later.');
-    if(code==='PREMBLY_RESPONSE_INVALID') return send(res,502,'VERIFICATION_PROVIDER_RESPONSE_INVALID','Prembly returned an incomplete verification result. Your attempt was reopened so you can retry.');
-    if(code==='PREMBLY_REQUEST_REJECTED') return send(res,422,'VERIFICATION_REJECTED_BY_PROVIDER','Prembly could not process this verification request. Check your details and use a different clear selfie.');
-    throw error;
+async function completeSellerVerification(req, res) {
+  const actor = await requireActor(req, res); if (!actor) return;
+  const body = readBody(req);
+  const reference = text(body.reference);
+  const sessionId = text(body.sessionId);
+  if (!/^MP-PREMBLY-[0-9a-f-]{36}$/i.test(reference) || !/^[A-Za-z0-9_-]{8,128}$/.test(sessionId)) {
+    return send(res, 400, 'VERIFICATION_SESSION_INVALID', 'Prembly did not return a valid verification session.');
   }
+  const supabase = getClient();
+  const { data: seller, error } = await supabase.from('marketplace_seller_profiles')
+    .select('user_id,verification_status,verification_reference')
+    .eq('user_id', actor.userId).eq('verification_reference', reference).maybeSingle();
+  if (error) throw error;
+  if (!seller) return send(res, 409, 'VERIFICATION_CHANGED', 'This verification attempt is no longer active.');
+  if (seller.verification_status === 'verified') return res.status(200).json({ success: true, status: 'verified' });
+  let session;
+  try {
+    session = await fetchPremblySession(sessionId);
+  } catch (providerError) {
+    const code = text(providerError?.code || providerError?.message).toUpperCase();
+    if (code === 'PREMBLY_SESSION_NOT_FOUND') return send(res, 409, 'VERIFICATION_STILL_PROCESSING', 'Prembly is still preparing the result. Your status will update automatically.');
+    if (code === 'PREMBLY_RATE_LIMITED') return send(res, 429, 'VERIFICATION_RATE_LIMITED', 'Prembly is processing too many requests. Please wait a moment.');
+    return send(res, 503, 'VERIFICATION_PROVIDER_UNAVAILABLE', 'Prembly could not confirm the result yet. Your status will update automatically.');
+  }
+  const sessionReference = premblySessionReference(session);
+  const sessionEmail = premblySessionEmail(session).toLowerCase();
+  const belongsToAttempt = sessionReference === reference || (sessionEmail && sessionEmail === actor.email.toLowerCase());
+  if (!belongsToAttempt) return send(res, 403, 'VERIFICATION_SESSION_MISMATCH', 'This Prembly session does not belong to your Plugsy account.');
+  const status = premblyWidgetOutcome(session);
+  if (status === 'pending') return res.status(202).json({ success: true, status: 'pending' });
+  const { data: updated, error: updateError } = await supabase.from('marketplace_seller_profiles')
+    .update({ verification_status: status, verification_provider: 'prembly_widget', verification_reference: sessionId, updated_at: new Date().toISOString() })
+    .eq('user_id', actor.userId).eq('verification_reference', reference).eq('verification_status', 'pending')
+    .select('verification_status');
+  if (updateError) throw updateError;
+  if (!updated?.length) return send(res, 409, 'VERIFICATION_CHANGED', 'Verification was already updated. Refresh your seller workspace.');
+  return res.status(200).json({ success: true, status });
 }
 
 async function activatePremium(req, res) {
@@ -1098,7 +1110,8 @@ export default async function handler(req, res) {
     if (req.method === "POST" && action === "follow-seller") return await setSellerFollow(req, res);
     if (req.method === 'POST' && action === 'activate-premium') return await activatePremium(req,res);
     if (req.method === 'POST' && action === 'activate-storage') return await activateStorage(req,res);
-    if (req.method === 'POST' && action === 'verify-identity') return await sellerVerification(req,res);
+    if (req.method === 'POST' && action === 'begin-identity-verification') return await beginSellerVerification(req, res);
+    if (req.method === 'POST' && action === 'complete-identity-verification') return await completeSellerVerification(req, res);
     if (req.method === "POST" && action === "open-dispute") return await openDispute(req, res);
     if (["GET", "POST"].includes(req.method) && action === "release-due") return await releaseDue(req, res);
     if (["GET", "POST"].includes(req.method) && action === "process-emails") return await processEmails(req,res);

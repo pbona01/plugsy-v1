@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   PremblyVerificationError,
+  fetchPremblySession,
   getPremblyApiKey,
-  premblyOutcome,
-  verifyPremblyIdentity,
+  hasPremblyWidgetConfiguration,
+  premblySessionReference,
+  premblyWidgetOutcome,
 } from '../api/_marketplaceVerification.js';
 import handler, { canPublishPublicly } from '../api/marketplace.js';
 
@@ -16,33 +18,24 @@ test('public discovery hides expired, unverified and disabled seller plans', () 
   assert.equal(canPublishPublicly({ ...seller, public_selling_enabled: false }, Date.parse('2026-09-14')), false);
 });
 
-test('accepts successful BVN and NIN face responses', () => {
-  assert.equal(premblyOutcome({
-    status: true,
-    response_code: '00',
-    data: { bvn: '12345678901', face_data: { status: true } },
-  }, 'bvn_face', '12345678901'), 'verified');
-
-  assert.equal(premblyOutcome({
-    status: 'true',
-    response_code: '00',
-    face_data: { status: 'true' },
-    nin_data: { nin: '10987654321' },
-  }, 'nin_face', '10987654321'), 'verified');
+test('accepts only completed Prembly widget results with a passing face comparison', () => {
+  assert.equal(premblyWidgetOutcome({
+    verification: { status: 'VERIFIED' },
+    data: { biometric_results: { average_confidence: 94.5 } },
+  }), 'verified');
+  assert.equal(premblyWidgetOutcome({
+    verification: { status: 'VERIFIED' },
+    data: { biometric_results: { comparison_result: [{ result: { status: true } }] } },
+  }), 'verified');
 });
 
-test('rejects a genuine face mismatch but not an incomplete successful response', () => {
-  assert.equal(premblyOutcome({
-    status: true,
-    response_code: '00',
-    data: { bvn: '12345678901', face_data: { status: false } },
-  }, 'bvn_face', '12345678901'), 'rejected');
-
-  assert.throws(() => premblyOutcome({
-    status: true,
-    response_code: '00',
-    data: { bvn: '12345678901' },
-  }, 'bvn_face', '12345678901'), (error) => error instanceof PremblyVerificationError && error.code === 'PREMBLY_RESPONSE_INVALID');
+test('rejects face mismatches and keeps incomplete provider responses pending', () => {
+  assert.equal(premblyWidgetOutcome({
+    verification: { status: 'VERIFIED' },
+    data: { biometric_results: { average_confidence: 44 } },
+  }), 'rejected');
+  assert.equal(premblyWidgetOutcome({ status: 'processing' }), 'pending');
+  assert.equal(premblySessionReference({ data: { widget_info: { user_ref: 'MP-PREMBLY-reference' } } }), 'MP-PREMBLY-reference');
 });
 
 test('supports the documented server secret and migration aliases', () => {
@@ -60,39 +53,34 @@ test('supports the documented server secret and migration aliases', () => {
   if (previous.identity === undefined) delete process.env.IDENTITYPASS_API_KEY; else process.env.IDENTITYPASS_API_KEY = previous.identity;
 });
 
-test('sends the correct Prembly request and classifies provider failures', async () => {
-  const previous = process.env.PREMBLY_API_KEY;
+test('fetches a Prembly widget session with server-only credentials', async () => {
+  const previous = {
+    api: process.env.PREMBLY_API_KEY,
+    org: process.env.PREMBLY_ORGANISATION_ID,
+    publicKey: process.env.PREMBLY_PUBLIC_KEY,
+    widget: process.env.PREMBLY_WIDGET_ID,
+  };
   process.env.PREMBLY_API_KEY = 'server-secret';
+  process.env.PREMBLY_ORGANISATION_ID = 'organisation-id';
+  process.env.PREMBLY_PUBLIC_KEY = 'test_pk_public';
+  process.env.PREMBLY_WIDGET_ID = 'widget-id';
+  assert.equal(hasPremblyWidgetConfiguration(), true);
   let request;
-  const success = await verifyPremblyIdentity({
-    method: 'nin_face',
-    number: '10987654321',
-    image: 'base64-image',
-    fetchImpl: async (url, options) => {
-      request = { url, options };
-      return new Response(JSON.stringify({ status: true, response_code: '00', face_data: { status: true }, nin_data: { nin: '10987654321' } }), { status: 200 });
-    },
+  const success = await fetchPremblySession('session_12345', async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify({ verification: { status: 'VERIFIED' } }), { status: 200 });
   });
-  assert.equal(success.response_code, '00');
-  assert.equal(request.url, 'https://api.prembly.com/verification/nin_w_face');
+  assert.equal(success.verification.status, 'VERIFIED');
+  assert.equal(request.url, 'https://api.prembly.com/api/v1/checker-widget/sdk/sessions/session_12345/');
   assert.equal(request.options.headers['x-api-key'], 'server-secret');
-  assert.deepEqual(JSON.parse(request.options.body), { number: '10987654321', image: 'base64-image' });
+  assert.equal(request.options.headers['x-organisation-id'], 'organisation-id');
 
-  await assert.rejects(() => verifyPremblyIdentity({
-    method: 'bvn_face',
-    number: '12345678901',
-    image: 'base64-image',
-    fetchImpl: async () => new Response(JSON.stringify({ status: false, response_code: '03' }), { status: 200 }),
-  }), (error) => error.code === 'PREMBLY_WALLET_EMPTY' && error.uncertain === false);
+  await assert.rejects(() => fetchPremblySession('session_12345', async () => new Response('{}', { status: 401 })),
+    (error) => error instanceof PremblyVerificationError && error.code === 'PREMBLY_CREDENTIALS_INVALID');
 
-  await assert.rejects(() => verifyPremblyIdentity({
-    method: 'bvn_face',
-    number: '12345678901',
-    image: 'base64-image',
-    fetchImpl: async () => new Response(JSON.stringify({ status: false }), { status: 401 }),
-  }), (error) => error.code === 'PREMBLY_CREDENTIALS_INVALID' && error.uncertain === false);
-
-  if (previous === undefined) delete process.env.PREMBLY_API_KEY; else process.env.PREMBLY_API_KEY = previous;
+  for (const [name, value] of Object.entries({ PREMBLY_API_KEY: previous.api, PREMBLY_ORGANISATION_ID: previous.org, PREMBLY_PUBLIC_KEY: previous.publicKey, PREMBLY_WIDGET_ID: previous.widget })) {
+    if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  }
 });
 
 test('paid Premium activation remains off in preview', async () => {
