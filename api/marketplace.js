@@ -851,6 +851,32 @@ async function finalizeSellerVerification(supabase, { userId, reference, session
   return Boolean(sellers?.length);
 }
 
+async function repairRejectedSellerVerification(supabase, { userId, reference, sessionId }) {
+  const now = new Date().toISOString();
+  const { data: attempts, error: attemptError } = await supabase.from('marketplace_verification_attempts')
+    .update({
+      status: 'verified',
+      provider_session_id: sessionId || null,
+      failure_code: null,
+      completed_at: now,
+      last_provider_check_at: now,
+      updated_at: now,
+    })
+    .eq('user_id', userId).eq('reference', reference).eq('status', 'rejected').select('id');
+  if (attemptError) throw attemptError;
+  if (!attempts?.length) return false;
+  const { data: sellers, error: sellerError } = await supabase.from('marketplace_seller_profiles')
+    .update({
+      verification_status: 'verified',
+      verification_provider: 'prembly_widget',
+      verification_reference: sessionId || reference,
+      updated_at: now,
+    })
+    .eq('user_id', userId).eq('verification_status', 'rejected').select('verification_status');
+  if (sellerError) throw sellerError;
+  return Boolean(sellers?.length);
+}
+
 async function completeSellerVerification(req, res) {
   const actor = await requireActor(req, res); if (!actor) return;
   const body = readBody(req);
@@ -902,13 +928,13 @@ async function checkSellerVerification(req, res) {
     supabase.from('marketplace_seller_profiles').select('verification_status,verification_reference').eq('user_id', actor.userId).maybeSingle(),
     supabase.from('marketplace_verification_attempts')
       .select('reference,provider_session_id,status,last_provider_check_at,created_at')
-      .eq('user_id', actor.userId).eq('status', 'pending').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+      .eq('user_id', actor.userId).in('status', ['pending', 'rejected']).order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (sellerError || attemptError) throw sellerError || attemptError;
   if (seller?.verification_status === 'verified') return res.status(200).json({ success: true, status: 'verified', phase: 'complete' });
   if (!attempt) return res.status(200).json({ success: true, status: seller?.verification_status || 'unverified', phase: 'not_started' });
   const lastChecked = Date.parse(attempt.last_provider_check_at || '');
-  if (Number.isFinite(lastChecked) && lastChecked > Date.now() - 4_000) {
+  if (attempt.status === 'pending' && Number.isFinite(lastChecked) && lastChecked > Date.now() - 4_000) {
     return res.status(202).json({ success: true, status: 'pending', phase: attempt.provider_session_id ? 'provider_processing' : 'waiting_for_provider' });
   }
   await supabase.from('marketplace_verification_attempts')
@@ -941,8 +967,25 @@ async function checkSellerVerification(req, res) {
     return send(res, 403, 'VERIFICATION_SESSION_MISMATCH', 'Prembly returned a session that does not belong to this account.');
   }
   const status = premblyWidgetOutcome(session);
-  if (status === 'pending') return res.status(202).json({ success: true, status, phase: 'provider_processing' });
-  await finalizeSellerVerification(supabase, { userId: actor.userId, reference: attempt.reference, sessionId, status });
+  if (status === 'pending') {
+    if (attempt.status === 'rejected') {
+      const now = new Date().toISOString();
+      await Promise.all([
+        supabase.from('marketplace_verification_attempts')
+          .update({ status: 'pending', failure_code: null, completed_at: null, last_provider_check_at: now, updated_at: now })
+          .eq('user_id', actor.userId).eq('reference', attempt.reference).eq('status', 'rejected'),
+        supabase.from('marketplace_seller_profiles')
+          .update({ verification_status: 'pending', verification_reference: attempt.reference, updated_at: now })
+          .eq('user_id', actor.userId).eq('verification_status', 'rejected'),
+      ]);
+    }
+    return res.status(202).json({ success: true, status, phase: 'provider_processing' });
+  }
+  if (status === 'verified' && attempt.status === 'rejected') {
+    await repairRejectedSellerVerification(supabase, { userId: actor.userId, reference: attempt.reference, sessionId });
+  } else if (attempt.status === 'pending') {
+    await finalizeSellerVerification(supabase, { userId: actor.userId, reference: attempt.reference, sessionId, status });
+  }
   return res.status(200).json({ success: true, status, phase: 'complete' });
 }
 

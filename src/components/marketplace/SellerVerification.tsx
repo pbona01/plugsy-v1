@@ -65,6 +65,7 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
   const [widget, setWidget] = useState<WidgetConfiguration | null>(null);
   const [progress, setProgress] = useState<VerificationProgress>('idle');
   const pollCount = useRef(0);
+  const rejectedRecoveryChecked = useRef(false);
   const verified = seller?.verification_status === 'verified';
   const retryAvailable = seller?.verification_status === 'pending' && seller?.verification_retry_available === true;
   const pending = seller?.verification_status === 'pending' && !retryAvailable;
@@ -89,14 +90,14 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
     if (result.status === 'verified') {
       setProgress('complete');
       setBusy(false);
-      if (announce) toast.success('Identity verified. Public marketplace access is ready.');
+      if (announce) toast.success('Identity verified. Public marketplace access is ready.', { id: 'seller-verification-result' });
       await onComplete();
       return true;
     }
     if (result.status === 'rejected') {
       setProgress('rejected');
       setBusy(false);
-      if (announce) toast.error('Prembly could not verify this attempt. Review your details before trying again.');
+      if (announce) toast.error('Prembly could not verify this attempt. Review your details before trying again.', { id: 'seller-verification-result' });
       await onComplete();
       return true;
     }
@@ -114,6 +115,7 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
     const shouldPoll = pending || progress === 'syncing';
     if (!shouldPoll) return;
     let cancelled = false;
+    let interval = 0;
     pollCount.current = 0;
     const tick = async () => {
       if (cancelled) return;
@@ -122,12 +124,25 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
         setProgress('delayed');
         return;
       }
-      try { await checkStatus({ announce: true }); } catch { /* The next signed webhook or poll can still finish the attempt. */ }
+      try {
+        const finished = await checkStatus({ announce: false });
+        if (finished) {
+          cancelled = true;
+          window.clearInterval(interval);
+        }
+      } catch { /* The next signed webhook or poll can still finish the attempt. */ }
     };
     void tick();
-    const interval = window.setInterval(() => void tick(), 7_000);
+    interval = window.setInterval(() => void tick(), 7_000);
     return () => { cancelled = true; window.clearInterval(interval); };
   }, [checkStatus, pending, progress, verified]);
+
+  useEffect(() => {
+    if (seller?.verification_status !== 'rejected' || rejectedRecoveryChecked.current) return;
+    rejectedRecoveryChecked.current = true;
+    setProgress('syncing');
+    void checkStatus({ announce: false }).catch(() => setProgress('rejected'));
+  }, [checkStatus, seller?.verification_status]);
 
   const handleWidgetResult = useCallback(async (response: any) => {
     const active = widget;
@@ -173,7 +188,7 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
         sessionId,
       });
       if (result.status === 'verified') toast.success('Identity verified. You can now publish publicly.');
-      else if (result.status === 'rejected') toast.error('Prembly could not verify this attempt. Review your details and try again.');
+      else if (result.status === 'rejected') toast.error('Prembly could not verify this attempt. Review your details and try again.', { id: 'seller-verification-result' });
       else toast.success('Verification submitted. Plugsy is securely checking the result.');
       await onComplete();
     } catch (error: any) {

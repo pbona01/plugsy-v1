@@ -22,7 +22,7 @@ test('public discovery hides expired, unverified and disabled seller plans', () 
   assert.equal(canPublishPublicly({ ...seller, public_selling_enabled: false }, Date.parse('2026-09-14')), false);
 });
 
-test('accepts only completed Prembly widget results with a passing face comparison', () => {
+test('accepts authoritative completed Prembly results without inventing a missing face score', () => {
   assert.equal(premblyWidgetOutcome({
     verification: { status: 'VERIFIED' },
     data: { biometric_results: { average_confidence: 94.5 } },
@@ -31,12 +31,23 @@ test('accepts only completed Prembly widget results with a passing face comparis
     verification: { status: 'VERIFIED' },
     data: { biometric_results: { comparison_result: [{ result: { status: true } }] } },
   }), 'verified');
+  assert.equal(premblyWidgetOutcome({
+    data: { verification_status: 'VERIFIED' },
+  }), 'verified');
+  assert.equal(premblyWidgetOutcome({
+    status: true,
+    response_code: '00',
+  }), 'verified');
 });
 
 test('rejects face mismatches and keeps incomplete provider responses pending', () => {
   assert.equal(premblyWidgetOutcome({
     verification: { status: 'VERIFIED' },
     data: { biometric_results: { average_confidence: 44 } },
+  }), 'rejected');
+  assert.equal(premblyWidgetOutcome({
+    verification: { status: 'VERIFIED' },
+    data: { face_data: { status: false, response_code: '01' } },
   }), 'rejected');
   assert.equal(premblyWidgetOutcome({ status: 'processing' }), 'pending');
   assert.equal(premblySessionReference({ data: { widget_info: { user_ref: 'MP-PREMBLY-reference' } } }), 'MP-PREMBLY-reference');

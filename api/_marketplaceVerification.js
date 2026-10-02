@@ -3,6 +3,7 @@ const PREMBLY_SESSION_URL = 'https://api.prembly.com/api/v1/checker-widget/sdk/s
 const text = (value) => String(value || '').trim();
 const isTrue = (value) => value === true || value === 1 || ['true', '1', 'verified', 'success', 'successful', 'passed'].includes(text(value).toLowerCase());
 const finiteNumber = (value) => {
+  if (value === null || value === undefined || text(value) === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -97,17 +98,51 @@ const faceComparisonPassed = (result) => {
   return false;
 };
 
+const faceComparisonFailed = (result) => {
+  const direct = nested(result, [
+    'data.face_data.status', 'face_data.status',
+    'data.verification_response.face_data.status',
+    'data.verification_response.data.face_data.status',
+    'data.response_data.face_data.status', 'response_data.face_data.status',
+  ]);
+  if (direct !== null) return !isTrue(direct);
+  const comparisons = nested(result, [
+    'data.biometric_results.comparison_result', 'biometric_results.comparison_result',
+    'data.verification_response.data.biometric_results.comparison_result',
+  ]);
+  if (Array.isArray(comparisons) && comparisons.length) {
+    return comparisons.some((entry) => !isTrue(entry?.result?.status));
+  }
+  return false;
+};
+
 export function premblyWidgetOutcome(result) {
   const verificationStatus = text(nested(result, [
-    'verification.status', 'data.verification.status', 'data.status', 'status',
+    'verification.status', 'data.verification.status',
+    'verification_status', 'data.verification_status',
+    'data.verification_response.verification_status',
+    'data.verification_response.status',
+    'data.status', 'status',
   ])).toLowerCase();
+  const responseCode = text(nested(result, [
+    'response_code', 'data.response_code',
+    'verification.response_code', 'data.verification.response_code',
+    'data.verification_response.response_code',
+  ])).toUpperCase();
   const providerFinished = ['verified', 'success', 'successful', 'completed', 'passed'].includes(verificationStatus)
-    || isTrue(nested(result, ['data.verification_response.status', 'verification_response.status']));
+    || (responseCode === '00' && isTrue(nested(result, [
+      'status', 'data.status', 'verification.status', 'data.verification.status',
+      'verification_response.status', 'data.verification_response.status',
+    ])));
   const providerRejected = ['failed', 'rejected', 'declined', 'cancelled', 'canceled'].includes(verificationStatus);
   const confidence = faceConfidence(result);
   const facePassed = faceComparisonPassed(result) || (confidence !== null && confidence >= 80);
-  if (providerFinished && facePassed) return 'verified';
-  if (providerRejected || (providerFinished && !facePassed)) return 'rejected';
+  const faceFailed = faceComparisonFailed(result) || (confidence !== null && confidence < 80);
+  if (providerRejected || faceFailed) return 'rejected';
+  // The SDK session endpoint can return only its authoritative final status and
+  // omit the underlying face payload. Absence of biometric detail is not a
+  // failed match; only an explicit negative face result may reject the user.
+  if (providerFinished && (facePassed || !faceFailed)) return 'verified';
   return 'pending';
 }
 
