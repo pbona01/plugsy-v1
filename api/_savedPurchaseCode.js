@@ -31,7 +31,41 @@ export async function getSavedPurchaseCode(supabase, userId) {
     .eq('clerk_id', userId)
     .maybeSingle();
   if (error) throw error;
-  return normalizePurchaseCode(data?.saved_purchase_code);
+  const savedCode = normalizePurchaseCode(data?.saved_purchase_code);
+  if (savedCode) return savedCode;
+
+  const latestCode = await findLatestPurchaseCode(supabase, userId);
+  if (!latestCode) return '';
+  try {
+    const owner = await savePurchaseCode(supabase, userId, latestCode);
+    return owner.code;
+  } catch (historyError) {
+    if (historyError instanceof PurchaseCodeProfileError) return '';
+    throw historyError;
+  }
+}
+
+export async function findLatestPurchaseCode(supabase, userId) {
+  const loadLatest = async (table) => {
+    const { data, error } = await supabase.from(table)
+      .select('purchase_code_used,created_at')
+      .eq('user_id', userId)
+      .not('purchase_code_used', 'is', null)
+      .not('purchase_code_owner_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    const code = normalizePurchaseCode(data?.purchase_code_used);
+    return code ? { code, usedAt: Date.parse(data?.created_at || '') || 0 } : null;
+  };
+
+  const history = (await Promise.all([
+    loadLatest('orders'),
+    loadLatest('portfolio_purchases'),
+  ])).filter(Boolean);
+  history.sort((left, right) => right.usedAt - left.usedAt);
+  return history[0]?.code || '';
 }
 
 export async function savePurchaseCode(supabase, userId, value) {

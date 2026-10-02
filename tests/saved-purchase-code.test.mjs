@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   PurchaseCodeProfileError,
+  findLatestPurchaseCode,
   normalizePurchaseCode,
   resolvePurchaseCodeForPurchase,
 } from '../api/_savedPurchaseCode.js';
@@ -35,4 +36,23 @@ test('blocks saving or using a self-referral code', async () => {
     () => resolvePurchaseCodeForPurchase(profileClient({ ownerId: 'user_buyer' }), 'user_buyer', 'PLUG-SELF'),
     (error) => error instanceof PurchaseCodeProfileError && error.code === 'PURCHASE_CODE_SELF',
   );
+});
+
+test('chooses the most recently used code across existing purchase history', async () => {
+  const historyClient = {
+    from(table) {
+      const row = table === 'orders'
+        ? { purchase_code_used: 'OLDER-CODE', created_at: '2026-08-01T10:00:00Z' }
+        : { purchase_code_used: 'LATEST-CODE', created_at: '2026-09-01T10:00:00Z' };
+      return {
+        select() { return this; },
+        eq() { return this; },
+        not() { return this; },
+        order() { return this; },
+        limit() { return this; },
+        async maybeSingle() { return { data: row, error: null }; },
+      };
+    },
+  };
+  assert.equal(await findLatestPurchaseCode(historyClient, 'user_buyer'), 'LATEST-CODE');
 });
