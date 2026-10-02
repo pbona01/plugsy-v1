@@ -9,7 +9,7 @@ export const PrivacyPolicy = () => {
           Plugsy Privacy Policy
         </h1>
         <p className="text-neutral-500 mb-8 font-medium">
-          Last Updated: May 28, 2026
+          Last Updated: October 2, 2026
         </p>
 
         <div className="text-neutral-700">
@@ -36,6 +36,12 @@ export const PrivacyPolicy = () => {
               Payment information (processed securely through our third-party
               payment providers).
             </li>
+            <li>
+              For public sellers, the identity-verification result, Prembly
+              session reference, consent-policy version, and verification
+              timestamps. Plugsy does not receive or store your BVN, NIN,
+              selfie, or biometric template.
+            </li>
           </ul>
           <p className="mb-4">
             We also automatically collect certain technical data when you use
@@ -60,7 +66,35 @@ export const PrivacyPolicy = () => {
           </ul>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            3. Third-Party Services and YouTube API
+            3. Seller Identity Verification
+          </h2>
+          <p className="mb-4">
+            Public Marketplace sellers may choose BVN + Face Validation or NIN
+            + Face Validation. Prembly processes the identity number, camera
+            image, liveness and face-comparison data as Plugsy&apos;s identity
+            verification provider. Plugsy uses the returned pass/fail result to
+            decide whether an account may publish publicly and to reduce fraud.
+          </p>
+          <p className="mb-4">
+            This sensitive-data processing begins only after explicit consent.
+            We record the consent version and time for accountability. Plugsy
+            retains the minimal verification result and provider reference while
+            the seller account remains active and for as long as reasonably
+            required for fraud, dispute, legal and regulatory purposes. Provider
+            retention and any cross-border processing are governed by our
+            agreement with Prembly and applicable data-protection safeguards.
+          </p>
+          <p className="mb-4">
+            You may withhold or withdraw consent, request access, correction,
+            restriction or deletion where applicable, or challenge a failed
+            automated verification through Plugsy Support. Withdrawing consent
+            may prevent public selling where verification is necessary for
+            marketplace safety. A failed automated result can be referred for
+            human review.
+          </p>
+
+          <h2 className="text-xl font-bold mt-12 mb-4 text-black">
+            4. Third-Party Services and YouTube API
           </h2>
           <p className="mb-4">
             Plugsy uses YouTube API Services to upload and display portfolio
@@ -104,7 +138,7 @@ export const PrivacyPolicy = () => {
           </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            4. Data Sharing and Security
+            5. Data Sharing and Security
           </h2>
           <p className="mb-4">
             We do not sell your personal data. We may share information with
@@ -116,7 +150,7 @@ export const PrivacyPolicy = () => {
           </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            5. Your Rights
+            6. Your Rights
           </h2>
           <p className="mb-4">
             Depending on your location, you may have certain rights regarding
@@ -127,7 +161,7 @@ export const PrivacyPolicy = () => {
           </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            6. Changes to this Policy
+            7. Changes to this Policy
           </h2>
           <p className="mb-4">
             We may change this Privacy Policy from time to time. If we make
@@ -138,7 +172,7 @@ export const PrivacyPolicy = () => {
           </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            7. Contact Us
+            8. Contact Us
           </h2>
           <p className="mb-4">
             If you have any questions about this Privacy Policy, please contact

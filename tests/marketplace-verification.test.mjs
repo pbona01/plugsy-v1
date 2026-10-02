@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
   PremblyVerificationError,
   fetchPremblySession,
+  findPremblySession,
   getPremblyApiKey,
   getPremblyWidgetKey,
   hasPremblyWidgetConfiguration,
@@ -10,6 +12,7 @@ import {
   premblyWidgetOutcome,
 } from '../api/_marketplaceVerification.js';
 import handler, { canPublishPublicly } from '../api/marketplace.js';
+import { signatureMatches } from '../api/prembly-webhook.js';
 
 test('public discovery hides expired, unverified and disabled seller plans', () => {
   const seller = { verification_status: 'verified', public_selling_enabled: true, public_plan_expires_at: '2026-10-01T00:00:00Z' };
@@ -85,6 +88,40 @@ test('fetches a Prembly widget session with server-only credentials', async () =
   for (const [name, value] of Object.entries({ PREMBLY_API_KEY: previous.api, PREMBLY_ORGANISATION_ID: previous.org, PREMBLY_PUBLIC_KEY: previous.publicKey, PREMBLY_WIDGET_KEY: previous.widgetKey, PREMBLY_WIDGET_ID: previous.widget })) {
     if (value === undefined) delete process.env[name]; else process.env[name] = value;
   }
+});
+
+test('reconciles a charged widget session using the internal attempt reference', async () => {
+  const previous = {
+    api: process.env.PREMBLY_API_KEY,
+    org: process.env.PREMBLY_ORGANISATION_ID,
+  };
+  process.env.PREMBLY_API_KEY = 'server-secret';
+  process.env.PREMBLY_ORGANISATION_ID = 'organisation-id';
+  const reference = 'MP-PREMBLY-11111111-2222-4333-8444-555555555555';
+  let request;
+  const session = await findPremblySession({ reference }, async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify({ data: { results: [
+      { session_id: 'session_wrong', widget_info: { user_ref: 'MP-PREMBLY-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' } },
+      { session_id: 'session_right', widget_info: { user_ref: reference } },
+    ] } }), { status: 200 });
+  });
+  assert.equal(session.session_id, 'session_right');
+  assert.match(request.url, /page_size=50/);
+  assert.equal(request.options.headers['x-api-key'], 'server-secret');
+  for (const [name, value] of Object.entries({ PREMBLY_API_KEY: previous.api, PREMBLY_ORGANISATION_ID: previous.org })) {
+    if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  }
+});
+
+test('accepts only a correctly signed raw Prembly webhook body', () => {
+  const previous = process.env.PREMBLY_PUBLIC_KEY;
+  process.env.PREMBLY_PUBLIC_KEY = 'pk_live_webhook';
+  const payload = Buffer.from(JSON.stringify({ event: 'verification.completed', session_id: 'session_12345' }));
+  const signature = createHmac('sha256', process.env.PREMBLY_PUBLIC_KEY).update(payload).digest('base64');
+  assert.equal(signatureMatches(payload, signature), true);
+  assert.equal(signatureMatches(Buffer.from('{}'), signature), false);
+  if (previous === undefined) delete process.env.PREMBLY_PUBLIC_KEY; else process.env.PREMBLY_PUBLIC_KEY = previous;
 });
 
 test('paid Premium activation remains off in preview', async () => {

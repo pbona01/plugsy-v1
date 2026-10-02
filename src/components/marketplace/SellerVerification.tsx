@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, CheckCircle2, Loader2, ScanFace, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@clerk/clerk-react';
+import { Link } from 'react-router-dom';
 import usePremblyKyc from '../../hooks/usePremblyKyc';
 import toast from 'react-hot-toast';
+
+const CONSENT_VERSION = 'seller-identity-v2-2026-10-02';
+type VerificationProgress = 'idle' | 'opening' | 'provider' | 'syncing' | 'delayed' | 'complete' | 'rejected';
 
 type WidgetConfiguration = {
   widgetKey: string;
@@ -59,9 +63,12 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
   const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [widget, setWidget] = useState<WidgetConfiguration | null>(null);
+  const [progress, setProgress] = useState<VerificationProgress>('idle');
+  const pollCount = useRef(0);
   const verified = seller?.verification_status === 'verified';
   const retryAvailable = seller?.verification_status === 'pending' && seller?.verification_retry_available === true;
   const pending = seller?.verification_status === 'pending' && !retryAvailable;
+  const checking = pending || progress === 'syncing' || progress === 'delayed';
   const premiumActive = seller?.public_selling_enabled === true
     && Date.parse(seller?.public_plan_expires_at || '') > Date.now();
 
@@ -76,6 +83,51 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
     if (!response.ok || !result?.success) throw new Error(result?.error || 'Verification is temporarily unavailable.');
     return result;
   }, [getToken]);
+
+  const checkStatus = useCallback(async ({ announce = false } = {}) => {
+    const result = await authenticatedRequest('check-identity-verification', {});
+    if (result.status === 'verified') {
+      setProgress('complete');
+      setBusy(false);
+      if (announce) toast.success('Identity verified. Public marketplace access is ready.');
+      await onComplete();
+      return true;
+    }
+    if (result.status === 'rejected') {
+      setProgress('rejected');
+      setBusy(false);
+      if (announce) toast.error('Prembly could not verify this attempt. Review your details before trying again.');
+      await onComplete();
+      return true;
+    }
+    setProgress('syncing');
+    return false;
+  }, [authenticatedRequest, onComplete]);
+
+  useEffect(() => {
+    if (verified) {
+      setProgress('complete');
+      setBusy(false);
+      return;
+    }
+    if (progress === 'delayed') return;
+    const shouldPoll = pending || progress === 'syncing';
+    if (!shouldPoll) return;
+    let cancelled = false;
+    pollCount.current = 0;
+    const tick = async () => {
+      if (cancelled) return;
+      pollCount.current += 1;
+      if (pollCount.current > 18) {
+        setProgress('delayed');
+        return;
+      }
+      try { await checkStatus({ announce: true }); } catch { /* The next signed webhook or poll can still finish the attempt. */ }
+    };
+    void tick();
+    const interval = window.setInterval(() => void tick(), 7_000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, [checkStatus, pending, progress, verified]);
 
   const handleWidgetResult = useCallback(async (response: any) => {
     const active = widget;
@@ -93,12 +145,14 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
     const state = String(response?.status || '').toLowerCase();
     if (code === 'E02' || ['closed', 'cancelled', 'canceled'].includes(state)) {
       setBusy(false);
+      setProgress('idle');
       toast('Verification closed. You can restart it when you are ready.');
       await releaseAttempt();
       return;
     }
-    if (code === 'E00' || state === 'failed') {
+    if (code === 'E00' || ['failed', 'error'].includes(state)) {
       setBusy(false);
+      setProgress('idle');
       toast.error(response?.message || 'Prembly could not open the verification window.');
       await releaseAttempt();
       return;
@@ -106,10 +160,13 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
     const sessionId = sessionIdFrom(response);
     if (!sessionId) {
       setBusy(false);
+      setProgress('syncing');
       toast.success('Verification submitted. Plugsy is waiting for Prembly’s secure confirmation.');
       await onComplete();
+      try { await checkStatus({ announce: true }); } catch { /* Polling continues. */ }
       return;
     }
+    setProgress('syncing');
     try {
       const result = await authenticatedRequest('complete-identity-verification', {
         reference: active.reference,
@@ -117,7 +174,7 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
       });
       if (result.status === 'verified') toast.success('Identity verified. You can now publish publicly.');
       else if (result.status === 'rejected') toast.error('Prembly could not verify this attempt. Review your details and try again.');
-      else toast.success('Verification submitted. Your seller status will update shortly.');
+      else toast.success('Verification submitted. Plugsy is securely checking the result.');
       await onComplete();
     } catch (error: any) {
       toast.error(error.message || 'Plugsy could not confirm the verification result yet.');
@@ -125,20 +182,22 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
     } finally {
       setBusy(false);
     }
-  }, [authenticatedRequest, onComplete, widget]);
+  }, [authenticatedRequest, checkStatus, onComplete, widget]);
 
   const begin = async () => {
     if (!premiumActive) return toast.error('Activate Marketplace Premium before verifying your seller identity.');
     if (!accepted) return toast.error('Please accept the identity-verification consent notice.');
     setBusy(true);
+    setProgress('opening');
     try {
-      const result = await authenticatedRequest('begin-identity-verification', { accepted: true });
+      const result = await authenticatedRequest('begin-identity-verification', { accepted: true, adultConfirmed: true, consentVersion: CONSENT_VERSION });
       if (result.status === 'verified') {
         toast.success('Your seller identity is already verified.');
         await onComplete();
         setBusy(false);
         return;
       }
+      setProgress('provider');
       setWidget({
         widgetKey: result.widgetKey,
         widgetId: result.widgetId,
@@ -150,6 +209,7 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
       });
     } catch (error: any) {
       setBusy(false);
+      setProgress('idle');
       toast.error(error.message || 'Verification could not be started.');
     }
   };
@@ -167,21 +227,27 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
           <h3 className="mt-2 text-2xl font-black tracking-tight">Verify without sending documents to Plugsy</h3>
           <p className="mt-3 max-w-xl text-sm leading-6 text-brand-text-secondary">Prembly opens a protected verification window where you choose BVN or NIN and complete a live camera face check. Plugsy receives only the verified result and session reference.</p>
           <div className="mt-6 grid gap-3 sm:grid-cols-3">
-            {['Choose BVN or NIN', 'Complete live face scan', 'Return verified'].map((label, index) => (
-              <div key={label} className="flex items-center gap-3 rounded-2xl border border-brand-border bg-brand-bg/45 p-3.5">
-                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-accent text-[10px] font-black text-white">{index + 1}</span>
+            {['Choose BVN or NIN', 'Complete live face scan', 'Secure result check'].map((label, index) => {
+              const activeStep = progress === 'complete' ? 3 : progress === 'syncing' || progress === 'delayed' ? 2 : progress === 'provider' ? 1 : 0;
+              const done = activeStep > index;
+              const active = activeStep === index && progress !== 'idle';
+              return (
+              <div key={label} className={`flex items-center gap-3 rounded-2xl border p-3.5 transition-colors ${active ? 'border-brand-accent/45 bg-brand-accent/10' : 'border-brand-border bg-brand-bg/45'}`}>
+                <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-black ${done ? 'bg-emerald-500 text-white' : 'bg-brand-accent text-white'}`}>{done ? <CheckCircle2 size={14}/> : active ? <Loader2 size={13} className="animate-spin"/> : index + 1}</span>
                 <span className="text-[11px] font-bold leading-4">{label}</span>
               </div>
-            ))}
+            )})}
           </div>
         </div>
 
         <div className="border-t border-brand-border bg-brand-bg/45 p-5 sm:p-7 lg:border-l lg:border-t-0">
-          {pending ? (
+          {checking ? (
             <div className="flex h-full min-h-56 flex-col justify-center rounded-2xl border border-amber-500/25 bg-amber-500/10 p-5 text-sm leading-6 text-brand-text-secondary">
               <Loader2 size={22} className="mb-4 animate-spin text-amber-500" />
-              <strong className="text-brand-text-primary">Prembly is confirming your result.</strong>
-              <span className="mt-1">Your seller status updates automatically after the signed result arrives.</span>
+              <strong className="text-brand-text-primary">{progress === 'delayed' ? 'This check is taking longer than usual.' : 'Securely checking your verification.'}</strong>
+              <span className="mt-1">{progress === 'delayed' ? 'Your completed check is not lost. Use Check status now, or return later—Plugsy will also accept Prembly’s signed update.' : 'Plugsy is waiting for Prembly’s signed result and checking the session securely. This normally takes under two minutes.'}</span>
+              <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-brand-border"><span className="block h-full w-2/3 animate-pulse rounded-full bg-amber-500"/></div>
+              <button type="button" onClick={() => void checkStatus({ announce: true })} className="mt-5 self-start rounded-xl border border-brand-border bg-brand-surface px-4 py-2 text-[10px] font-black uppercase tracking-wider text-brand-text-primary">Check status now</button>
             </div>
           ) : verified ? (
             <div className="flex h-full min-h-56 flex-col items-center justify-center rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-6 text-center">
@@ -196,10 +262,10 @@ export default function SellerVerification({ seller, onComplete }: { seller: any
                 <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-accent/10 text-brand-accent"><ScanFace size={19} /></span>
                 <div><strong className="block text-sm">Live identity check</strong><span className="text-[10px] text-brand-text-secondary">Camera access happens inside Prembly</span></div>
               </div>
-              <label className="mt-5 flex cursor-pointer items-start gap-3 text-xs leading-5 text-brand-text-secondary">
-                <input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} className="mt-1 h-4 w-4 accent-brand-accent" />
-                <span>I consent to Prembly processing my identity and live facial data for Plugsy seller verification.</span>
-              </label>
+              <div className="mt-5 flex items-start gap-3 text-xs leading-5 text-brand-text-secondary">
+                <input id="seller-verification-consent" type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} className="mt-1 h-4 w-4 shrink-0 accent-brand-accent" />
+                <div><label htmlFor="seller-verification-consent" className="cursor-pointer">I confirm I am at least 18 and explicitly consent to Prembly processing my BVN or NIN details and live facial/biometric data solely to verify my identity for public selling. I understand Plugsy stores only the result, provider reference, and consent record—not my BVN, NIN, or selfie.</label> I have read the <Link to="/privacy" className="font-bold text-brand-accent underline underline-offset-2">Privacy Policy</Link> and <Link to="/marketplace/policy" className="font-bold text-brand-accent underline underline-offset-2">Marketplace Policy</Link>.</div>
+              </div>
               {!premiumActive && <p className="mt-4 rounded-xl border border-brand-border bg-brand-surface p-3 text-[11px] leading-5 text-brand-text-secondary">Activate the monthly or yearly Marketplace Premium plan first. Verification is the final step before public publishing.</p>}
               <button type="button" disabled={busy || !premiumActive} onClick={() => void begin()} className="btn-primary mt-5 flex h-12 w-full items-center justify-center gap-2 text-xs font-black uppercase tracking-wider disabled:cursor-not-allowed disabled:opacity-50">
                 {busy ? <><Loader2 size={16} className="animate-spin" />Opening Prembly…</> : <>Verify securely <ArrowUpRight size={15} /></>}

@@ -62,6 +62,7 @@ const nested = (value, paths) => {
 export const premblySessionId = (result) => text(nested(result, [
   'session_id', 'sessionId', 'data.session_id', 'data.sessionId',
   'data.widget_info.session_id', 'widget_info.session_id',
+  'id', 'data.id',
 ]));
 
 export const premblySessionReference = (result) => text(nested(result, [
@@ -69,6 +70,7 @@ export const premblySessionReference = (result) => text(nested(result, [
   'data.metadata.verification_reference', 'data.metadata.transaction_id',
   'data.widget_info.metadata.verification_reference', 'data.widget_info.metadata.transaction_id',
   'data.widget_info.user_ref', 'widget_info.user_ref', 'user_ref',
+  'verification_reference', 'transaction_id',
 ]));
 
 export const premblySessionEmail = (result) => text(nested(result, [
@@ -139,4 +141,43 @@ export async function fetchPremblySession(sessionId, fetchImpl = fetch) {
   }
   if (!result || typeof result !== 'object') throw new PremblyVerificationError('PREMBLY_RESPONSE_INVALID');
   return result;
+}
+
+const sessionRows = (result) => {
+  const value = nested(result, ['data.results', 'results', 'data.sessions', 'sessions', 'data']);
+  return Array.isArray(value) ? value : [];
+};
+
+export async function findPremblySession({ reference, email = '' }, fetchImpl = fetch) {
+  const apiKey = getPremblyApiKey();
+  const organisationId = getPremblyOrganisationId();
+  const internalReference = text(reference);
+  const expectedEmail = text(email).toLowerCase();
+  if (!apiKey || !organisationId || !/^MP-PREMBLY-[0-9a-f-]{36}$/i.test(internalReference)) {
+    throw new PremblyVerificationError('PREMBLY_CONFIG_REQUIRED');
+  }
+  let response;
+  try {
+    response = await fetchImpl(`${PREMBLY_SESSION_URL}/?page=1&page_size=50`, {
+      headers: { accept: 'application/json', 'x-api-key': apiKey, 'x-organisation-id': organisationId },
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    throw new PremblyVerificationError('PREMBLY_LOOKUP_UNAVAILABLE', { uncertain: true });
+  }
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    const code = response.status === 401
+      ? 'PREMBLY_CREDENTIALS_INVALID'
+      : response.status === 403
+        ? 'PREMBLY_ACCESS_DENIED'
+        : response.status === 429
+          ? 'PREMBLY_RATE_LIMITED'
+          : 'PREMBLY_LOOKUP_UNAVAILABLE';
+    throw new PremblyVerificationError(code, { uncertain: response.status >= 500, providerStatus: response.status });
+  }
+  const exact = sessionRows(result).find((row) => premblySessionReference(row) === internalReference);
+  if (exact) return exact;
+  if (!expectedEmail) return null;
+  return sessionRows(result).find((row) => premblySessionEmail(row).toLowerCase() === expectedEmail) || null;
 }

@@ -1,6 +1,6 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { getPremblyPublicKey, premblySessionId, premblySessionReference, premblyWidgetOutcome } from './_marketplaceVerification.js';
+import { fetchPremblySession, getPremblyPublicKey, premblySessionId, premblySessionReference, premblyWidgetOutcome } from './_marketplaceVerification.js';
 
 export const config = { api: { bodyParser: false } };
 
@@ -19,7 +19,7 @@ const readRawBody = async (req) => {
   return Buffer.concat(chunks);
 };
 
-const signatureMatches = (rawBody, signature) => {
+export const signatureMatches = (rawBody, signature) => {
   const publicKey = getPremblyPublicKey();
   if (!publicKey || !signature) return false;
   const expected = createHmac('sha256', publicKey).update(rawBody).digest('base64');
@@ -31,34 +31,80 @@ const signatureMatches = (rawBody, signature) => {
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'private, no-store');
   if (req.method !== 'POST') return res.status(405).json({ success: false });
+  let receiptHash = '';
   try {
     const rawBody = await readRawBody(req);
-    if (!signatureMatches(rawBody, req.headers?.['x-prembly-signature'])) {
-      return res.status(401).json({ success: false, error: 'Invalid Prembly signature.' });
+    const signature = req.headers?.['x-prembly-signature'];
+    const token = text(req.headers?.token);
+    if (!token || token.length > 512 || !signatureMatches(rawBody, signature)) {
+      return res.status(401).json({ success: false, error: 'Invalid Prembly security headers.' });
     }
     const payload = JSON.parse(rawBody.toString('utf8'));
-    const reference = premblySessionReference(payload);
     const sessionId = premblySessionId(payload);
-    if (!/^MP-PREMBLY-[0-9a-f-]{36}$/i.test(reference)) {
-      return res.status(202).json({ success: true, ignored: true });
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(sessionId)) {
+      return res.status(400).json({ success: false, error: 'Prembly session is missing.' });
     }
-    const status = premblyWidgetOutcome(payload);
-    if (status === 'pending') return res.status(202).json({ success: true, status });
+    const authoritative = await fetchPremblySession(sessionId);
+    const reference = premblySessionReference(authoritative) || premblySessionReference(payload);
+    if (!/^MP-PREMBLY-[0-9a-f-]{36}$/i.test(reference)) {
+      return res.status(200).json({ success: true, ignored: true });
+    }
+    const status = premblyWidgetOutcome(authoritative);
     const supabase = getClient();
-    const { error } = await supabase.from('marketplace_seller_profiles')
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    receiptHash = tokenHash;
+    const receipt = await supabase.from('marketplace_verification_webhooks')
+      .insert({ provider: 'prembly', token_hash: tokenHash, outcome: 'processing' });
+    if (receipt.error?.code === '23505') return res.status(200).json({ success: true, duplicate: true });
+    if (receipt.error) throw receipt.error;
+    const { data: attempt, error: attemptError } = await supabase.from('marketplace_verification_attempts')
+      .select('id,user_id,status').eq('reference', reference).maybeSingle();
+    if (attemptError) throw attemptError;
+    if (!attempt) {
+      await supabase.from('marketplace_verification_webhooks')
+        .update({ processed_at: new Date().toISOString(), outcome: 'ignored' })
+        .eq('provider', 'prembly').eq('token_hash', tokenHash);
+      return res.status(200).json({ success: true, ignored: true });
+    }
+    const now = new Date().toISOString();
+    if (status === 'pending') {
+      await supabase.from('marketplace_verification_attempts')
+        .update({ provider_session_id: sessionId, last_provider_check_at: now, updated_at: now })
+        .eq('id', attempt.id).eq('status', 'pending');
+      await supabase.from('marketplace_verification_webhooks')
+        .update({ processed_at: now, outcome: 'pending' }).eq('provider', 'prembly').eq('token_hash', tokenHash);
+      return res.status(200).json({ success: true, status });
+    }
+    const { data: updatedAttempts, error: updateAttemptError } = await supabase.from('marketplace_verification_attempts')
       .update({
-        verification_status: status,
-        verification_provider: 'prembly_widget',
-        verification_reference: sessionId || reference,
-        updated_at: new Date().toISOString(),
+        status,
+        provider_session_id: sessionId,
+        completed_at: now,
+        failure_code: status === 'rejected' ? 'provider_rejected' : null,
+        last_provider_check_at: now,
+        updated_at: now,
       })
-      .eq('verification_reference', reference)
-      .eq('verification_provider', 'prembly_widget')
-      .eq('verification_status', 'pending');
-    if (error) throw error;
+      .eq('id', attempt.id).eq('status', 'pending').select('id');
+    if (updateAttemptError) throw updateAttemptError;
+    if (updatedAttempts?.length) {
+      const { error: sellerError } = await supabase.from('marketplace_seller_profiles')
+        .update({ verification_status: status, verification_provider: 'prembly_widget', verification_reference: sessionId, updated_at: now })
+        .eq('user_id', attempt.user_id).eq('verification_reference', reference).eq('verification_status', 'pending');
+      if (sellerError) throw sellerError;
+    }
+    await supabase.from('marketplace_verification_webhooks')
+      .update({ processed_at: now, outcome: status }).eq('provider', 'prembly').eq('token_hash', tokenHash);
     return res.status(200).json({ success: true, status });
   } catch (error) {
+    if (receiptHash) {
+      try {
+        await getClient().from('marketplace_verification_webhooks')
+          .delete().eq('provider', 'prembly').eq('token_hash', receiptHash).eq('outcome', 'processing');
+      } catch {
+        // Prembly will retry non-2xx responses; a later operational repair can clear a stuck receipt.
+      }
+    }
     console.error('[prembly-webhook] failed', error?.message || error);
-    return res.status(400).json({ success: false, error: 'Webhook could not be processed.' });
+    return res.status(500).json({ success: false, error: 'Webhook could not be processed.' });
   }
 }
