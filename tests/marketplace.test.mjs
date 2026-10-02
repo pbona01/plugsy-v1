@@ -4,7 +4,7 @@ import handler, { allowedListingPayload, publicListing, trustScoreForSeller } fr
 import { buildMarketplaceEmail } from '../api/_marketplaceEmail.js';
 import { validateMarketplaceFile } from '../api/_marketplaceStorage.js';
 
-const draft = { title: 'Creator templates', summary: 'Useful templates', description: '', category: 'templates', price: 1000, deliveryUrl: 'https://example.com/product', visibility: 'private' };
+const draft = { title: 'Creator templates', summary: 'Useful templates', description: 'A complete set of practical creator templates.', category: 'templates', price: 1000, deliveryUrl: 'https://example.com/product', visibility: 'private' };
 
 test('listing validation rejects invalid money, permissions and delivery protocols', () => {
   for (const price of [-1, 99, Infinity, 'invalid', 10000001]) assert.ok(allowedListingPayload({ ...draft, price }).error);

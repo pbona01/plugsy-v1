@@ -7,6 +7,13 @@ import { validateMarketplaceFile, createUploadUrl, verifyUploadedFile, createDow
 import { scanMarketplaceAsset, checkMarketplaceAssetScan } from './_marketplaceScanner.js';
 import { requireVerifiedClerkUser, requireVerifiedClerkAdmin } from "./_clerkAuth.js";
 import { verifyFlutterwaveReference } from "./_walletFundingWebhook.js";
+import { getSavedPurchaseCode, savePurchaseCode } from './_savedPurchaseCode.js';
+import {
+  MarketplaceReferralError,
+  ensureOpenReferralAgreement,
+  normalizeMarketplaceReferralCode,
+  resolveMarketplaceReferral,
+} from './_marketplaceReferral.js';
 
 const text = (value) => String(value || "").trim();
 const slugify = (value) => text(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 72);
@@ -571,12 +578,23 @@ async function purchase(req, res) {
   const supabase = getClient();
   if (!await hasAcceptedMarketplaceRules(supabase, actor.userId)) return send(res, 403, "MARKETPLACE_RULES_REQUIRED", "Read and acknowledge the Marketplace rules before purchasing.");
   let resellerUserId = null;
-  if (body.resellerCode) {
-    if (!/^[a-f0-9]{32}$/i.test(text(body.resellerCode))) return send(res, 400, 'RESELLER_CODE_INVALID', 'The reseller code is invalid.');
-    const result = await supabase.from('marketplace_resale_requests').select('requester_id').eq('purchase_code', text(body.resellerCode)).eq('listing_id', listingId).eq('status','approved').maybeSingle();
-    if (result.error) throw result.error;
-    if (!result.data || result.data.requester_id === actor.userId) return send(res, 400, 'RESELLER_CODE_INVALID', 'This reseller code cannot be used for your purchase.');
-    resellerUserId = result.data.requester_id;
+  let referral = null;
+  const explicitReferralCode = normalizeMarketplaceReferralCode(body.referralCode || body.resellerCode);
+  const automaticReferralCode = body.referralOptOut === true || explicitReferralCode
+    ? ''
+    : await getSavedPurchaseCode(supabase, actor.userId);
+  const referralCode = explicitReferralCode || automaticReferralCode;
+  if (referralCode) {
+    try {
+      referral = await resolveMarketplaceReferral(supabase, { listingId, buyerUserId: actor.userId, code: referralCode });
+      await ensureOpenReferralAgreement(supabase, referral);
+      resellerUserId = referral.referrerUserId;
+    } catch (referralError) {
+      if (explicitReferralCode && referralError instanceof MarketplaceReferralError) {
+        return send(res, 400, referralError.code, referralError.message);
+      }
+      if (!(referralError instanceof MarketplaceReferralError)) throw referralError;
+    }
   }
   const { data, error } = await supabase.rpc("marketplace_create_wallet_order_v1", {
     p_actor_user_id: actor.userId,
@@ -590,11 +608,72 @@ async function purchase(req, res) {
     const [status, code, message] = purchaseFailure(error || data?.error);
     return send(res, status, code, message);
   }
+  if (referral?.personalCode && explicitReferralCode) {
+    try { await savePurchaseCode(supabase, actor.userId, referral.code); }
+    catch (saveError) { console.error('[marketplace] saved referral preference pending', saveError?.message || saveError); }
+  }
   // A receipt is helpful, but an email-provider delay must never make a paid
   // wallet purchase look unsuccessful or trigger a second charge attempt.
   try { await flushMarketplaceEmails(supabase); }
   catch (emailError) { console.error("[marketplace] receipt email pending", emailError?.message || emailError); }
-  return res.status(200).json({ success: true, purchase: data });
+  return res.status(200).json({ success: true, purchase: data, referral: referral ? {
+    code: referral.code,
+    name: referral.referrerName,
+    commissionPercent: referral.commissionPercent,
+  } : null });
+}
+
+async function marketplaceReferral(req, res, action) {
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const body = readBody(req);
+  const listingId = text(body.listingId);
+  if (!/^[0-9a-f-]{36}$/i.test(listingId)) return send(res, 400, 'REFERRAL_PRODUCT_INVALID', 'Choose a valid product.');
+  const supabase = getClient();
+  try {
+    if (action === 'validate-referral') {
+      const referral = await resolveMarketplaceReferral(supabase, {
+        listingId,
+        buyerUserId: actor.userId,
+        code: body.code,
+      });
+      return res.status(200).json({
+        success: true,
+        referral: {
+          code: referral.code,
+          name: referral.referrerName,
+          commissionPercent: referral.commissionPercent,
+        },
+      });
+    }
+
+    const { data: profile, error } = await supabase.from('profiles')
+      .select('purchase_code')
+      .eq('clerk_id', actor.userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!profile?.purchase_code) return send(res, 409, 'PURCHASE_CODE_UNAVAILABLE', 'Your Plugsy purchase code is still being prepared.');
+    const referral = await resolveMarketplaceReferral(supabase, {
+      listingId,
+      code: profile.purchase_code,
+    });
+    if (referral.referrerUserId !== actor.userId) return send(res, 403, 'REFERRAL_LINK_FORBIDDEN', 'This referral link is not available for your account.');
+    await ensureOpenReferralAgreement(supabase, referral);
+    const path = referral.listing.visibility === 'private'
+      ? `/marketplace/private/${referral.listing.private_access_token}`
+      : `/marketplace/product/${referral.listing.id}`;
+    return res.status(200).json({
+      success: true,
+      referral: {
+        code: referral.code,
+        commissionPercent: referral.commissionPercent,
+        path: `${path}?ref=${encodeURIComponent(referral.code)}`,
+      },
+    });
+  } catch (error) {
+    if (error instanceof MarketplaceReferralError) return send(res, 400, error.code, error.message);
+    throw error;
+  }
 }
 
 async function sendGuestReceipt(supabase, order) {
@@ -1136,12 +1215,13 @@ async function resaleWorkspace(req, res) {
   const actor = await requireActor(req,res); if (!actor) return;
   const supabase=getClient();
   const fields='id,listing_id,requester_id,seller_id,requested_commission_percent,status,purchase_code,seller_note,listing:marketplace_listings(id,title,visibility,private_access_token)';
-  const [outgoing,incoming]=await Promise.all([
+  const [outgoing,incoming,earnings]=await Promise.all([
     supabase.from('marketplace_resale_requests').select(fields).eq('requester_id',actor.userId).order('created_at',{ascending:false}).limit(100),
     supabase.from('marketplace_resale_requests').select(fields).eq('seller_id',actor.userId).order('created_at',{ascending:false}).limit(100),
+    supabase.from('marketplace_orders').select('id,order_reference,listing_id,reseller_amount,funds_status,hold_expires_at,payout_available_at,created_at,listing:marketplace_listings(title)').eq('reseller_user_id',actor.userId).eq('payment_status','paid').order('created_at',{ascending:false}).limit(100),
   ]);
-  if(outgoing.error || incoming.error) throw outgoing.error || incoming.error;
-  return res.status(200).json({success:true,outgoing:outgoing.data,incoming:incoming.data});
+  if(outgoing.error || incoming.error || earnings.error) throw outgoing.error || incoming.error || earnings.error;
+  return res.status(200).json({success:true,outgoing:outgoing.data,incoming:incoming.data,earnings:earnings.data||[]});
 }
 
 async function resaleMutation(req,res,action) {
@@ -1263,6 +1343,7 @@ export default async function handler(req, res) {
     if ((req.method === "GET" || req.method === "POST") && action === "comments") return await listingComments(req, res);
     if (req.method === "GET" && action === "admin-workspace") return await adminWorkspace(req, res);
     if (req.method === "GET" && action === "resale-workspace") return await resaleWorkspace(req,res);
+    if (req.method === "POST" && ['validate-referral','referral-link'].includes(action)) return await marketplaceReferral(req,res,action);
     if (req.method === "POST" && ['request-resale','decide-resale'].includes(action)) return await resaleMutation(req,res,action);
     if (req.method === "POST" && ['prepare-upload','complete-upload'].includes(action)) return await fileMutation(req,res,action);
     if (req.method === "POST" && action === 'add-delivery-link') return await addDeliveryLink(req, res);
