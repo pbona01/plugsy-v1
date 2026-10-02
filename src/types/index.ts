@@ -25,6 +25,7 @@ export interface Profile {
   email: string;
   fullName?: string;
   purchase_code?: string;
+  saved_purchase_code?: string;
   balance?: number;
   total_earned?: number;
   created_at?: string;

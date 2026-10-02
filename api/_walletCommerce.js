@@ -12,6 +12,11 @@ import {
   MEDAL_CAPACITY,
   MEDAL_PLAN_CATEGORIES,
 } from "../shared/medals.js";
+import {
+  PurchaseCodeProfileError,
+  resolvePurchaseCodeForPurchase,
+  savePurchaseCode,
+} from "./_savedPurchaseCode.js";
 
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const USERNAME_PATTERN = /^[a-z0-9_]{3,30}$/;
@@ -445,6 +450,20 @@ export async function handleWalletProductPurchase(req, res) {
   const supabase = getWalletServiceClient(res);
   if (!supabase) return;
 
+  let referral;
+  try {
+    referral = await resolvePurchaseCodeForPurchase(
+      supabase,
+      context.actor.userId,
+      context.body.purchaseCode,
+    );
+  } catch (error) {
+    if (error instanceof PurchaseCodeProfileError) {
+      return send(res, 400, error.code, error.message);
+    }
+    throw error;
+  }
+
   const result = await callRpc(
     supabase,
     res,
@@ -455,10 +474,20 @@ export async function handleWalletProductPurchase(req, res) {
       p_actor_name: context.actor.fullName,
       p_plan_id: planId,
       p_idempotency_key: key,
-      p_purchase_code: text(context.body.purchaseCode) || null,
+      p_purchase_code: referral.code,
     },
   );
   if (!result) return;
+
+  if (referral.shouldSave) {
+    try {
+      await savePurchaseCode(supabase, context.actor.userId, referral.code);
+    } catch (error) {
+      // The paid purchase succeeded. A profile preference write must never
+      // make the checkout look failed or encourage a duplicate purchase.
+      console.error('[purchase-code] post-purchase save failed', error?.message || error);
+    }
+  }
 
   await notifyTelegram(
     `🛒 NEW PURCHASE — PLUGSY\n👤 ${context.actor.fullName || "User"}\n📧 ${context.actor.email}\n📦 ${result.order?.product_name || result.product_type || "Product"}\n💰 ₦${Number(result.amount || 0).toLocaleString()}\n🔑 Ref: ${result.reference}`,
@@ -475,6 +504,7 @@ export async function handleWalletProductPurchase(req, res) {
     medal: result.medal || null,
     deliveryStatus: result.delivery_status,
     pending: result.delivery_status === "pending_login",
+    savedPurchaseCode: referral.code,
   });
 }
 
@@ -680,6 +710,20 @@ export async function handlePortfolioWalletPurchase(req, res) {
   const supabase = getWalletServiceClient(res);
   if (!supabase) return;
 
+  let referral;
+  try {
+    referral = await resolvePurchaseCodeForPurchase(
+      supabase,
+      context.actor.userId,
+      context.body.purchaseCode,
+    );
+  } catch (error) {
+    if (error instanceof PurchaseCodeProfileError) {
+      return send(res, 400, error.code, error.message);
+    }
+    throw error;
+  }
+
   const result = await callRpc(
     supabase,
     res,
@@ -690,10 +734,18 @@ export async function handlePortfolioWalletPurchase(req, res) {
       p_actor_name: context.actor.fullName,
       p_categories: categories,
       p_idempotency_key: key,
-      p_purchase_code: text(context.body.purchaseCode) || null,
+      p_purchase_code: referral.code,
     },
   );
   if (!result) return;
+
+  if (referral.shouldSave) {
+    try {
+      await savePurchaseCode(supabase, context.actor.userId, referral.code);
+    } catch (error) {
+      console.error('[purchase-code] portfolio save failed', error?.message || error);
+    }
+  }
 
   if (!result.entitlement?.id) {
     return send(

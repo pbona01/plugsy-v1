@@ -7,6 +7,7 @@ export interface User {
   username?: string;
   role: Role;
   purchase_code: string;
+  saved_purchase_code?: string;
   referral_balance: number;
   referralCode: string;
   referredBy?: string;

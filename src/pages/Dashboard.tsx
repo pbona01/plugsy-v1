@@ -19,6 +19,7 @@ import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import {
   parseOneLinkProfileBio,
 } from "../../shared/onelink.js";
+import { clearDefaultPurchaseCode, loadSavedPurchaseCode, saveDefaultPurchaseCode } from '../lib/purchaseCodeProfile';
 
 export default function Dashboard() {
   const { userId, getToken } = useAuth();
@@ -81,6 +82,9 @@ export default function Dashboard() {
   });
   const [statsLoading, setStatsLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [savedPurchaseCode, setSavedPurchaseCode] = useState('');
+  const [savedPurchaseCodeOwner, setSavedPurchaseCodeOwner] = useState('');
+  const [savingPurchaseCode, setSavingPurchaseCode] = useState(false);
 
   const currentProfile = localProfile || hookProfile;
   const greetingName = currentProfile?.fullName?.split(' ')[0] || user?.firstName || 'Chief';
@@ -116,6 +120,47 @@ export default function Dashboard() {
     setCopied(true);
     toast.success("Purchase code copied!");
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const fetchSavedPurchaseCode = async () => {
+    if (!userId) return;
+    try {
+      const result = await loadSavedPurchaseCode(getToken);
+      setSavedPurchaseCode(result?.savedCode || '');
+      setSavedPurchaseCodeOwner(result?.ownerName || '');
+    } catch {
+      // Checkout still resolves the preference server-side.
+    }
+  };
+
+  const updateSavedPurchaseCode = async () => {
+    const code = savedPurchaseCode.trim().toUpperCase();
+    if (!code) return;
+    setSavingPurchaseCode(true);
+    try {
+      const result = await saveDefaultPurchaseCode(getToken, code);
+      setSavedPurchaseCode(result.savedCode || code);
+      setSavedPurchaseCodeOwner(result.ownerName || '');
+      toast.success('Purchase code saved for future purchases.');
+    } catch (error: any) {
+      toast.error(error.message || 'Purchase code could not be saved.');
+    } finally {
+      setSavingPurchaseCode(false);
+    }
+  };
+
+  const removeSavedPurchaseCode = async () => {
+    setSavingPurchaseCode(true);
+    try {
+      await clearDefaultPurchaseCode(getToken);
+      setSavedPurchaseCode('');
+      setSavedPurchaseCodeOwner('');
+      toast.success('Saved purchase code removed.');
+    } catch (error: any) {
+      toast.error(error.message || 'Purchase code could not be removed.');
+    } finally {
+      setSavingPurchaseCode(false);
+    }
   };
 
   const fetchDashboardData = async () => {
@@ -188,6 +233,7 @@ export default function Dashboard() {
     if (!userId) return;
     fetchDashboardData();
     fetchReferralStats();
+    void fetchSavedPurchaseCode();
   }, [userId]);
 
   // Quick Action Config
@@ -614,6 +660,26 @@ export default function Dashboard() {
                         <span className="text-green-600 dark:text-green-400 font-bold">Unwithdrawn Balance:</span>
                         <span className="font-bold text-slate-900 dark:text-white">₦{Number(profileStats.balance || 0).toLocaleString()}</span>
                       </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-left dark:border-white/5 dark:bg-[#242424]">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-[#3b82f6]">Your saved purchase code</p>
+                      <h4 className="mt-1 text-lg font-bold text-slate-900 dark:text-white">Keep supporting the person who referred you</h4>
+                      <p className="mt-2 text-xs leading-relaxed text-slate-500 dark:text-[#a1a1a1]">This code is automatically applied to eligible future Plugsy purchases. You can replace or remove it at any time.</p>
+                      <div className="mt-4 flex gap-2">
+                        <input
+                          value={savedPurchaseCode}
+                          onChange={(event) => {
+                            setSavedPurchaseCode(event.target.value.toUpperCase());
+                            setSavedPurchaseCodeOwner('');
+                          }}
+                          placeholder="ENTER PURCHASE CODE"
+                          maxLength={64}
+                          className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-3 font-mono text-sm font-bold uppercase tracking-wider text-slate-900 outline-none focus:border-[#3b82f6] dark:border-white/10 dark:bg-black/25 dark:text-white"
+                        />
+                        <button disabled={savingPurchaseCode || !savedPurchaseCode.trim()} onClick={() => void updateSavedPurchaseCode()} className="rounded-xl bg-[#3b82f6] px-4 text-xs font-black text-white disabled:opacity-50">{savingPurchaseCode ? 'Saving…' : 'Save'}</button>
+                      </div>
+                      {savedPurchaseCodeOwner && <p className="mt-2 text-xs font-bold text-emerald-500">Applied for {savedPurchaseCodeOwner}</p>}
+                      {savedPurchaseCode && <button disabled={savingPurchaseCode} onClick={() => void removeSavedPurchaseCode()} className="mt-3 text-[10px] font-black uppercase tracking-wider text-red-500">Remove saved code</button>}
                     </div>
                   </motion.div>
                 )}

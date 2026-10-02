@@ -20,6 +20,7 @@ import { SEO } from "../components/seo/SEO";
 import { showToast } from "../components/Toast";
 import PreviewModal from "../components/verification/PreviewModal";
 import { getStableIdempotencyKey, clearStableIdempotencyKey } from "../utils/idempotency";
+import { loadSavedPurchaseCode, validatePurchaseCode as validatePurchaseCodeRequest } from "../lib/purchaseCodeProfile";
 
 export interface PairedCategory {
   id: string;
@@ -155,6 +156,7 @@ export function CreatePortfolio() {
   const [profile, setProfile] = useState<any>(null);
   const [useWallet, setUseWallet] = useState(true);
   const [activeMedal, setActiveMedal] = useState<any>(null);
+  const [savedCodeLoaded, setSavedCodeLoaded] = useState(false);
 
   useEffect(() => {
     if (user?.id) {
@@ -171,6 +173,16 @@ export function CreatePortfolio() {
          .catch(err => console.warn("Medal fetch error:", err));
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || savedCodeLoaded) return;
+    setSavedCodeLoaded(true);
+    loadSavedPurchaseCode(getToken)
+      .then((result) => {
+        if (result?.savedCode) setPurchaseCode(result.savedCode);
+      })
+      .catch(() => undefined);
+  }, [getToken, savedCodeLoaded, user?.id]);
 
   useEffect(() => {
     if (isLoaded) {
@@ -196,27 +208,14 @@ export function CreatePortfolio() {
     setIsValidatingCode(true);
 
     try {
-      const { data, error } = await supabase.rpc("get_code_owner", {
-        lookup_code: code.trim().toUpperCase()
-      });
-      const result = Array.isArray(data) ? data[0] : data;
-      
-      if (error || !result?.valid) {
+      const result = await validatePurchaseCodeRequest(getToken, code);
+      if (!result?.valid) {
         setCodeError("Invalid code");
-      } else if (result.owner_id === user?.id) {
+      } else if (result.ownerId === user?.id) {
         setCodeError("Cannot use your own code");
       } else {
-        // Resolve owner's clerk_id to prevent UUID mismatch in referral reward
-        const { data: profileQuery } = await supabase
-          .from("profiles")
-          .select("clerk_id")
-          .eq("id", result.owner_id)
-          .maybeSingle();
-
-        const finalOwnerClerkId = profileQuery?.clerk_id || result.owner_clerk_id || result.owner_id;
-        setPurchaseCodeOwnerId(finalOwnerClerkId);
-        const ownerName = result.owner_name || result.owner_email || result.full_name;
-        setPurchaseCodeOwnerName(ownerName);
+        setPurchaseCodeOwnerId(result.ownerId);
+        setPurchaseCodeOwnerName(result.ownerName);
       }
     } catch (e: any) {
       console.error(e);
@@ -637,7 +636,7 @@ export function CreatePortfolio() {
                   <div className="mb-8 space-y-4">
                     <div className="rounded-2xl p-4 mt-4 border" style={{ backgroundColor: "var(--brand-surface)", borderColor: "var(--brand-border)" }}>
                       <label className="text-[10px] font-bold tracking-widest block mb-2 uppercase" style={{ color: "var(--brand-text-secondary)", opacity: 0.8 }}>
-                        REFERRAL CODE (OPTIONAL)
+                        SAVED PURCHASE CODE (OPTIONAL)
                       </label>
                       
                       <div className="flex gap-2">
@@ -670,7 +669,7 @@ export function CreatePortfolio() {
                       {(codeError || purchaseCodeOwnerName) && (
                         <div className={`mt-2 text-xs font-medium ${!codeError ? "text-emerald-500" : "text-rose-500"}`}>
                           {!codeError 
-                            ? "✓ Code applied — " + purchaseCodeOwnerName
+                            ? "✓ Code applied — " + purchaseCodeOwnerName + ". It will stay on your profile."
                             : "✗ " + codeError}
                         </div>
                       )}

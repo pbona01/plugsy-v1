@@ -15,6 +15,7 @@ import { supabase } from "../lib/supabase";
 import { toast } from "react-hot-toast";
 import { LiquidGlass } from "../components/ui/LiquidGlass";
 import { getStableIdempotencyKey, clearStableIdempotencyKey } from "../utils/idempotency";
+import { loadSavedPurchaseCode } from "../lib/purchaseCodeProfile";
 
 export default function CheckoutConfirm() {
   const [searchParams] = useSearchParams();
@@ -37,6 +38,7 @@ export default function CheckoutConfirm() {
   const [profile, setProfile] = useState<any>(null);
   const [useWallet, setUseWallet] = useState(true);
   const [activeMedal, setActiveMedal] = useState<any>(null);
+  const [savedCodeLoaded, setSavedCodeLoaded] = useState(false);
 
   useEffect(() => {
     if (userId) {
@@ -50,6 +52,16 @@ export default function CheckoutConfirm() {
         .catch((err) => console.error("Error fetching medal status:", err));
     }
   }, [userId]);
+
+  useEffect(() => {
+    if (!userId || savedCodeLoaded) return;
+    setSavedCodeLoaded(true);
+    loadSavedPurchaseCode(getToken)
+      .then((result) => {
+        if (result?.savedCode) setPurchaseCode(result.savedCode);
+      })
+      .catch(() => undefined);
+  }, [getToken, savedCodeLoaded, userId]);
 
   useEffect(() => {
     if (userId) {
@@ -353,7 +365,7 @@ export default function CheckoutConfirm() {
 
               <div className="space-y-4 pt-4 border-t border-brand-border">
                 <label className="block text-[10px] font-mono uppercase tracking-[0.2em] text-brand-text-secondary">
-                  Affiliate Code (Optional)
+                  Saved Purchase Code (Optional)
                 </label>
                 <div className="relative">
                   <input
@@ -384,7 +396,7 @@ export default function CheckoutConfirm() {
                   >
                     {scanResult.status === "valid" ? (
                       <span className="text-brand-accent">
-                        Purchase code applied: {scanResult.ownerName}
+                        Purchase code applied: {scanResult.ownerName}. It will stay on your profile for future purchases.
                       </span>
                     ) : scanResult.status === "self" ? (
                       <span className="text-red-500 underline decoration-dotted">
