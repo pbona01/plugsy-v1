@@ -37,6 +37,8 @@ export default function MarketplaceProductPage() {
   const [referralError, setReferralError] = useState("");
   const [referralBusy, setReferralBusy] = useState(false);
   const [referralOptOut, setReferralOptOut] = useState(false);
+  const [approvalOpen, setApprovalOpen] = useState(false);
+  const [requestedCommission, setRequestedCommission] = useState("15");
   const referralInitialized = useRef<string | null>(null);
 
   const loadProduct = useCallback(async () => {
@@ -162,17 +164,36 @@ export default function MarketplaceProductPage() {
 
   const shareReferralLink = async () => {
     if (!product || !userId) { navigate(`/login?redirect=${encodeURIComponent(window.location.pathname)}`); return; }
-    if (product.resalePolicy === "approval_required") { navigate("/marketplace?mode=earn"); return; }
     setReferralBusy(true);
     try {
       const token = await getToken();
       const response = await fetch("/api/marketplace?action=referral-link", { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: token ? `Bearer ${token}` : "" }, body: JSON.stringify({ listingId: product.id }) });
       const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.success) throw new Error(payload?.error || "Your referral link is not available yet.");
+      if (!response.ok || !payload?.success) {
+        if (product.resalePolicy === "approval_required" && payload?.code === "REFERRER_NOT_APPROVED") { setApprovalOpen(true); return; }
+        throw new Error(payload?.error || "Your referral link is not available yet.");
+      }
       const url = new URL(payload.referral.path, window.location.origin).toString();
       if (navigator.share) await navigator.share({ title: product.title, text: `Buy ${product.title} on Plugsy`, url });
       else { await navigator.clipboard.writeText(url); toast.success("Your tracked referral link was copied."); }
     } catch (error: any) { if (error?.name !== "AbortError") toast.error(error.message || "Your referral link is not available yet."); }
+    finally { setReferralBusy(false); }
+  };
+
+  const requestReferralApproval = async () => {
+    if (!product || !userId) return;
+    const percent = Number(requestedCommission);
+    if (!Number.isFinite(percent) || percent < 1 || percent > 80) { toast.error("Choose a commission between 1% and 80%."); return; }
+    setReferralBusy(true);
+    try {
+      const token = await getToken();
+      const response = await fetch("/api/marketplace?action=request-resale", { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: token ? `Bearer ${token}` : "" }, body: JSON.stringify({ listingId: product.id, percent, privateAccessToken: product.privateAccessToken || null }) });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) throw new Error(payload?.error || "Your approval request could not be sent.");
+      if (["rejected", "revoked"].includes(payload?.result?.status)) throw new Error("This creator has not approved your referral access for this product.");
+      setApprovalOpen(false);
+      toast.success(payload?.result?.status === "pending" ? "Approval request sent. Track it from Sell → Affiliate." : "Your referral access is ready in Sell → Affiliate.");
+    } catch (error: any) { toast.error(error.message || "Your approval request could not be sent."); }
     finally { setReferralBusy(false); }
   };
 
@@ -221,6 +242,7 @@ export default function MarketplaceProductPage() {
       </div>
       <section className="mt-7 max-w-3xl rounded-[2rem] border border-brand-border bg-brand-surface p-6 sm:p-8"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-accent/10 text-brand-accent"><MessageCircle size={18} /></span><div><h2 className="font-black">Product conversation</h2><p className="text-xs text-brand-text-secondary">Ask useful questions and share honest feedback.</p></div></div><form onSubmit={postComment} className="mt-5 flex gap-2"><input value={commentText} onChange={(event) => setCommentText(event.target.value)} maxLength={800} placeholder="Write a comment…" className="h-11 min-w-0 flex-1 rounded-xl border border-brand-border bg-brand-bg px-4 text-sm outline-none focus:border-brand-accent"/><button disabled={!commentText.trim() || commentBusy} className="btn-primary h-11 px-4 text-xs font-black disabled:opacity-50">{commentBusy ? <Loader2 className="animate-spin" size={15} /> : "Post"}</button></form><div className="mt-5 space-y-4">{comments.length ? comments.map((comment) => <article key={comment.id} className="flex gap-3 border-t border-brand-border pt-4"><span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-brand-accent/10 text-xs font-black text-brand-accent">{comment.author.avatar ? <img src={comment.author.avatar} alt="" className="h-full w-full object-cover"/> : (comment.author.name || "P").slice(0, 1)}</span><div className="min-w-0"><p className="text-xs font-black">{comment.author.name} <span className="font-medium text-brand-text-secondary">· {new Date(comment.createdAt).toLocaleDateString()}</span></p><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-brand-text-secondary">{comment.body}</p></div></article>) : <p className="py-4 text-sm text-brand-text-secondary">No comments yet. Be the first to ask a helpful question.</p>}</div></section>
     </div>
+    {approvalOpen && <div className="fixed inset-0 z-[10003] flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-6"><section role="dialog" aria-modal="true" aria-labelledby="affiliate-request-title" className="w-full max-w-md rounded-t-[2rem] border border-brand-border bg-brand-bg p-6 shadow-2xl sm:rounded-[2rem]"><button onClick={()=>setApprovalOpen(false)} className="ml-auto grid h-9 w-9 place-items-center rounded-xl border border-brand-border"><X size={15}/></button><span className="mt-3 grid h-11 w-11 place-items-center rounded-2xl bg-brand-accent/10 text-brand-accent"><BadgePercent size={20}/></span><h2 id="affiliate-request-title" className="mt-5 text-2xl font-black">Request to promote this product</h2><p className="mt-2 text-sm leading-6 text-brand-text-secondary">Suggest the commission you would earn from the seller’s proceeds. The creator must approve it before your tracked link becomes active.</p><label className="mt-5 block"><span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-brand-text-secondary">Requested commission</span><div className="relative"><input value={requestedCommission} onChange={(event)=>setRequestedCommission(event.target.value)} type="number" min="1" max="80" step="0.01" className="h-12 w-full rounded-xl border border-brand-border bg-brand-surface px-4 pr-10 text-sm font-bold outline-none focus:border-brand-accent"/><span className="absolute right-4 top-3.5 text-sm font-black text-brand-text-secondary">%</span></div></label><button disabled={referralBusy} onClick={()=>void requestReferralApproval()} className="btn-primary mt-5 flex h-12 w-full items-center justify-center gap-2 text-xs font-black uppercase tracking-wider disabled:opacity-50">{referralBusy?<Loader2 className="animate-spin" size={16}/>:"Send approval request"}</button><p className="mt-3 text-center text-[10px] leading-5 text-brand-text-secondary">Track requests and earnings from Sell → Affiliate.</p></section></div>}
     {guestChoiceOpen && <GuestChoice product={product} onClose={() => setGuestChoiceOpen(false)} onSignIn={() => navigate(`/login?redirect=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`)} />}
   </main>;
 }
