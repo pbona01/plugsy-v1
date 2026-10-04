@@ -123,13 +123,14 @@ export default function Chat() {
   const userName = user?.fullName || "Customer";
   const [searchParams] = useSearchParams();
   const orderId = searchParams.get("orderId") || searchParams.get("order_id");
+  const marketplaceOrderReference = searchParams.get("marketplace_order");
   const navigate = useNavigate();
   const location = useLocation();
 
   const [chat, setChat] = useState<ChatType | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [order, setOrder] = useState<any>(null);
-  const [inputText, setInputText] = useState("");
+  const [inputText, setInputText] = useState(() => marketplaceOrderReference ? `I need help with Marketplace order ${marketplaceOrderReference}. ` : "");
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
