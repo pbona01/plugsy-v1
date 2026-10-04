@@ -1211,6 +1211,53 @@ async function adminWorkspace(req, res) {
   }});
 }
 
+async function adminDisputeDetails(req, res) {
+  const supabase = getClient();
+  const actor = await requireVerifiedClerkAdmin(req, res, supabase);
+  if (!actor) return;
+  const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || 'localhost'}`);
+  const disputeId = text(req.query?.disputeId || url.searchParams.get('disputeId'));
+  if (!/^[0-9a-f-]{36}$/i.test(disputeId)) return send(res, 400, 'DISPUTE_ID_INVALID', 'Choose a valid buyer report.');
+  const { data: dispute, error: disputeError } = await supabase.from('marketplace_disputes')
+    .select('id,order_id,buyer_id,seller_id,reason_code,description,evidence,status,resolution_note,resolved_by,resolved_at,created_at,updated_at')
+    .eq('id', disputeId).maybeSingle();
+  if (disputeError) throw disputeError;
+  if (!dispute) return send(res, 404, 'DISPUTE_NOT_FOUND', 'That buyer report was not found.');
+  const { data: order, error: orderError } = await supabase.from('marketplace_orders')
+    .select('id,order_reference,buyer_id,seller_id,listing_id,reseller_user_id,listing_snapshot,amount,platform_fee,seller_amount,reseller_amount,currency,payment_status,funds_status,hold_expires_at,payout_available_at,created_at,updated_at')
+    .eq('id', dispute.order_id).maybeSingle();
+  if (orderError) throw orderError;
+  if (!order) return send(res, 404, 'DISPUTE_ORDER_NOT_FOUND', 'The order linked to this report was not found.');
+  const [profilesResult, listingResult, entitlementResult, sellerResult] = await Promise.all([
+    supabase.from('profiles').select('clerk_id,full_name,username,email,profile_pic_url,image_url').in('clerk_id', [dispute.buyer_id, dispute.seller_id]),
+    supabase.from('marketplace_listings').select('id,seller_id,title,slug,summary,description,category,price,currency,cover_image_url,delivery_label,visibility,status,delivery_url,delivery_asset_id,created_at,updated_at').eq('id', order.listing_id).maybeSingle(),
+    supabase.from('marketplace_entitlements').select('access_status,granted_at').eq('order_id', order.id).maybeSingle(),
+    supabase.from('marketplace_seller_profiles').select('verification_status,total_sales_count,completed_orders_count,upheld_disputes_count').eq('user_id', dispute.seller_id).maybeSingle(),
+  ]);
+  const failed = [profilesResult, listingResult, entitlementResult, sellerResult].find((result) => result.error);
+  if (failed) throw failed.error;
+  const profiles = new Map((profilesResult.data || []).map((profile) => [profile.clerk_id, profile]));
+  const profile = (userId) => {
+    const row = profiles.get(userId) || {};
+    return { id: userId, name: row.full_name || row.username || 'Plugsy user', username: row.username || null, email: row.email || null, avatar: row.profile_pic_url || row.image_url || null };
+  };
+  const deliveries = await resolveDeliveryItems(supabase, order.listing_id, order.listing_snapshot);
+  const { error: auditError } = await supabase.from('marketplace_audit_events').insert({ actor_id: actor.userId, action: 'dispute_review_opened', entity_id: dispute.id, details: { order_id: order.id, listing_id: order.listing_id } });
+  if (auditError) throw auditError;
+  return res.status(200).json({
+    success: true,
+    dispute,
+    order: { ...order, listing_snapshot: undefined },
+    purchasedProduct: order.listing_snapshot || {},
+    currentProduct: listingResult.data || null,
+    entitlement: entitlementResult.data || null,
+    sellerRecord: sellerResult.data || null,
+    buyer: profile(dispute.buyer_id),
+    seller: profile(dispute.seller_id),
+    deliveries,
+  });
+}
+
 async function resaleWorkspace(req, res) {
   const actor = await requireActor(req,res); if (!actor) return;
   const supabase=getClient();
@@ -1342,6 +1389,7 @@ export default async function handler(req, res) {
     if (req.method === "GET" && action === "following") return await followingFeed(req, res);
     if ((req.method === "GET" || req.method === "POST") && action === "comments") return await listingComments(req, res);
     if (req.method === "GET" && action === "admin-workspace") return await adminWorkspace(req, res);
+    if (req.method === "GET" && action === "admin-dispute-details") return await adminDisputeDetails(req, res);
     if (req.method === "GET" && action === "resale-workspace") return await resaleWorkspace(req,res);
     if (req.method === "POST" && ['validate-referral','referral-link'].includes(action)) return await marketplaceReferral(req,res,action);
     if (req.method === "POST" && ['request-resale','decide-resale'].includes(action)) return await resaleMutation(req,res,action);
