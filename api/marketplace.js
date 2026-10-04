@@ -543,7 +543,7 @@ async function publishListing(req, res) {
     if (asset?.status === 'rejected') return send(res,422,'FILE_REJECTED','This product file did not pass the Marketplace security scan. Upload a different file.');
     if(asset?.status!=='clean') {
       const automaticScan = text(asset?.scan_reference).startsWith('virustotal_private:');
-      return send(res,409,'FILE_REVIEW_REQUIRED',automaticScan ? 'The automatic security scan is still finishing. Wait a moment, then publish again.' : 'Your uploaded file is awaiting Marketplace security review. Open Admin > Marketplace > File review, approve the file, then publish this product.');
+      return send(res,409,'FILE_REVIEW_REQUIRED',automaticScan ? 'Plugsy is still scanning this file. Wait a moment, then activate the link again.' : 'Your uploaded file is awaiting Plugsy security review. You can activate its private link as soon as the review is complete.');
     }
   }
   if (nextStatus === 'published' && deliveryItems.some((item) => item.kind === 'file' && item.asset_id && item.asset_id !== listing.delivery_asset_id)) {
@@ -552,7 +552,7 @@ async function publishListing(req, res) {
     if (assetsError) throw assetsError;
     const rejected = (assets || []).find((asset) => asset.status === 'rejected');
     if (rejected) return send(res, 422, 'FILE_REJECTED', 'One of the product files did not pass the Marketplace security scan. Remove it or upload a different file.');
-    if ((assets || []).some((asset) => asset.status !== 'clean')) return send(res, 409, 'FILE_REVIEW_REQUIRED', 'All uploaded product files must pass security review before publishing.');
+    if ((assets || []).some((asset) => asset.status !== 'clean')) return send(res, 409, 'FILE_REVIEW_REQUIRED', 'All uploaded product files must pass Plugsy security review before any sales link can be activated.');
   }
   if (nextStatus === 'published' && listing.visibility === 'public') {
     const { data: seller, error } = await supabase.from("marketplace_seller_profiles").select("public_selling_enabled,verification_status,public_plan_expires_at").eq("user_id", actor.userId).maybeSingle();

@@ -261,7 +261,7 @@ export default function Navbar({ showTopBar = true, showBottomBar = true }: Navb
     </div>}
 
     {/* Immersive Mobile Bottom Navigation */}
-    {showBottomBar && <div className="md:hidden fixed bottom-[max(1rem,env(safe-area-inset-bottom))] inset-x-0 z-40 px-4 pointer-events-none flex justify-center">
+    {showBottomBar && <div className="mobile-global-nav md:hidden fixed bottom-[max(1rem,env(safe-area-inset-bottom))] inset-x-0 z-40 px-4 pointer-events-none flex justify-center">
       <GlassBottomNav
         className="nav-bottom-match pointer-events-auto flex-1 max-w-[360px] grid items-center px-3 py-3 rounded-full overflow-hidden"
         style={{ gridTemplateColumns: `repeat(${mobileLinks.length}, minmax(0, 1fr))` }}

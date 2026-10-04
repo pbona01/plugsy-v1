@@ -8,7 +8,7 @@ const teamMembers = [
     name: 'Peter Akamu (Pedrro)',
     role: 'Founder',
     bio: 'The thinker behind the Plugsy blueprint. Pedrro is driven by a mission to solve real-world problems through innovation and creativity. He oversees branding, growth strategy, and the platform’s core mission of connecting value with accessibility.',
-    image: 'https://i.postimg.cc/5tdKSQTM/IMG-20260511-WA0092.jpg', 
+    image: '/team/peter-akamu-founder.jpeg',
     twitter: 'https://x.com/pedrrovx?s=21',
   },
   {

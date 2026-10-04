@@ -430,7 +430,7 @@ export default function Dashboard() {
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: "spring", bounce: 0.15, duration: 0.45 }}
-              className="fixed bottom-0 inset-x-0 bg-white dark:bg-[#161616] border-t border-slate-200 dark:border-white/10 rounded-t-[32px] z-50 px-4 pb-safe pointer-events-auto max-h-[85vh] overflow-y-auto flex flex-col shadow-2xl"
+              className="fixed bottom-0 inset-x-0 bg-white dark:bg-[#161616] border-t border-slate-200 dark:border-white/10 rounded-t-[32px] z-[10000] px-4 pointer-events-auto max-h-[min(90dvh,52rem)] overflow-hidden flex flex-col shadow-2xl"
             >
               <div className="w-12 h-1 bg-slate-300 dark:bg-white/20 rounded-full mx-auto mt-3.5 mb-5 shrink-0" />
               
@@ -471,7 +471,7 @@ export default function Dashboard() {
               </div>
 
               {/* Tab Contents */}
-              <div className="flex-grow overflow-y-auto pb-10">
+              <div className="min-h-0 flex-grow overflow-y-auto overscroll-contain pb-[max(2rem,env(safe-area-inset-bottom))]">
                 {activeTab === 'profile' && (
                   <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 text-left">
                     <div className="bg-slate-50 dark:bg-[#242424] p-5 rounded-2xl border border-slate-200 dark:border-white/5 space-y-4">

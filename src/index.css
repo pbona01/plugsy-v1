@@ -373,3 +373,6 @@
 ::-webkit-scrollbar-thumb:hover {
   background: var(--brand-text-secondary);
 }
+body.dashboard-modal-open .mobile-global-nav {
+  display: none !important;
+}
