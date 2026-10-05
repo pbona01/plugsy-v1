@@ -3293,7 +3293,7 @@ export default function PersonalChat() {
               initial={{ opacity: 0, scale: 0.8, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.8, y: 15 }}
-              onClick={scrollToBottom}
+              onClick={() => scrollToBottom()}
               className="absolute bottom-24 right-6 z-40 w-11 h-11 rounded-full bg-gradient-to-tr from-[#3B82F6] to-[#06B6D4] text-white flex items-center justify-center shadow-lg shadow-blue-500/30 border border-white/10 hover:scale-110 active:scale-95 transition-all cursor-pointer"
             >
               <ChevronLeft size={18} className="-rotate-90" />

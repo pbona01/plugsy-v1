@@ -201,32 +201,12 @@ function ThemedClerkProvider({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // If there's a custom domain DNS failure, users can provide a fallback via environment
-  let fallbackApi = (import.meta.env.VITE_CLERK_FRONTEND_API || 
-                            (typeof process !== 'undefined' ? process.env?.VITE_CLERK_FRONTEND_API : undefined))?.trim();
-
-  // Force fallback to .accounts.dev URL directly by decoding the Publishable Key
-  // This bypasses the custom domain entirely for DNS propagation issues
-  if (!fallbackApi && PUBLISHABLE_KEY) {
-    try {
-      const parts = PUBLISHABLE_KEY.split('_');
-      if (parts.length >= 3) {
-        const decoded = atob(parts[2]);
-        if (decoded && decoded.endsWith('$')) {
-          fallbackApi = decoded.slice(0, -1);
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to decode Clerk publishable key for fallback API");
-    }
-  }
-
   return (
     <ClerkProvider 
       publishableKey={PUBLISHABLE_KEY} 
-      frontendApi={fallbackApi}
       afterSignOutUrl="/"
-      fallbackRedirectUrl="/dashboard"
+      signInFallbackRedirectUrl="/dashboard"
+      signUpFallbackRedirectUrl="/dashboard"
       appearance={{
         baseTheme: theme === 'dark' ? dark : undefined,
       }}

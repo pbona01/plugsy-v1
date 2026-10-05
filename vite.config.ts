@@ -12,58 +12,39 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: "autoUpdate",
-        includeAssets: [],
+        includeAssets: ["logo.svg"],
         manifest: {
-          id: "/dashboard",
+          id: "/",
           name: "Plugsy",
           short_name: "Plugsy",
-          description: "CapCut subscriptions and creative portfolios",
-          theme_color: "#EF4444",
-          background_color: "#0a0a0a",
+          description: "Create, sell, discover and manage digital products, portfolios and payments with Plugsy.",
+          theme_color: "#0066ff",
+          background_color: "#05070d",
           display: "standalone",
           scope: "/",
           start_url: "/dashboard",
-          orientation: "portrait",
+          orientation: "any",
+          categories: ["business", "social", "shopping", "productivity"],
           gcm_sender_id: "482941778795",
           gcm_user_visible_only: true,
           icons: [
             {
-              src: "https://res.cloudinary.com/doit6oaze/image/upload/v1783666216/icon-192_gxuh39.png",
-              sizes: "192x192",
-              type: "image/png",
+              src: "/logo.svg",
+              sizes: "512x512",
+              type: "image/svg+xml",
               purpose: "any"
             },
             {
-              src: "https://res.cloudinary.com/doit6oaze/image/upload/v1783666215/icon-512_coggae.png",
+              src: "/logo.svg",
               sizes: "512x512",
-              type: "image/png",
-              purpose: "any"
-            },
-            {
-              src: "https://res.cloudinary.com/doit6oaze/image/upload/v1783666215/icon-maskable-192_y3jp3u.png",
-              sizes: "192x192",
-              type: "image/png",
-              purpose: "maskable"
-            },
-            {
-              src: "https://res.cloudinary.com/doit6oaze/image/upload/v1783666215/icon-maskable-512_gi4py6.png",
-              sizes: "512x512",
-              type: "image/png",
+              type: "image/svg+xml",
               purpose: "maskable"
             }
           ],
-          screenshots: [
-            {
-              src: "https://res.cloudinary.com/doit6oaze/image/upload/v1783667065/screenshot-wide_kzfnzn.png",
-              sizes: "1366x661",
-              type: "image/png",
-              form_factor: "wide"
-            },
-            {
-              src: "https://res.cloudinary.com/doit6oaze/image/upload/v1783667065/screenshot-mobile_b5kwlr.png",
-              sizes: "540x1184",
-              type: "image/png"
-            }
+          shortcuts: [
+            { name: "Marketplace", short_name: "Market", url: "/marketplace", icons: [{ src: "/logo.svg", sizes: "512x512", type: "image/svg+xml" }] },
+            { name: "Wallet", short_name: "Wallet", url: "/wallet", icons: [{ src: "/logo.svg", sizes: "512x512", type: "image/svg+xml" }] },
+            { name: "Messages", short_name: "Chats", url: "/chats", icons: [{ src: "/logo.svg", sizes: "512x512", type: "image/svg+xml" }] }
           ]
         } as any,
         workbox: {
@@ -71,11 +52,22 @@ export default defineConfig(({mode}) => {
             "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js",
             "/onesignal-badge-sw.js"
           ],
-          globPatterns: ["**/*.{js,css,html,ico,png,svg}"],
+          globPatterns: ["**/*.{html,ico,png,svg}", "assets/index-*.css"],
+          globIgnores: [
+            "icon-192.png",
+            "icon-512.png",
+            "icon-maskable-192.png",
+            "icon-maskable-512.png",
+          ],
           maximumFileSizeToCacheInBytes: 4000000,
           navigateFallback: "/index.html",
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
+            {
+              urlPattern: ({ request, url }) => url.origin === self.location.origin && ["script", "style", "worker"].includes(request.destination),
+              handler: "StaleWhileRevalidate",
+              options: { cacheName: "plugsy-app-assets", expiration: { maxEntries: 80, maxAgeSeconds: 60 * 60 * 24 * 30 } }
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: "CacheFirst",
@@ -104,6 +96,24 @@ export default defineConfig(({mode}) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
+      },
+    },
+    build: {
+      target: "es2022",
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return undefined;
+            if (id.includes("@clerk")) return "vendor-clerk";
+            if (id.includes("@supabase")) return "vendor-supabase";
+            if (id.includes("framer-motion") || id.includes("motion-dom") || id.includes("motion-utils")) return "vendor-motion";
+            if (id.includes("recharts") || id.includes("d3-")) return "vendor-charts";
+            if (id.includes("three") || id.includes("@react-three")) return "vendor-three";
+            if (id.includes("lucide-react")) return "vendor-icons";
+            if (/node_modules[\\/](?:react|react-dom|scheduler)[\\/]/.test(id)) return "vendor-react";
+            return undefined;
+          },
+        },
       },
     },
     server: {

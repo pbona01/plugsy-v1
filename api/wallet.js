@@ -15,6 +15,7 @@ import {
   handleWithdrawal,
   processWithdrawalWebhook,
 } from "./_walletCommerce.js"
+import { rejectDisallowedOrigin } from "./_httpSecurity.js"
 import {
   initializeWalletFunding,
   parseJsonRequestBody,
@@ -129,12 +130,10 @@ const parseSignedEvent = async (req, res, label) => {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*")
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS, GET")
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, Idempotency-Key, flutterwave-signature, verif-hash",
-  )
+  if (rejectDisallowedOrigin(req, res, {
+    methods: "POST, OPTIONS, GET",
+    headers: "Authorization, Content-Type, Idempotency-Key, flutterwave-signature, verif-hash",
+  })) return
 
   if (req.method === "OPTIONS") {
     return res.status(200).end()

@@ -4,10 +4,11 @@ import { readFile } from "node:fs/promises";
 
 const source = async (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("privileged category mutations require verified Clerk admin access", async () => {
+test("category mutations require a verified owner or an administrator", async () => {
   const file = await source("api-handlers/categories.js");
-  assert.match(file, /requireVerifiedClerkAdmin/);
-  assert.match(file, /await requireAdmin\(req, res, supabase\)/);
+  assert.match(file, /requireVerifiedClerkUser/);
+  assert.match(file, /portfolio\?\.user_id !== actor\.userId/);
+  assert.match(file, /if \(!isAdmin\)/);
   assert.doesNotMatch(file, /Access-Control-Allow-Origin/);
 });
 

@@ -78,7 +78,7 @@ export function MediaContentRenderer({ item, autoplay = true }: Props) {
         {item.title}
       </h3>
       {projectLink && (
-         <a filter="noopener noreferrer" target="_blank" href={toExternalUrl(projectLink)} className="mt-6 px-6 py-3 rounded-full bg-white text-black font-bold text-sm tracking-wide">
+         <a rel="noopener noreferrer" target="_blank" href={toExternalUrl(projectLink)} className="mt-6 px-6 py-3 rounded-full bg-white text-black font-bold text-sm tracking-wide">
            View Live Project
          </a>
       )}

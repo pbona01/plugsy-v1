@@ -145,6 +145,7 @@ test("browser users contain only allowlisted fields", () => {
     "imageUrl",
     "created_at",
     "last_login_at",
+    "location",
     "role",
   ]);
   assert.ok(Object.keys(user).every((field) => allowlist.has(field)));
@@ -340,10 +341,10 @@ test("an older response cannot replace a newer response", () => {
   assert.equal(gate.isCurrent(newRequest.id), true);
 });
 
-test("the users tab no longer polls Clerk every 30 seconds", async () => {
+test("the users tab loads on entry without an aggressive polling loop", async () => {
   const admin = await readFile(rootFile("src/pages/Admin.tsx"), "utf8");
   const effect = admin.slice(
-    admin.indexOf('if (activeTab !== "users"'),
+    admin.indexOf('if (!((activeTab === "users"'),
     admin.indexOf("// Financial Dashboard States"),
   );
   assert.doesNotMatch(effect, /30_000|setInterval|window\.addEventListener\("focus"/);

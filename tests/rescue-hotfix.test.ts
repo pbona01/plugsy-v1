@@ -111,9 +111,9 @@ test("support fetches, realtime, and send failures retain the rescue contracts",
   const fetchBlock = chatPage.slice(fetchStart, fetchEnd);
   const chatService = readSource("../src/services/chatService.ts");
 
-  assert.match(fetchBlock, /\.eq\("chat_id", chat\.id\)/);
-  assert.doesNotMatch(fetchBlock, /user_email|user_id/);
-  assert.match(chatPage, /filter: "chat_id=eq\." \+ chatId/);
+  assert.match(fetchBlock, /\.in\("chat_id", supportChatIds\)/);
+  assert.match(fetchBlock, /\.eq\("user_id", canonicalUserId\)/);
+  assert.match(chatPage, /filter: "chat_id=eq\." \+ supportChatId/);
   assert.match(chatPage, /mergeSupportChatMessages/);
   assert.match(chatService, /if \(msgError\) throw msgError/);
   assert.match(chatService, /Message insert did not return a message ID/);

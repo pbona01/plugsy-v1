@@ -19,18 +19,8 @@ import { OnlinePresenceProvider } from "./contexts/OnlinePresenceContext";
 import { motion, AnimatePresence, MotionConfig, useReducedMotion } from "motion/react";
 import { GlobalErrorBoundary } from "./components/GlobalErrorBoundary";
 
-import Home from "./pages/Home";
-import OnboardingPage from "./pages/OnboardingPage";
-import Products from "./pages/Products";
-import Medals from "./pages/Medals";
-import CheckoutConfirm from "./pages/CheckoutConfirm";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
-import About from "./pages/About";
-import Dashboard from "./pages/Dashboard";
-import ComingSoon from "./pages/ComingSoon";
-import Chat from "./pages/Chat";
-import Learn from "./pages/Learn";
 const DYNAMIC_IMPORT_RELOAD_KEY = "plugsy-dynamic-import-reload";
 const lazyWithDeploymentRecovery = <T extends React.ComponentType<any>>(
   load: () => Promise<{ default: T }>,
@@ -52,10 +42,20 @@ const lazyWithDeploymentRecovery = <T extends React.ComponentType<any>>(
 });
 
 const ChatHub = lazyWithDeploymentRecovery(() => import("./pages/ChatHub"));
-import JoinInvite from "./pages/JoinInvite";
-import PublicProfile from "./pages/PublicProfile";
+const Home = lazyWithDeploymentRecovery(() => import("./pages/Home"));
+const OnboardingPage = lazyWithDeploymentRecovery(() => import("./pages/OnboardingPage"));
+const Products = lazyWithDeploymentRecovery(() => import("./pages/Products"));
+const Medals = lazyWithDeploymentRecovery(() => import("./pages/Medals"));
+const CheckoutConfirm = lazyWithDeploymentRecovery(() => import("./pages/CheckoutConfirm"));
+const About = lazyWithDeploymentRecovery(() => import("./pages/About"));
+const Dashboard = lazyWithDeploymentRecovery(() => import("./pages/Dashboard"));
+const ComingSoon = lazyWithDeploymentRecovery(() => import("./pages/ComingSoon"));
+const Chat = lazyWithDeploymentRecovery(() => import("./pages/Chat"));
+const Learn = lazyWithDeploymentRecovery(() => import("./pages/Learn"));
+const JoinInvite = lazyWithDeploymentRecovery(() => import("./pages/JoinInvite"));
+const PublicProfile = lazyWithDeploymentRecovery(() => import("./pages/PublicProfile"));
 const PersonalChat = lazyWithDeploymentRecovery(() => import("./pages/PersonalChat"));
-import OrderHistory from "./pages/OrderHistory";
+const OrderHistory = lazyWithDeploymentRecovery(() => import("./pages/OrderHistory"));
 const Admin = lazyWithDeploymentRecovery(() => import("./pages/Admin"));
 const AdminChats = lazyWithDeploymentRecovery(() => import("./pages/AdminChats"));
 const AdminPortfolioSales = lazyWithDeploymentRecovery(() => import("./pages/AdminPortfolioSales"));
@@ -64,8 +64,8 @@ const AdminBroadcast = lazyWithDeploymentRecovery(() => import("./pages/AdminBro
 const AdminMarketplace = lazyWithDeploymentRecovery(() => import("./pages/AdminMarketplace"));
 const AdminMarketplaceFiles = lazyWithDeploymentRecovery(() => import("./pages/AdminMarketplaceFiles"));
 const AdminMarketplaceReviewShortcut = lazyWithDeploymentRecovery(() => import("./components/marketplace/AdminMarketplaceReviewShortcut"));
-import PaymentCallback from "./pages/PaymentCallback";
-import PortfolioCallback from "./pages/PortfolioCallback";
+const PaymentCallback = lazyWithDeploymentRecovery(() => import("./pages/PaymentCallback"));
+const PortfolioCallback = lazyWithDeploymentRecovery(() => import("./pages/PortfolioCallback"));
 const PortfolioDashboard = lazyWithDeploymentRecovery(() => import("./pages/PortfolioDashboard"));
 const OneLinkPage = lazyWithDeploymentRecovery(() => import("./pages/OneLinkPage"));
 const CreatePortfolio = lazyWithDeploymentRecovery(() => import("./pages/CreatePortfolio").then((module) => ({ default: module.CreatePortfolio })));
@@ -80,11 +80,12 @@ const MarketplaceGuestCheckout = lazyWithDeploymentRecovery(() => import("./page
 const MarketplaceGuestDelivery = lazyWithDeploymentRecovery(() => import("./pages/MarketplaceGuestDelivery"));
 const SellerDashboard = lazyWithDeploymentRecovery(() => import("./pages/SellerDashboard"));
 const MarketplacePolicy = lazyWithDeploymentRecovery(() => import("./pages/MarketplacePolicy"));
-import { TermsOfService } from "./pages/TermsOfService";
-import { PrivacyPolicy } from "./pages/PrivacyPolicy";
-import { BackgroundGradientAnimationDemo } from "./components/effects/background-gradient-animation-demo";
-import { BackgroundComponentsDemo } from "./components/effects/background-components-demo";
-import { DemoHeroGeometric } from "./components/effects/shape-landing-hero-demo";
+const AccountDeletion = lazyWithDeploymentRecovery(() => import("./pages/AccountDeletion"));
+const TermsOfService = lazyWithDeploymentRecovery(() => import("./pages/TermsOfService").then((module) => ({ default: module.TermsOfService })));
+const PrivacyPolicy = lazyWithDeploymentRecovery(() => import("./pages/PrivacyPolicy").then((module) => ({ default: module.PrivacyPolicy })));
+const BackgroundGradientAnimationDemo = lazyWithDeploymentRecovery(() => import("./components/effects/background-gradient-animation-demo").then((module) => ({ default: module.BackgroundGradientAnimationDemo })));
+const BackgroundComponentsDemo = lazyWithDeploymentRecovery(() => import("./components/effects/background-components-demo"));
+const DemoHeroGeometric = lazyWithDeploymentRecovery(() => import("./components/effects/shape-landing-hero-demo"));
 import Navbar from "./components/layout/Navbar";
 import DashboardBackButton from "./components/layout/DashboardBackButton";
 import Footer from "./components/layout/Footer";
@@ -494,6 +495,7 @@ function AppContent({
           <Route path="/about" element={<About />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="/account-deletion" element={<AccountDeletion />} />
           <Route path="/products" element={<Products />} />
           <Route path="/marketplace" element={<Marketplace />} />
           <Route path="/marketplace/buyer" element={<Marketplace />} />

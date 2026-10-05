@@ -1,14 +1,16 @@
 import { createClient } from "@supabase/supabase-js";
 import { timingSafeEqual } from "node:crypto";
+import { rejectDisallowedOrigin } from "../api/_httpSecurity.js";
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS, GET");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (rejectDisallowedOrigin(req, res, {
+    methods: "POST, OPTIONS, GET",
+    headers: "Content-Type, Authorization",
+  })) return;
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const urlObj = new URL(req.url, `http://${req.headers.host}`);

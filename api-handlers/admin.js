@@ -7,6 +7,7 @@ import {
   resolveOrCreateSupportChat,
 } from "./_supportChats.js";
 import { requireVerifiedClerkUser } from "../api/_clerkAuth.js";
+import { rejectDisallowedOrigin } from "../api/_httpSecurity.js";
 import { clerkClient } from "@clerk/clerk-sdk-node";
 import { reconcileWalletFunding } from "../api/_walletFundingWebhook.js";
 import { deterministicEventUuid, sendOneSignal } from "../api/_oneSignal.js";
@@ -1709,9 +1710,10 @@ async function handleFinancialDashboard(req, res) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*")
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS, GET")
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
+  if (rejectDisallowedOrigin(req, res, {
+    methods: "POST, OPTIONS, GET",
+    headers: "Content-Type, Authorization",
+  })) return;
   if (req.method === "OPTIONS") return res.status(200).end()
 
   const urlObj = new URL(req.originalUrl || req.url, `http://${req.headers?.host || 'localhost'}`);

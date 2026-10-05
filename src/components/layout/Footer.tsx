@@ -64,6 +64,12 @@ export default function Footer() {
             >
               Privacy Policy
             </Link>
+            <Link
+              to="/account-deletion"
+              className="text-sm font-bold text-brand-text-secondary hover:text-brand-text transition-colors tracking-tight uppercase"
+            >
+              Delete Account
+            </Link>
           </nav>
 
           <div className="flex justify-center gap-8 mb-12">

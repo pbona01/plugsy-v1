@@ -19,9 +19,10 @@ test("funding verification authenticates and scopes the reference to its owner",
 
   assert.notEqual(start, -1);
   assert.match(block, /requireVerifiedClerkUser\(req, res\)/);
-  assert.match(block, /\.eq\("user_id", actor\.userId\)/);
-  assert.match(block, /\.eq\("type", "fund"\)/);
-  assert.match(block, /wallet_fund_/);
+  assert.match(block, /expectedUserId: actor\.userId/);
+  assert.match(helper, /transaction\.user_id !== expectedUserId/);
+  assert.match(helper, /\.eq\("type", "fund"\)/);
+  assert.match(helper, /wallet_fund_/);
   assert.doesNotMatch(block, /\.update\(/);
   assert.doesNotMatch(block, /\.insert\(/);
   assert.doesNotMatch(block, /\.delete\(/);

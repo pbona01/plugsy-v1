@@ -65,7 +65,7 @@ test("PersonalChat uses bounded queries and no aggressive message polling", asyn
   const text = await source("../src/pages/PersonalChat.tsx");
   assert.match(text, /select\(CHAT_MESSAGE_COLUMNS\)[\s\S]*limit\(CHAT_MESSAGE_PAGE_SIZE\)/);
   assert.doesNotMatch(text, /setInterval\(fetchNewMessages,\s*2500\)/);
-  assert.match(text, /setInterval\(fetchNewMessages, 30000\)/);
+  assert.doesNotMatch(text, /setInterval\(fetchNewMessages,/);
 });
 test("PersonalChat wires persisted message realtime and deduplication", async () => {
   const text = await source("../src/pages/PersonalChat.tsx");

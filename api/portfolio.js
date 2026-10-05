@@ -3,6 +3,7 @@ import {
   handlePortfolioPurchaseStatus,
   handlePortfolioWalletPurchase,
 } from "./_walletCommerce.js"
+import { rejectDisallowedOrigin } from "./_httpSecurity.js";
 import { requireVerifiedClerkUser } from "./_clerkAuth.js"
 import { prepareJsonRequestBody } from "./_walletFundingWebhook.js"
 import {
@@ -322,12 +323,10 @@ async function handleUpdateExtraCategory(req, res) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*")
-  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, Idempotency-Key",
-  )
+  if (rejectDisallowedOrigin(req, res, {
+    methods: "POST, GET, OPTIONS",
+    headers: "Authorization, Content-Type, Idempotency-Key",
+  })) return;
 
   if (req.method === "OPTIONS") {
     return res.status(200).end()

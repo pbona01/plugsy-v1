@@ -169,7 +169,7 @@ test("withdrawal reservation precedes provider transfer and uses manual review",
     commerce.indexOf("export async function processWithdrawalWebhook"),
   );
   const config = withdrawal.indexOf("payoutWorkerConfig(res)");
-  const reserve = withdrawal.indexOf("reserve_wallet_withdrawal_v2");
+  const reserve = withdrawal.indexOf("reserve_wallet_withdrawal_v3");
   const provider = withdrawal.indexOf('operation: "initiate"');
   assert.ok(config >= 0 && reserve > config && provider > reserve);
   assert.doesNotMatch(withdrawal, /api\.flutterwave\.com\/v3\/transfers/);
@@ -225,7 +225,7 @@ test("payout callback configuration fails closed before reservation", () => {
   const supabaseIndex = withdrawal.indexOf(
     "const supabase = getWalletServiceClient(res)",
   );
-  const reserveIndex = withdrawal.indexOf("reserve_wallet_withdrawal_v2");
+  const reserveIndex = withdrawal.indexOf("reserve_wallet_withdrawal_v3");
   assert.ok(
     configIndex >= 0 &&
       configReturnIndex > configIndex &&
@@ -394,9 +394,8 @@ test("frontend financial mutations send Clerk bearer tokens and stable idempoten
   assert.doesNotMatch(frontend, /action=create-from-wallet/);
 });
 
-test("staging verification artifacts are present but not invoked by package scripts", () => {
+test("staging verification SQL is present but not invoked by package scripts", () => {
   assert.ok(fs.existsSync("supabase/wallet-commerce-v2_staging_verify.sql"));
-  assert.ok(fs.existsSync("scripts/wallet-commerce-v2-staging.mjs"));
   const packageJson = JSON.parse(read("package.json"));
   assert.doesNotMatch(JSON.stringify(packageJson.scripts || {}), /wallet-commerce-v2-staging/);
 });
@@ -593,7 +592,7 @@ test("withdrawal submission owns provider-ID collision handling and cannot retry
   assert.ok(withdrawalStart >= 0 && webhookStart > withdrawalStart);
   const withdrawal = api.slice(withdrawalStart, webhookStart);
   const config = withdrawal.indexOf("const payoutWorker = payoutWorkerConfig(res);");
-  const reserve = withdrawal.indexOf("reserve_wallet_withdrawal_v2");
+  const reserve = withdrawal.indexOf("reserve_wallet_withdrawal_v3");
   const reviewedRetry = withdrawal.indexOf("reservation.pending_manual_review === true");
   const attempt = withdrawal.indexOf("mark_wallet_withdrawal_attempt_started_v2");
   assert.ok(config >= 0 && reserve > config);

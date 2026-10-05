@@ -391,6 +391,6 @@ test("funding and commerce containment guards remain present", () => {
   assert.match(payments, /SPLIT_WALLET_PURCHASE_RETIRED/);
   assert.match(payments, /NON_WALLET_PROVIDER_CHARGE_BLOCKED/);
   assert.match(read("api/_walletCommerce.js"), /purchase_portfolio_wallet_v2/);
-  assert.match(processor, /fulfill_wallet_funding_v2/);
+  assert.match(helper, /fulfill_wallet_funding_v2/);
   assert.doesNotMatch(processor, /\.from\("profiles"\)/);
 });

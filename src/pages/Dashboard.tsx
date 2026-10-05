@@ -13,7 +13,7 @@ import { getOneSignalPlayerId, requestOneSignalPermission, checkOneSignalSubscri
 import { compressAndUpload } from "../utils/uploadMedia";
 import { 
   ShoppingBag, Folder, Wallet as WalletIcon, MessageCircle, HelpCircle, 
-  Gift, Award, MoreHorizontal, X, Camera, Loader2, Users, Link2 
+  Gift, Award, MoreHorizontal, X, Camera, Loader2, Users, Link2, Trash2
 } from 'lucide-react';
 import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import {
@@ -36,7 +36,7 @@ export default function Dashboard() {
   
   // Modals & Menu Overlay
   const [isMoreOpen, setIsMoreOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'refer' | 'profile'>('profile');
+  const [activeTab, setActiveTab] = useState<'refer' | 'profile' | 'notifications'>('profile');
 
   // Profile Settings States
   const [profilePic, setProfilePic] = useState<string>('');
@@ -619,6 +619,13 @@ export default function Dashboard() {
                           {savingProfile && <Loader2 className="w-4 h-4 animate-spin" />}
                           Save Profile
                         </button>
+                        <Link
+                          to="/account-deletion"
+                          onClick={() => setIsMoreOpen(false)}
+                          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/5 text-xs font-bold text-red-500 transition hover:bg-red-500/10"
+                        >
+                          <Trash2 size={14} /> Delete account
+                        </Link>
                       </div>
                     </div>
                   </motion.div>

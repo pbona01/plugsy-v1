@@ -1,13 +1,13 @@
-import { motion } from "framer-motion"
+import { motion, type Variants } from "framer-motion"
 import { useEffect, useState } from "react"
 
-const shimmer = {
+const shimmer: Variants = {
   animate: {
     backgroundPosition: ["200% 0", "-200% 0"],
     transition: {
       duration: 1.5,
       repeat: Infinity,
-      ease: "linear"
+      ease: "linear" as const
     }
   }
 }

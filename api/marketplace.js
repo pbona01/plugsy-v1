@@ -2,11 +2,12 @@ import { createClient } from "@supabase/supabase-js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Resend } from "resend";
 import { buildMarketplaceEmail, buildMarketplaceGuestEmail, buildMarketplaceProductUpdateEmail } from "./_marketplaceEmail.js";
-import { fetchPremblySession, findPremblySession, hasPremblyWidgetConfiguration, premblyClientConfiguration, premblySessionEmail, premblySessionId, premblySessionReference, premblyWidgetOutcome } from './_marketplaceVerification.js';
+import { fetchPremblySession, findPremblySession, hasPremblyWidgetConfiguration, premblyClientConfiguration, premblySessionId, premblySessionReference, premblyWidgetOutcome } from './_marketplaceVerification.js';
 import { validateMarketplaceFile, createUploadUrl, verifyUploadedFile, createDownloadUrl } from './_marketplaceStorage.js';
 import { scanMarketplaceAsset, checkMarketplaceAssetScan } from './_marketplaceScanner.js';
 import { requireVerifiedClerkUser, requireVerifiedClerkAdmin } from "./_clerkAuth.js";
 import { verifyFlutterwaveReference } from "./_walletFundingWebhook.js";
+import { rejectDisallowedOrigin } from "./_httpSecurity.js";
 import { getSavedPurchaseCode, savePurchaseCode } from './_savedPurchaseCode.js';
 import {
   MarketplaceReferralError,
@@ -985,8 +986,7 @@ async function completeSellerVerification(req, res) {
     return send(res, 503, 'VERIFICATION_PROVIDER_UNAVAILABLE', 'Prembly could not confirm the result yet. Your status will update automatically.');
   }
   const sessionReference = premblySessionReference(session);
-  const sessionEmail = premblySessionEmail(session).toLowerCase();
-  const belongsToAttempt = sessionReference === reference || (sessionEmail && sessionEmail === actor.email.toLowerCase());
+  const belongsToAttempt = sessionReference === reference;
   if (!belongsToAttempt) return send(res, 403, 'VERIFICATION_SESSION_MISMATCH', 'This Prembly session does not belong to your Plugsy account.');
   const status = premblyWidgetOutcome(session);
   if (status === 'pending') {
@@ -1041,8 +1041,7 @@ async function checkSellerVerification(req, res) {
     throw providerError;
   }
   const sessionReference = premblySessionReference(session);
-  const sessionEmail = premblySessionEmail(session).toLowerCase();
-  if (sessionReference !== attempt.reference && (!sessionEmail || sessionEmail !== actor.email.toLowerCase())) {
+  if (sessionReference !== attempt.reference) {
     return send(res, 403, 'VERIFICATION_SESSION_MISMATCH', 'Prembly returned a session that does not belong to this account.');
   }
   const status = premblyWidgetOutcome(session);
@@ -1375,10 +1374,10 @@ async function adminMutation(req, res, action) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Cache-Control", "private, no-store");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key");
+  if (rejectDisallowedOrigin(req, res, {
+    methods: "GET, POST, PATCH, OPTIONS",
+    headers: "Content-Type, Authorization, Idempotency-Key",
+  })) return;
   if (req.method === "OPTIONS") return res.status(200).end();
   const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
   const action = text(req.query?.action || url.searchParams.get("action") || "browse");

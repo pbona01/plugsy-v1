@@ -196,7 +196,7 @@ test("existing withdrawals use reserved bank snapshots after reservation", () =>
   const start = commerce.indexOf("export async function handleWithdrawal");
   const end = commerce.indexOf("export async function processWithdrawalWebhook");
   const withdrawal = commerce.slice(start, end);
-  assert.match(withdrawal, /reserve_wallet_withdrawal_v2/);
+  assert.match(withdrawal, /reserve_wallet_withdrawal_v3/);
   assert.match(withdrawal, /account_bank: reservation\.bank_code/);
   assert.match(withdrawal, /account_number: reservation\.account_number/);
   assert.doesNotMatch(withdrawal, /profile\.bank_code[\s\S]*requestPayoutWorker/);

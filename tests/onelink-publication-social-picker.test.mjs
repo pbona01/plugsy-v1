@@ -40,6 +40,7 @@ const validDraft = (overrides = {}) => ({
     seoTitle: "",
     seoDescription: "",
     messageEnabled: true,
+    followerCount: 1,
   },
   ...overrides,
 });
@@ -67,8 +68,16 @@ const makeProfile = (overrides = {}) => ({
 });
 
 const makeResponse = () => ({
+  headers: new Map(),
   statusCode: 200,
   body: null,
+  setHeader(name, value) {
+    this.headers.set(String(name).toLowerCase(), String(value));
+    return this;
+  },
+  end() {
+    return this;
+  },
   status(code) {
     this.statusCode = code;
     return this;

@@ -47,9 +47,9 @@ export const plugsyAuthAppearance = {
     fontFamily: 'var(--font-sans)',
   },
   elements: {
-    rootBox: 'w-full',
-    cardBox: 'w-full !shadow-none',
-    card: 'w-full !gap-4 !rounded-none !bg-transparent !p-0 !shadow-none',
+    rootBox: 'w-full min-w-0 max-w-full',
+    cardBox: 'w-full min-w-0 max-w-full !shadow-none',
+    card: 'w-full min-w-0 max-w-full !gap-4 !rounded-none !bg-transparent !p-0 !shadow-none',
     header: 'hidden',
     headerTitle: 'hidden',
     headerSubtitle: 'hidden',
@@ -61,9 +61,10 @@ export const plugsyAuthAppearance = {
     dividerLine: 'bg-brand-border',
     dividerText: 'px-3 text-[11px] font-semibold text-brand-text-secondary',
     form: 'gap-3',
-    formFieldRow: 'gap-3',
+    formFieldRow: '!flex !min-w-0 !flex-col gap-3 sm:!grid sm:!grid-cols-2',
+    formField: 'min-w-0 max-w-full',
     formFieldLabel: 'mb-1 text-[12px] font-bold text-brand-text-secondary',
-    formFieldInput: 'h-12 rounded-2xl border border-brand-border bg-brand-surface/80 px-4 text-[16px] text-brand-text shadow-none outline-none backdrop-blur-xl transition placeholder:text-brand-text-secondary/70 hover:border-brand-text-secondary/35 focus:border-brand-accent focus:ring-2 focus:ring-brand-accent/15',
+    formFieldInput: 'h-12 w-full min-w-0 max-w-full rounded-2xl border border-brand-border bg-brand-surface/80 px-4 text-[16px] text-brand-text shadow-none outline-none backdrop-blur-xl transition placeholder:text-brand-text-secondary/70 hover:border-brand-text-secondary/35 focus:border-brand-accent focus:ring-2 focus:ring-brand-accent/15',
     formFieldInputShowPasswordButton: 'text-brand-text-secondary hover:text-brand-text',
     formButtonPrimary: 'mt-1 h-12 rounded-2xl bg-brand-accent text-sm font-black text-white shadow-[0_14px_34px_rgba(0,102,255,.28)] transition hover:-translate-y-0.5 hover:bg-[#1677ff] hover:shadow-[0_18px_40px_rgba(0,102,255,.34)] focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg active:translate-y-0',
     identityPreview: 'rounded-2xl border border-brand-border bg-brand-surface/75',
@@ -141,12 +142,12 @@ export function AuthExperience({ mode, children, switchHref }: AuthExperiencePro
           </div>
         </motion.aside>
 
-        <section className="relative flex min-h-[100dvh] items-start justify-center px-5 pb-[max(1.75rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-7 sm:pt-[max(2.5rem,env(safe-area-inset-top))] lg:min-h-0 lg:items-center lg:px-8 lg:py-10">
+        <section className="relative flex min-h-[100dvh] min-w-0 items-start justify-center px-4 pb-[max(1.75rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:px-7 sm:pt-[max(2.5rem,env(safe-area-inset-top))] lg:min-h-0 lg:items-center lg:px-8 lg:py-10">
           <motion.div
             initial={reduceMotion ? false : { opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.45, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
-            className="w-full max-w-[29rem] pt-1 sm:pt-3 lg:pt-0"
+            className="w-full min-w-0 max-w-[29rem] pt-1 sm:pt-3 lg:pt-0"
           >
             <div className="mb-9 flex items-center lg:hidden">
               <Link to="/" aria-label="Go to Plugsy home" className="inline-flex min-h-11 items-center gap-3 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-brand-accent">
@@ -157,11 +158,11 @@ export function AuthExperience({ mode, children, switchHref }: AuthExperiencePro
 
             <header className="max-w-[25rem]">
               <p className="text-[11px] font-black uppercase tracking-[.2em] text-brand-accent">{content.eyebrow}</p>
-              <h1 className="mt-3 text-[clamp(2.25rem,10vw,2.85rem)] font-black leading-[.96] tracking-[-.06em] text-slate-950 sm:text-[clamp(2.65rem,8vw,3.8rem)] dark:text-white">{content.title}</h1>
+              <h1 className="mt-3 max-w-full break-words text-[clamp(2rem,10vw,2.85rem)] font-black leading-[.96] tracking-[-.055em] text-slate-950 sm:text-[clamp(2.65rem,8vw,3.8rem)] dark:text-white">{content.title}</h1>
               <p className="mt-4 max-w-md text-[15px] leading-6 text-slate-600 dark:text-white/58">{content.description}</p>
             </header>
 
-            <div className="mt-6 rounded-[1.5rem] border border-white/70 bg-white/72 p-4 shadow-[0_18px_45px_rgba(38,61,102,.14)] backdrop-blur-2xl sm:mt-7 sm:rounded-[1.75rem] sm:p-6 sm:shadow-[0_24px_70px_rgba(38,61,102,.16)] dark:border-white/[.1] dark:bg-[#0b1019]/88 dark:shadow-[0_24px_60px_rgba(0,0,0,.32)]">
+            <div className="mt-6 min-w-0 max-w-full overflow-hidden rounded-[1.5rem] border border-white/70 bg-white/72 p-3 shadow-[0_18px_45px_rgba(38,61,102,.14)] backdrop-blur-2xl min-[360px]:p-4 sm:mt-7 sm:rounded-[1.75rem] sm:p-6 sm:shadow-[0_24px_70px_rgba(38,61,102,.16)] dark:border-white/[.1] dark:bg-[#0b1019]/88 dark:shadow-[0_24px_60px_rgba(0,0,0,.32)]">
               {children}
             </div>
 

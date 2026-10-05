@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const read = (path) => fs.readFileSync(path, "utf8");
+const read = (path) => fs.readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
 test("wallet commerce v2 helpers and additive artifacts are present", () => {
   assert.equal(fs.existsSync("api/_walletCommerce.js"), true);
@@ -70,7 +70,7 @@ test("wallet money actions use authenticated atomic replacements", () => {
   assert.match(wallet, /action === "p2p-transfer"/);
   assert.match(commerce, /requireVerifiedClerkUser/);
   assert.match(commerce, /transfer_wallet_p2p_v2/);
-  assert.match(commerce, /reserve_wallet_withdrawal_v2/);
+  assert.match(commerce, /reserve_wallet_withdrawal_v3/);
   assert.match(commerce, /Idempotency-Key|idempotencyKey/);
 });
 

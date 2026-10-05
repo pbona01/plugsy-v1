@@ -5,6 +5,7 @@ import {
   handleWalletProductPurchase,
   handleWalletProductStatus,
 } from "./_walletCommerce.js"
+import { rejectDisallowedOrigin } from "./_httpSecurity.js"
 import {
   getFlutterwaveEventName,
   parseJsonRequestBody,
@@ -115,12 +116,10 @@ async function handleFundingWebhook(req, res) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*")
-  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, Idempotency-Key, flutterwave-signature, verif-hash",
-  )
+  if (rejectDisallowedOrigin(req, res, {
+    methods: "POST, GET, OPTIONS",
+    headers: "Authorization, Content-Type, Idempotency-Key, flutterwave-signature, verif-hash",
+  })) return
 
   if (req.method === "OPTIONS") {
     return res.status(200).end()
