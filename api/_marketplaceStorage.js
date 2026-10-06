@@ -1,11 +1,11 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
-export const allowedFileTypes = new Set(['application/pdf','application/zip','image/png','image/jpeg','image/webp']);
+export const allowedFileTypes = new Set(['application/pdf','application/zip','image/png','image/jpeg','image/webp','video/mp4','video/webm','video/quicktime']);
 export function validateMarketplaceFile({ name, contentType, size }) {
-  if (!allowedFileTypes.has(contentType) || !Number.isInteger(size) || size < 1 || size > 250 * 1024 * 1024) throw new Error('Use a PDF, ZIP or image up to 250 MB.');
+  if (!allowedFileTypes.has(contentType) || !Number.isInteger(size) || size < 1 || size > 250 * 1024 * 1024) throw new Error('Use a PDF, ZIP, supported image or MP4, WebM or MOV video up to 250 MB.');
   const extension = String(name || '').split('.').pop()?.toLowerCase();
-  const extensions = { 'application/pdf': ['pdf'], 'application/zip': ['zip'], 'image/png': ['png'], 'image/jpeg': ['jpg','jpeg'], 'image/webp': ['webp'] };
+  const extensions = { 'application/pdf': ['pdf'], 'application/zip': ['zip'], 'image/png': ['png'], 'image/jpeg': ['jpg','jpeg'], 'image/webp': ['webp'], 'video/mp4': ['mp4'], 'video/webm': ['webm'], 'video/quicktime': ['mov'] };
   if (!extensions[contentType].includes(extension) || String(name).length > 160 || /[\x00-\x1f]/.test(String(name))) throw new Error('File name and type do not match.');
   return String(name).replace(/[^a-zA-Z0-9._-]/g, '_');
 }

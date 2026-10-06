@@ -1171,13 +1171,50 @@ async function flushProductUpdateEmails(supabase, limit = 25) {
   return { sent, failed, skipped: false };
 }
 
+async function scanPendingMarketplaceAssets(supabase, limit = 25) {
+  if (!text(process.env.VIRUSTOTAL_API_KEY)) return { checked: 0, approved: 0, rejected: 0, pending: 0, skipped: true };
+  const { data: assets, error } = await supabase.from('marketplace_assets')
+    .select('id,listing_id,scan_reference')
+    .eq('status', 'quarantined')
+    .like('scan_reference', 'virustotal_private:%')
+    .order('created_at', { ascending: true })
+    .limit(Math.min(50, Math.max(1, Number(limit) || 25)));
+  if (error) throw error;
+
+  const summary = { checked: 0, approved: 0, rejected: 0, pending: 0, skipped: false };
+  for (const asset of assets || []) {
+    summary.checked += 1;
+    try {
+      const scan = await checkMarketplaceAssetScan(asset.scan_reference);
+      if (scan.state === 'pending') { summary.pending += 1; continue; }
+      if (scan.state !== 'clean' && scan.state !== 'rejected') continue;
+      const { data, error: updateError } = await supabase.from('marketplace_assets')
+        .update({ status: scan.state, scan_reference: `virustotal_private:${scan.analysisId}`, scanned_at: new Date().toISOString() })
+        .eq('id', asset.id).eq('status', 'quarantined').select('id').maybeSingle();
+      if (updateError) throw updateError;
+      if (!data) continue;
+      if (scan.state === 'clean') {
+        summary.approved += 1;
+        const { data: listing } = await supabase.from('marketplace_listings').select('title').eq('id', asset.listing_id).maybeSingle();
+        await queueProductUpdateNotifications(supabase, asset.listing_id, listing?.title || 'Your purchased product');
+      } else summary.rejected += 1;
+    } catch (scanError) {
+      console.error('[marketplace] automatic file review deferred', { assetId: asset.id, message: scanError?.message || scanError });
+    }
+  }
+  return summary;
+}
+
 async function processEmails(req,res) {
   const secret=text(req.headers?.authorization).replace(/^Bearer\s+/i,'');
   if(!secretsMatch(text(process.env.CRON_SECRET),secret)) return send(res,401,'CRON_UNAUTHORIZED','Not authorized.');
   const supabase = getClient();
+  let fileReviews = { checked: 0, approved: 0, rejected: 0, pending: 0, skipped: true };
+  try { fileReviews = await scanPendingMarketplaceAssets(supabase); }
+  catch (scanError) { console.error('[marketplace] scheduled file review deferred', scanError?.message || scanError); }
   const result = await flushMarketplaceEmails(supabase);
   const updates = await flushProductUpdateEmails(supabase);
-  return res.status(200).json({ success: true, ...result, productUpdates: updates });
+  return res.status(200).json({ success: true, ...result, productUpdates: updates, fileReviews });
 }
 
 async function adminWorkspace(req, res) {
