@@ -9,6 +9,7 @@ import { requireVerifiedClerkUser, requireVerifiedClerkAdmin } from "./_clerkAut
 import { verifyFlutterwaveReference } from "./_walletFundingWebhook.js";
 import { rejectDisallowedOrigin } from "./_httpSecurity.js";
 import { getSavedPurchaseCode, savePurchaseCode } from './_savedPurchaseCode.js';
+import { computeMarketplaceTrustScore } from "../shared/marketplaceTrust.js";
 import {
   MarketplaceReferralError,
   ensureOpenReferralAgreement,
@@ -95,9 +96,10 @@ const purchaseFailure = (error) => {
 };
 
 export const trustScoreForSeller = (seller) => {
-  const completed = Number(seller?.completed_orders_count || 0);
-  const upheld = Number(seller?.upheld_disputes_count || 0);
-  return completed + upheld > 0 ? Math.round(100 * completed / (completed + upheld)) : null;
+  return computeMarketplaceTrustScore({
+    completedOrders: seller?.completed_orders_count,
+    upheldDisputes: seller?.upheld_disputes_count,
+  });
 };
 
 export const canPublishPublicly = (seller, now = Date.now()) => seller?.verification_status === 'verified' && seller?.public_selling_enabled === true && Date.parse(seller?.public_plan_expires_at || '') > now;
