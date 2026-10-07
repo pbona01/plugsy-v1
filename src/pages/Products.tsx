@@ -271,7 +271,7 @@ export default function Products() {
                 <motion.div
                   layoutId={`product-card-${plan.id}`}
                   key={plan.id}
-                  className="card-premium group flex min-w-0 flex-col border-brand-accent/50 p-3 ring-1 ring-brand-accent/20 sm:p-6 lg:p-8"
+                  className="card-premium group flex min-w-0 flex-col overflow-hidden border-brand-accent/50 p-3 ring-1 ring-brand-accent/20 sm:p-6 lg:p-8"
                 >
                   {plan.image_url ? (
                     <img
@@ -379,7 +379,7 @@ export default function Products() {
                             size={16}
                             className="mt-0.5 shrink-0 text-brand-accent"
                           />
-                          <span className="text-brand-text/90 leading-tight">
+                          <span className="line-clamp-3 leading-tight text-brand-text/90 sm:line-clamp-none">
                             {feature}
                           </span>
                         </li>

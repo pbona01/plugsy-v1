@@ -90,6 +90,7 @@ test('mobile marketplace and Plugsy products use compact two-column product grid
   assert.match(products, /grid grid-cols-2 gap-3/);
   assert.match(products, /card-premium group flex min-w-0 flex-col/);
   assert.match(products, /plan\.features\.slice\(0, 2\)/);
+  assert.match(products, /line-clamp-3 leading-tight text-brand-text\/90 sm:line-clamp-none/);
   assert.match(products, /more benefits/);
 });
 
