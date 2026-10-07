@@ -50,7 +50,7 @@
     ]
   }],
   "rewrites": [
-    { "source": "/.well-known/assetlinks.json", "destination": "/api/android-assetlinks" },
+    { "source": "/.well-known/assetlinks.json", "destination": "/api/misc?route=android-assetlinks" },
     {
       "source": "/one/:username",
       "has": [

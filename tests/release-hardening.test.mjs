@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import assetlinksHandler from '../api/android-assetlinks.js';
+import assetlinksHandler from '../api-handlers/android-assetlinks.js';
 
 const read = (path) => fs.readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 
