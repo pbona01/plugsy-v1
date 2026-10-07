@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { Resend } from "resend";
 import { buildMarketplaceEmail, buildMarketplaceGuestEmail, buildMarketplaceProductUpdateEmail } from "./_marketplaceEmail.js";
 import { fetchPremblySession, findPremblySession, hasPremblyWidgetConfiguration, premblyClientConfiguration, premblySessionId, premblySessionReference, premblyWidgetOutcome } from './_marketplaceVerification.js';
@@ -10,6 +10,7 @@ import { verifyFlutterwaveReference } from "./_walletFundingWebhook.js";
 import { rejectDisallowedOrigin } from "./_httpSecurity.js";
 import { getSavedPurchaseCode, savePurchaseCode } from './_savedPurchaseCode.js';
 import { computeMarketplaceTrustScore } from "../shared/marketplaceTrust.js";
+import { encryptMarketplaceAdToken, sendMarketplacePurchaseEvents } from "./_marketplaceAds.js";
 import {
   MarketplaceReferralError,
   ensureOpenReferralAgreement,
@@ -134,6 +135,7 @@ export const publicListing = (listing, seller) => ({
     name: seller.display_name || "Plugsy creator",
     username: seller.username || null,
     avatar: seller.avatar_url || null,
+    adPixels: seller.ad_pixels || null,
   } : { trustScore: null, verified: false, completedOrders: 0 },
 });
 
@@ -220,7 +222,7 @@ async function acceptMarketplaceOnboarding(req, res) {
 async function loadSellers(supabase, sellerIds) {
   const ids = [...new Set(sellerIds.map(text).filter(Boolean))];
   if (!ids.length) return new Map();
-  const [sellerResult, profileResult] = await Promise.all([
+  const [sellerResult, profileResult, adResult] = await Promise.all([
     supabase
       .from("marketplace_seller_profiles")
       .select("user_id,trust_score,verification_status,public_selling_enabled,public_plan_expires_at,marketplace_fee_paid_by,completed_orders_count,upheld_disputes_count")
@@ -229,9 +231,12 @@ async function loadSellers(supabase, sellerIds) {
       .from("profile_directory_v1")
       .select("clerk_id,username,full_name,profile_pic_url,image_url")
       .in("clerk_id", ids),
+    supabase.from("marketplace_ad_integrations").select("seller_id,meta_pixel_id,tiktok_pixel_id").in("seller_id", ids),
   ]);
-  if (sellerResult.error || profileResult.error) throw sellerResult.error || profileResult.error;
+  const adsTableNotReady = ["42P01", "PGRST205"].includes(adResult.error?.code);
+  if (sellerResult.error || profileResult.error || (adResult.error && !adsTableNotReady)) throw sellerResult.error || profileResult.error || adResult.error;
   const profiles = new Map((profileResult.data || []).map((profile) => [profile.clerk_id, profile]));
+  const adPixels = new Map((adsTableNotReady ? [] : adResult.data || []).map((row) => [row.seller_id, { metaPixelId: row.meta_pixel_id || null, tiktokPixelId: row.tiktok_pixel_id || null }]));
   return new Map((sellerResult.data || []).map((seller) => {
     const profile = profiles.get(seller.user_id);
     return [seller.user_id, {
@@ -239,6 +244,7 @@ async function loadSellers(supabase, sellerIds) {
       display_name: profile?.full_name || profile?.username || "Plugsy creator",
       username: profile?.username || null,
       avatar_url: profile?.profile_pic_url || profile?.image_url || null,
+      ad_pixels: adPixels.get(seller.user_id) || null,
     }];
   }));
 }
@@ -459,6 +465,43 @@ async function sellerWorkspace(req, res) {
   return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), verification_retry_available: verificationRetryAvailable, trust_score: trustScoreForSeller(seller) }, listings: listingsWithDeliveries, sales: allSales });
 }
 
+async function sellerAdIntegrations(req, res, method) {
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const supabase = getClient();
+  if (method === "GET") {
+    const { data, error } = await supabase.from("marketplace_ad_integrations")
+      .select("meta_pixel_id,tiktok_pixel_id,meta_access_token_encrypted,tiktok_access_token_encrypted,updated_at")
+      .eq("seller_id", actor.userId).maybeSingle();
+    if (error) throw error;
+    return res.status(200).json({ success: true, integrations: {
+      metaPixelId: data?.meta_pixel_id || "", tiktokPixelId: data?.tiktok_pixel_id || "",
+      metaTokenConnected: Boolean(data?.meta_access_token_encrypted), tiktokTokenConnected: Boolean(data?.tiktok_access_token_encrypted), updatedAt: data?.updated_at || null,
+    } });
+  }
+  const body = readBody(req);
+  const metaPixelId = text(body.metaPixelId);
+  const tiktokPixelId = text(body.tiktokPixelId);
+  if ((metaPixelId && !/^\d{5,30}$/.test(metaPixelId)) || (tiktokPixelId && !/^[A-Za-z0-9_-]{5,80}$/.test(tiktokPixelId))) return send(res, 400, "AD_PIXEL_ID_INVALID", "Enter a valid Meta Pixel ID and/or TikTok Pixel ID.");
+  const metaToken = text(body.metaAccessToken);
+  const tiktokToken = text(body.tiktokAccessToken);
+  if (metaToken.length > 4096 || tiktokToken.length > 4096) return send(res, 400, "AD_TOKEN_INVALID", "An access token is too long.");
+  if ((metaToken || tiktokToken) && !/^[a-f0-9]{64}$/i.test(text(process.env.MARKETPLACE_ADS_ENCRYPTION_KEY))) return send(res, 503, "AD_ENCRYPTION_CONFIG_REQUIRED", "Secure ad-token storage is not configured yet.");
+  const { data: current, error: currentError } = await supabase.from("marketplace_ad_integrations")
+    .select("meta_access_token_encrypted,tiktok_access_token_encrypted").eq("seller_id", actor.userId).maybeSingle();
+  if (currentError) throw currentError;
+  const row = {
+    seller_id: actor.userId, meta_pixel_id: metaPixelId || null, tiktok_pixel_id: tiktokPixelId || null, updated_at: new Date().toISOString(),
+    meta_access_token_encrypted: body.removeMetaToken === true ? null : metaToken ? encryptMarketplaceAdToken(metaToken) : current?.meta_access_token_encrypted || null,
+    tiktok_access_token_encrypted: body.removeTiktokToken === true ? null : tiktokToken ? encryptMarketplaceAdToken(tiktokToken) : current?.tiktok_access_token_encrypted || null,
+  };
+  const { error } = await supabase.from("marketplace_ad_integrations").upsert(row, { onConflict: "seller_id" });
+  if (error) throw error;
+  return res.status(200).json({ success: true, integrations: {
+    metaPixelId, tiktokPixelId, metaTokenConnected: Boolean(row.meta_access_token_encrypted), tiktokTokenConnected: Boolean(row.tiktok_access_token_encrypted), updatedAt: row.updated_at,
+  } });
+}
+
 async function updateSellerFeePolicy(req, res) {
   const actor = await requireActor(req, res);
   if (!actor) return;
@@ -611,6 +654,19 @@ async function purchase(req, res) {
     const [status, code, message] = purchaseFailure(error || data?.error);
     return send(res, status, code, message);
   }
+  if (body.adMarketingConsent === true) {
+    try {
+      const [{ data: listing }, { data: order }] = await Promise.all([
+        supabase.from("marketplace_listings").select("id,seller_id,title,currency").eq("id", listingId).maybeSingle(),
+        supabase.from("marketplace_orders").select("order_reference,amount").eq("order_reference", data.reference).maybeSingle(),
+      ]);
+      if (listing && order?.order_reference) await sendMarketplacePurchaseEvents(supabase, {
+        sellerId: listing.seller_id, listing, reference: order.order_reference, amount: Number(order.amount), currency: listing.currency || "NGN",
+        email: actor.email, sourceUrl: `${text(process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || "https://www.plugsy.ng").replace(/\/$/, "")}/marketplace/product/${listing.id}`,
+        userAgent: text(req.headers?.["user-agent"]), ip: text(req.headers?.["x-forwarded-for"] || req.headers?.["x-real-ip"]).split(",")[0].trim(),
+      });
+    } catch (trackingError) { console.error("[marketplace] wallet purchase event pending", trackingError?.message || trackingError); }
+  }
   if (referral?.personalCode && explicitReferralCode) {
     try { await savePurchaseCode(supabase, actor.userId, referral.code); }
     catch (saveError) { console.error('[marketplace] saved referral preference pending', saveError?.message || saveError); }
@@ -713,6 +769,20 @@ async function finalizeGuestCheckout(reference) {
     fulfilled = refreshed;
   }
   try { await sendGuestReceipt(supabase, fulfilled); } catch (error) { console.error("[marketplace] guest receipt pending", error?.message || error); }
+  if (fulfilled.ad_marketing_consent === true) {
+    try {
+      const [{ data: listing }, { data: pixels }] = await Promise.all([
+        supabase.from("marketplace_listings").select("id,seller_id,title,currency").eq("id", fulfilled.listing_id).maybeSingle(),
+        supabase.from("marketplace_ad_integrations").select("meta_pixel_id,tiktok_pixel_id").eq("seller_id", fulfilled.seller_id).maybeSingle(),
+      ]);
+      if (listing) await sendMarketplacePurchaseEvents(supabase, {
+        sellerId: fulfilled.seller_id, listing: { ...listing, title: fulfilled.listing_snapshot?.title || listing.title },
+        reference: fulfilled.order_reference, amount: Number(fulfilled.amount), currency: listing.currency || "NGN", email: fulfilled.buyer_email,
+        sourceUrl: `${text(process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || "https://www.plugsy.ng").replace(/\/$/, "")}/marketplace/product/${listing.id}`,
+      });
+      fulfilled.ad_tracking = { metaPixelId: pixels?.meta_pixel_id || "", tiktokPixelId: pixels?.tiktok_pixel_id || "", listingId: fulfilled.listing_id, title: fulfilled.listing_snapshot?.title || listing?.title || "Digital product", amount: Number(fulfilled.amount), currency: listing?.currency || "NGN" };
+    } catch (trackingError) { console.error("[marketplace] guest purchase event pending", trackingError?.message || trackingError); }
+  }
   return fulfilled;
 }
 
@@ -743,6 +813,10 @@ async function guestCheckout(req, res) {
   const supabase = getClient();
   const { data, error } = await supabase.rpc("marketplace_create_guest_checkout_v1", { p_listing_id: listingId, p_email: email, p_reference: reference, p_private_access_token: text(body.privateAccessToken) || null });
   if (error || !data?.success) return send(res, 409, "GUEST_CHECKOUT_UNAVAILABLE", "This product is not available for guest checkout.");
+  if (body.adMarketingConsent === true) {
+    const { error: consentError } = await supabase.from("marketplace_guest_orders").update({ ad_marketing_consent: true }).eq("order_reference", reference).eq("payment_status", "pending");
+    if (consentError) console.error("[marketplace] guest ad-consent save failed", consentError.message || consentError);
+  }
   const siteUrl = text(process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || "https://www.plugsy.ng").replace(/\/$/, "");
   const response = await fetch("https://api.flutterwave.com/v3/payments", { method: "POST", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ tx_ref: reference, amount: Number(data.amount), currency: "NGN", redirect_url: `${siteUrl}/marketplace/guest-checkout?reference=${encodeURIComponent(reference)}`, customer: { email }, customizations: { title: "Plugsy Marketplace", description: "Guest marketplace purchase" }, meta: { type: "marketplace_guest_checkout", listingId } }) });
   const provider = await response.json().catch(() => null);
@@ -760,7 +834,7 @@ async function verifyGuestCheckout(req, res) {
   if (!/^mkt_guest_[A-Za-z0-9_-]{20,100}$/.test(reference)) return send(res, 400, "GUEST_REFERENCE_INVALID", "This checkout link is invalid.");
   try {
     const order = await finalizeGuestCheckout(reference);
-    return res.status(200).json({ success: true, pending: false, deliveryToken: order.delivery_token, receiptSent: Boolean(order.receipt_email_sent_at) });
+    return res.status(200).json({ success: true, pending: false, deliveryToken: order.delivery_token, receiptSent: Boolean(order.receipt_email_sent_at), adTracking: order.ad_tracking || null });
   } catch (error) {
     if (text(error?.message).includes("NOT_CONFIRMED")) return res.status(200).json({ success: false, pending: true, error: "Payment confirmation is still processing." });
     throw error;
@@ -1414,7 +1488,7 @@ async function adminMutation(req, res, action) {
 
 export default async function handler(req, res) {
   if (rejectDisallowedOrigin(req, res, {
-    methods: "GET, POST, PATCH, OPTIONS",
+    methods: "GET, POST, PUT, PATCH, OPTIONS",
     headers: "Content-Type, Authorization, Idempotency-Key",
   })) return;
   if (req.method === "OPTIONS") return res.status(200).end();
@@ -1438,6 +1512,8 @@ export default async function handler(req, res) {
     if (req.method === "GET" && action === "onboarding") return await marketplaceOnboarding(req, res);
     if (req.method === "POST" && action === "accept-onboarding") return await acceptMarketplaceOnboarding(req, res);
     if (req.method === "GET" && action === "workspace") return await sellerWorkspace(req, res);
+    if (req.method === "GET" && action === "ad-integrations") return await sellerAdIntegrations(req, res, "GET");
+    if (req.method === "PUT" && action === "ad-integrations") return await sellerAdIntegrations(req, res, "PUT");
     if (req.method === "GET" && action === "followed-sellers") return await followedSellers(req, res);
     if (req.method === "GET" && action === "library") return await library(req, res);
     if (req.method === "GET" && action === "delivery") return await delivery(req, res);

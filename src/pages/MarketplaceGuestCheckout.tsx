@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { trackMarketplacePurchase } from "../utils/marketplaceAds";
 
 export default function MarketplaceGuestCheckout() {
   const [params] = useSearchParams();
@@ -16,7 +17,11 @@ export default function MarketplaceGuestCheckout() {
         const response = await fetch(`/api/marketplace?action=verify-guest-checkout&reference=${encodeURIComponent(reference)}`, { cache: "no-store" });
         const payload = await response.json().catch(() => null);
         if (cancelled) return;
-        if (response.ok && payload?.success && payload.deliveryToken) { navigate(`/marketplace/guest-delivery/${payload.deliveryToken}`, { replace: true }); return; }
+        if (response.ok && payload?.success && payload.deliveryToken) {
+          const tracking = payload.adTracking;
+          if (tracking?.listingId) trackMarketplacePurchase({ metaPixelId: tracking.metaPixelId, tiktokPixelId: tracking.tiktokPixelId }, { id: tracking.listingId, title: tracking.title, price: tracking.amount, currency: tracking.currency }, reference, tracking.amount);
+          navigate(`/marketplace/guest-delivery/${payload.deliveryToken}`, { replace: true }); return;
+        }
         if (!payload?.pending) { setStatus("failed"); return; }
       }
       if (!cancelled) setStatus("pending");

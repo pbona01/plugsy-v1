@@ -8,13 +8,15 @@ import { MarketplaceMark } from "../components/icons/MarketplaceMark";
 import { marketplaceAttempt, clearMarketplaceAttempt } from "../utils/marketplaceAttempt.js";
 import { loadSavedPurchaseCode } from "../lib/purchaseCodeProfile";
 import { TrustScoreMeter } from "../components/marketplace/TrustScoreMeter";
+import MarketplaceCookieConsent from "../components/marketplace/MarketplaceCookieConsent";
+import { marketplaceMarketingConsent, trackMarketplaceCheckout, trackMarketplaceProductView, trackMarketplacePurchase } from "../utils/marketplaceAds";
 
 type Product = {
   id: string; title: string; summary: string; description: string; category: string; price: number; currency: string;
   coverImageUrl?: string | null; deliveryLabel: string; privateAccessToken?: string;
   resalePolicy: "not_allowed" | "fixed_percent" | "approval_required";
   resaleCommissionPercent: number | null;
-  seller: { id?: string; name?: string; username?: string | null; avatar?: string | null; trustScore: number | null; verified: boolean; completedOrders: number };
+  seller: { id?: string; name?: string; username?: string | null; avatar?: string | null; trustScore: number | null; verified: boolean; completedOrders: number; adPixels?: { metaPixelId?: string | null; tiktokPixelId?: string | null } | null };
   fee?: { percent: number; paidBy: "buyer" | "seller"; amount: number; total: number } | null;
 };
 
@@ -61,6 +63,14 @@ export default function MarketplaceProductPage() {
   }, [accessToken, id]);
 
   useEffect(() => { void loadProduct(); }, [loadProduct]);
+
+  useEffect(() => {
+    if (!product) return;
+    trackMarketplaceProductView(product.seller.adPixels, product);
+    const onConsent = (event: Event) => { if ((event as CustomEvent).detail?.marketing === true) trackMarketplaceProductView(product.seller.adPixels, product); };
+    window.addEventListener("plugsy-cookie-consent", onConsent);
+    return () => window.removeEventListener("plugsy-cookie-consent", onConsent);
+  }, [product]);
 
   const loadComments = useCallback(async () => {
     if (!product?.id) return;
@@ -199,6 +209,7 @@ export default function MarketplaceProductPage() {
   };
 
   const buyWithWallet = async () => {
+    if (product) trackMarketplaceCheckout(product.seller.adPixels, product);
     if (!product || !userId) { setGuestChoiceOpen(true); return; }
     setBuying(true);
     try {
@@ -207,10 +218,11 @@ export default function MarketplaceProductPage() {
       const response = await fetch("/api/marketplace?action=purchase", {
         method: "POST",
         headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: token ? `Bearer ${token}` : "", "Idempotency-Key": key },
-        body: JSON.stringify({ listingId: product.id, idempotencyKey: key, privateAccessToken: product.privateAccessToken || null, acceptedTermsVersion: "marketplace-v1", referralCode: referral?.code || null, referralOptOut }),
+        body: JSON.stringify({ listingId: product.id, idempotencyKey: key, privateAccessToken: product.privateAccessToken || null, acceptedTermsVersion: "marketplace-v1", referralCode: referral?.code || null, referralOptOut, adMarketingConsent: marketplaceMarketingConsent() }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) throw new Error(payload?.error || "Purchase could not be completed.");
+      if (payload.purchase?.reference) trackMarketplacePurchase(product.seller.adPixels, product, payload.purchase.reference, Number(payload.purchase.amount || product.price));
       clearMarketplaceAttempt(localStorage, userId, product.id);
       toast.success("Purchase complete. Your product is now in My library.");
       navigate("/marketplace/buyer");
@@ -245,6 +257,7 @@ export default function MarketplaceProductPage() {
     </div>
     {approvalOpen && <div className="fixed inset-0 z-[10003] flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-6"><section role="dialog" aria-modal="true" aria-labelledby="affiliate-request-title" className="w-full max-w-md rounded-t-[2rem] border border-brand-border bg-brand-bg p-6 shadow-2xl sm:rounded-[2rem]"><button onClick={()=>setApprovalOpen(false)} className="ml-auto grid h-9 w-9 place-items-center rounded-xl border border-brand-border"><X size={15}/></button><span className="mt-3 grid h-11 w-11 place-items-center rounded-2xl bg-brand-accent/10 text-brand-accent"><BadgePercent size={20}/></span><h2 id="affiliate-request-title" className="mt-5 text-2xl font-black">Request to promote this product</h2><p className="mt-2 text-sm leading-6 text-brand-text-secondary">Suggest the commission you would earn from the seller’s proceeds. The creator must approve it before your tracked link becomes active.</p><label className="mt-5 block"><span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-brand-text-secondary">Requested commission</span><div className="relative"><input value={requestedCommission} onChange={(event)=>setRequestedCommission(event.target.value)} type="number" min="1" max="80" step="0.01" className="h-12 w-full rounded-xl border border-brand-border bg-brand-surface px-4 pr-10 text-sm font-bold outline-none focus:border-brand-accent"/><span className="absolute right-4 top-3.5 text-sm font-black text-brand-text-secondary">%</span></div></label><button disabled={referralBusy} onClick={()=>void requestReferralApproval()} className="btn-primary mt-5 flex h-12 w-full items-center justify-center gap-2 text-xs font-black uppercase tracking-wider disabled:opacity-50">{referralBusy?<Loader2 className="animate-spin" size={16}/>:"Send approval request"}</button><p className="mt-3 text-center text-[10px] leading-5 text-brand-text-secondary">Track requests and earnings from Sell → Affiliate.</p></section></div>}
     {guestChoiceOpen && <GuestChoice product={product} onClose={() => setGuestChoiceOpen(false)} onSignIn={() => navigate(`/login?redirect=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`)} />}
+    <MarketplaceCookieConsent />
   </main>;
 }
 
@@ -254,7 +267,8 @@ function GuestChoice({ product, onClose, onSignIn }: { product: Product; onClose
   const startGuestCheckout = async () => {
     setBusy(true);
     try {
-      const response = await fetch("/api/marketplace?action=guest-checkout", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ listingId: product.id, email, privateAccessToken: product.privateAccessToken || null }) });
+      trackMarketplaceCheckout(product.seller.adPixels, product);
+      const response = await fetch("/api/marketplace?action=guest-checkout", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ listingId: product.id, email, privateAccessToken: product.privateAccessToken || null, adMarketingConsent: marketplaceMarketingConsent() }) });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) throw new Error(payload?.error || "Guest checkout is unavailable.");
       window.location.assign(payload.authorizationUrl);
