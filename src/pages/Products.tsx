@@ -62,8 +62,8 @@ const CountdownTimer = ({ expiresAt }: { expiresAt?: string }) => {
   const padZero = (n: number) => String(n).padStart(2, '0');
 
   return (
-    <span className="text-[10px] font-black uppercase text-brand-accent animate-pulse bg-brand-accent/10 px-2.5 py-1 rounded-md flex items-center gap-1.5 border border-brand-accent/20">
-      Deal ends: <span className="font-mono text-white bg-brand-accent px-1.5 py-0.5 rounded text-[10px] font-bold">{padZero(timeLeft.hours)}:{padZero(timeLeft.minutes)}:{padZero(timeLeft.seconds)}</span>
+    <span className="flex min-w-0 items-center gap-1 rounded-md border border-brand-accent/20 bg-brand-accent/10 px-1.5 py-1 text-[8px] font-black uppercase text-brand-accent animate-pulse sm:gap-1.5 sm:px-2.5 sm:text-[10px]">
+      <span className="hidden sm:inline">Deal ends:</span><span className="truncate font-mono text-[8px] font-bold text-brand-accent sm:bg-brand-accent sm:px-1.5 sm:py-0.5 sm:text-[10px] sm:text-white">{padZero(timeLeft.hours)}:{padZero(timeLeft.minutes)}:{padZero(timeLeft.seconds)}</span>
     </span>
   );
 };
@@ -202,7 +202,7 @@ export default function Products() {
   };
 
   return (
-    <div className="min-h-screen py-20 px-4 bg-brand-bg relative">
+    <div className="relative min-h-screen bg-brand-bg px-3 py-20 sm:px-4">
       <Helmet>
         <title>Plugsy - Products</title>
         <meta name="description" content="Explore affordable premium digital products including CapCut Pro max, UI/UX courses, and LUTs for creators on Plugsy." />
@@ -226,7 +226,7 @@ export default function Products() {
             </button>
           </motion.div>
         )}
-        <h1 className="font-bold mb-20 text-center tracking-tight uppercase font-display">
+        <h1 className="mb-10 text-center font-display font-bold uppercase tracking-tight sm:mb-20">
           All <span className="text-brand-accent">Products</span>
         </h1>
 
@@ -258,7 +258,7 @@ export default function Products() {
           </motion.div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 lg:gap-8">
           {loading ? (
             <>
               {[1, 2, 3].map((i) => (
@@ -271,43 +271,43 @@ export default function Products() {
                 <motion.div
                   layoutId={`product-card-${plan.id}`}
                   key={plan.id}
-                  className="card-premium p-10 flex flex-col group border-brand-accent/50 ring-1 ring-brand-accent/20"
+                  className="card-premium group flex min-w-0 flex-col border-brand-accent/50 p-3 ring-1 ring-brand-accent/20 sm:p-6 lg:p-8"
                 >
                   {plan.image_url ? (
                     <img
                       src={plan.image_url}
                       alt={plan.name}
-                      className="w-full h-48 object-cover rounded-2xl mb-8 border border-brand-border"
+                      className="mb-4 aspect-[4/3] h-auto w-full rounded-xl border border-brand-border object-cover sm:mb-6 sm:rounded-2xl"
                       loading="lazy"
                     />
                   ) : (
-                    <div className="w-16 h-16 rounded-2xl bg-brand-accent/10 flex items-center justify-center mb-8">
-                      <Video size={32} className="text-brand-accent" />
+                    <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-accent/10 sm:mb-6 sm:h-14 sm:w-14 sm:rounded-2xl">
+                      <Video size={24} className="text-brand-accent" />
                     </div>
                   )}
 
                   <motion.h3
                     layoutId={`product-title-${plan.id}`}
-                    className="text-2xl font-black uppercase tracking-tighter mb-2"
+                    className="mb-2 line-clamp-2 text-sm font-black uppercase leading-tight tracking-tighter sm:text-xl"
                   >
                     {plan.name || plan.product_name || "Premium Plan"}
                   </motion.h3>
                   {plan.description && (
-                    <p className="text-brand-text-secondary text-sm mb-6">
+                    <p className="mb-4 line-clamp-3 text-[10px] leading-4 text-brand-text-secondary sm:mb-6 sm:text-sm sm:leading-5">
                       {plan.description}
                     </p>
                   )}
 
                   <motion.div
                     layoutId={`product-price-${plan.id}`}
-                    className="flex flex-col mb-8"
+                    className="mb-4 flex flex-col sm:mb-6"
                   >
                     {(() => {
                       const priceInfo = getDisplayPrice(plan);
                       return priceInfo.hasDiscount ? (
                         <div className="flex flex-col gap-1 items-start">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-black bg-brand-accent text-white px-2 py-0.5 rounded-full tracking-widest uppercase">
+                          <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+                            <span className="rounded-full bg-brand-accent px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white sm:px-2 sm:text-xs sm:tracking-widest">
                               -
                               {Math.round(
                                 (1 -
@@ -320,20 +320,20 @@ export default function Products() {
                             <CountdownTimer expiresAt={plan.discount_expires_at} />
                             {priceInfo.isMedalDiscount && (
                               <span className={cn(
-                                "text-[10px] font-black border px-2.5 py-1 rounded-full tracking-widest uppercase flex items-center gap-1.5 shadow-sm",
+                                "flex items-center gap-1 rounded-full border px-1.5 py-1 text-[8px] font-black uppercase tracking-wider shadow-sm sm:gap-1.5 sm:px-2.5 sm:text-[10px] sm:tracking-widest",
                                 activeMedal.name.includes("Gold") ? "bg-amber-400/20 text-amber-500 border-amber-400/30" :
                                 activeMedal.name.includes("Silver") ? "bg-slate-400/20 text-slate-400 border-slate-400/30" :
                                 "bg-orange-500/20 text-orange-500 border-orange-500/30"
                               )}>
                                 <Award size={10} className="animate-bounce" />
-                                {activeMedal.name.includes("Gold") ? "Gold" : activeMedal.name.includes("Silver") ? "Silver" : "Bronze"} Holder Reward
+                                {activeMedal.name.includes("Gold") ? "Gold" : activeMedal.name.includes("Silver") ? "Silver" : "Bronze"}<span className="hidden sm:inline"> Holder Reward</span>
                               </span>
                             )}
                           </div>
                           <div className="flex items-baseline gap-2 mt-1">
                             <span
                               style={{ color: "#22c55e", fontWeight: "bold" }}
-                              className="text-3xl font-black text-brand-accent"
+                              className="text-lg font-black text-brand-accent sm:text-3xl"
                             >
                               ₦
                               {priceInfo.displayPrice.toLocaleString(
@@ -348,7 +348,7 @@ export default function Products() {
                                 textDecoration: "line-through",
                                 color: "#888",
                               }}
-                              className="text-sm line-through opacity-50"
+                              className="text-[9px] line-through opacity-50 sm:text-sm"
                             >
                               ₦
                               {priceInfo.originalPrice.toLocaleString(
@@ -361,7 +361,7 @@ export default function Products() {
                           </div>
                         </div>
                       ) : (
-                        <span className="text-3xl font-black">
+                        <span className="text-lg font-black sm:text-3xl">
                           ₦
                           {priceInfo.displayPrice.toLocaleString(undefined, {
                             maximumFractionDigits: 0,
@@ -372,12 +372,12 @@ export default function Products() {
                   </motion.div>
 
                   {Array.isArray(plan.features) && plan.features.length > 0 && (
-                    <ul className="space-y-3 mb-8 flex-1">
+                    <ul className="mb-4 flex-1 space-y-2 sm:mb-8 sm:space-y-3">
                       {plan.features.map((feature: string, i: number) => (
-                        <li key={i} className="flex items-start gap-3 text-sm">
+                        <li key={i} className="flex items-start gap-1.5 text-[9px] sm:gap-3 sm:text-sm">
                           <CheckCircle2
                             size={16}
-                            className="text-brand-accent shrink-0 mt-0.5"
+                            className="mt-0.5 shrink-0 text-brand-accent"
                           />
                           <span className="text-brand-text/90 leading-tight">
                             {feature}
@@ -395,7 +395,7 @@ export default function Products() {
                       button
                       chromaticAberration={2}
                       onClick={() => handleContinue(plan)}
-                      className="w-full btn-primary !py-4 text-center font-black uppercase tracking-widest text-xs"
+                      className="btn-primary w-full !px-2 !py-3 text-center text-[9px] font-black uppercase tracking-wider sm:!py-4 sm:text-xs sm:tracking-widest"
                     >
                       <span className="flex items-center justify-center gap-2">
                         {userId ? "Pay Now" : "Login to Pay"}{" "}
@@ -408,25 +408,25 @@ export default function Products() {
               {/* Portfolio Product Card placeholder */}
               <motion.div
                 layoutId="product-card-portfolio"
-                className="card-premium p-10 flex flex-col group border-brand-accent/50 ring-1 ring-brand-accent/20"
+                className="card-premium group flex min-w-0 flex-col border-brand-accent/50 p-3 ring-1 ring-brand-accent/20 sm:p-6 lg:p-8"
               >
-                <div className="w-16 h-16 rounded-2xl bg-brand-accent/10 flex items-center justify-center mb-8">
-                  <Video size={32} className="text-brand-accent" />
+                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-accent/10 sm:mb-6 sm:h-14 sm:w-14 sm:rounded-2xl">
+                  <Video size={24} className="text-brand-accent" />
                 </div>
 
                 <motion.h3
                   layoutId="product-title-portfolio"
-                  className="text-2xl font-black uppercase tracking-tighter mb-2"
+                  className="mb-2 line-clamp-2 text-sm font-black uppercase leading-tight tracking-tighter sm:text-xl"
                 >
                   Professional Portfolio
                 </motion.h3>
-                <p className="text-brand-text-secondary text-sm mb-6">
+                <p className="mb-4 line-clamp-3 text-[10px] leading-4 text-brand-text-secondary sm:mb-6 sm:text-sm sm:leading-5">
                   Create a stunning public portfolio to showcase your edits and
                   connect with clients instantly.
                 </p>
 
-                <ul className="space-y-3 mb-8 flex-1 mt-4">
-                  <li className="flex items-start gap-3 text-sm">
+                <ul className="mb-4 mt-2 flex-1 space-y-2 sm:mb-8 sm:mt-4 sm:space-y-3">
+                  <li className="flex items-start gap-1.5 text-[9px] sm:gap-3 sm:text-sm">
                     <CheckCircle2
                       size={16}
                       className="text-brand-accent shrink-0 mt-0.5"
@@ -435,7 +435,7 @@ export default function Products() {
                       Custom Public URL Profile
                     </span>
                   </li>
-                  <li className="flex items-start gap-3 text-sm">
+                  <li className="flex items-start gap-1.5 text-[9px] sm:gap-3 sm:text-sm">
                     <CheckCircle2
                       size={16}
                       className="text-brand-accent shrink-0 mt-0.5"
@@ -453,10 +453,10 @@ export default function Products() {
                   <LiquidGlass
                     button
                     chromaticAberration={2}
-                    className="w-full btn-primary !py-4"
+                    className="btn-primary w-full !px-2 !py-3 sm:!py-4"
                     onClick={() => navigate("/portfolio")}
                   >
-                    <span className="flex items-center justify-center gap-2 font-black uppercase tracking-widest text-xs">
+                    <span className="flex items-center justify-center gap-1 text-[9px] font-black uppercase tracking-wider sm:gap-2 sm:text-xs sm:tracking-widest">
                       Build Portfolio <ArrowRight size={16} />
                     </span>
                   </LiquidGlass>
@@ -492,21 +492,21 @@ export default function Products() {
           ].map((item, i) => (
             <div
               key={i}
-              className="card-premium p-10 flex flex-col relative opacity-60 grayscale border-brand-border hover:scale-[1.02] hover:opacity-80 transition-all duration-300"
+              className="card-premium relative flex min-w-0 flex-col border-brand-border p-3 opacity-60 grayscale transition-all duration-300 hover:scale-[1.02] hover:opacity-80 sm:p-6 lg:p-8"
             >
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-brand-surface/80 backdrop-blur-sm rounded-[2rem]">
-                <span className="border border-brand-border text-brand-text font-black uppercase tracking-widest px-6 py-2 rounded-full">
+                <span className="rounded-full border border-brand-border px-2 py-2 text-center text-[9px] font-black uppercase tracking-wider text-brand-text sm:px-6 sm:text-sm sm:tracking-widest">
                   Coming Soon
                 </span>
               </div>
-              <div className="w-16 h-16 rounded-2xl bg-brand-surface border border-brand-border flex items-center justify-center mb-8">
-                <item.icon size={32} className="text-brand-text-secondary" />
+              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-brand-border bg-brand-surface sm:mb-6 sm:h-14 sm:w-14 sm:rounded-2xl">
+                <item.icon size={24} className="text-brand-text-secondary" />
               </div>
-              <h3 className="text-2xl font-black uppercase tracking-tighter mb-4">
+              <h3 className="mb-3 text-sm font-black uppercase leading-tight tracking-tighter sm:text-xl">
                 {item.name}
               </h3>
-              <p className="text-brand-text-secondary mb-4">{item.desc}</p>
-              <div className="btn-secondary !py-4 text-center font-black uppercase tracking-widest text-xs opacity-50">
+              <p className="mb-4 text-[10px] leading-4 text-brand-text-secondary sm:text-sm">{item.desc}</p>
+              <div className="btn-secondary !px-2 !py-3 text-center text-[9px] font-black uppercase tracking-wider opacity-50 sm:!py-4 sm:text-xs sm:tracking-widest">
                 Coming Soon
               </div>
             </div>

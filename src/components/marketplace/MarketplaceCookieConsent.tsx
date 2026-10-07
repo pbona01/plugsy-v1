@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Cookie, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { toast } from 'react-hot-toast';
 
 const key = 'plugsy:marketplace:cookie-consent:v1';
 
@@ -11,6 +12,7 @@ export default function MarketplaceCookieConsent() {
     try { localStorage.setItem(key, JSON.stringify({ essential: true, analytics, marketing, savedAt: new Date().toISOString() })); } catch {}
     window.dispatchEvent(new CustomEvent('plugsy-cookie-consent', { detail: { analytics, marketing } }));
     setOpen(false);
+    toast.success(marketing ? 'Ad measurement enabled for Marketplace purchases.' : analytics ? 'Marketplace analytics enabled.' : 'Only essential cookies will be used.');
   };
   if (!open) return <button type="button" onClick={()=>setOpen(true)} className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] left-4 z-[10000] flex items-center gap-2 rounded-full border border-brand-border bg-brand-surface/95 px-3 py-2 text-[10px] font-bold text-brand-text-secondary shadow-lg backdrop-blur-xl md:bottom-4" aria-label="Open cookie and ad measurement settings"><Cookie size={14}/>Cookie settings</button>;
   return <aside className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] left-4 right-4 z-[10001] mx-auto max-w-2xl rounded-2xl border border-brand-border bg-brand-surface/95 p-5 text-brand-text shadow-2xl backdrop-blur-xl md:bottom-4" aria-label="Cookie choices">

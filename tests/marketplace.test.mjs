@@ -78,3 +78,39 @@ test('refund migration repairs and continuously revokes refunded entitlements', 
   assert.match(source, /set\s+access_status\s*=\s*'revoked'/i);
   assert.match(source, /after\s+update\s+of\s+payment_status/i);
 });
+
+test('mobile marketplace and Plugsy products use compact two-column product grids', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const [marketplace, products] = await Promise.all([
+    readFile(new URL('../src/pages/Marketplace.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/Products.tsx', import.meta.url), 'utf8'),
+  ]);
+  assert.match(marketplace, /mt-7 grid grid-cols-2 gap-3/);
+  assert.match(marketplace, /aspect-\[4\/3\]/);
+  assert.match(products, /grid grid-cols-2 gap-3/);
+  assert.match(products, /card-premium group flex min-w-0 flex-col/);
+});
+
+test('cookie choices persist ad consent and clearly confirm the selected mode', async () => {
+  const source = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../src/components/marketplace/MarketplaceCookieConsent.tsx', import.meta.url), 'utf8'));
+  assert.match(source, /marketing, savedAt/);
+  assert.match(source, /plugsy-cookie-consent/);
+  assert.match(source, /Ad measurement enabled for Marketplace purchases/);
+});
+
+test('marketplace ad measurement is consent gated, encrypted and wired to both providers', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const [api, ads, productPage] = await Promise.all([
+    readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8'),
+    readFile(new URL('../api/_marketplaceAds.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/MarketplaceProductPage.tsx', import.meta.url), 'utf8'),
+  ]);
+  assert.match(api, /body\.adMarketingConsent === true/);
+  assert.match(api, /sendMarketplacePurchaseEvents/);
+  assert.match(ads, /aes-256-gcm/);
+  assert.match(ads, /graph\.facebook\.com/);
+  assert.match(ads, /business-api\.tiktok\.com/);
+  assert.match(productPage, /trackMarketplaceProductView/);
+  assert.match(productPage, /trackMarketplaceCheckout/);
+  assert.match(productPage, /trackMarketplacePurchase/);
+});
