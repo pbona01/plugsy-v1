@@ -53,7 +53,7 @@ test('marketplace receipts escape product text and never include delivery secret
 });
 
 test('file validation rejects executable files, mismatched extensions and oversized uploads', () => {
-  for(const file of [{name:'virus.exe',contentType:'application/pdf',size:100},{name:'video.mp4',contentType:'video/mp4',size:100},{name:'huge.zip',contentType:'application/zip',size:251*1024*1024},{name:'empty.pdf',contentType:'application/pdf',size:0}]) assert.throws(()=>validateMarketplaceFile(file));
+  for(const file of [{name:'virus.exe',contentType:'application/pdf',size:100},{name:'video.mp4',contentType:'application/pdf',size:100},{name:'huge.zip',contentType:'application/zip',size:251*1024*1024},{name:'empty.pdf',contentType:'application/pdf',size:0}]) assert.throws(()=>validateMarketplaceFile(file));
   assert.equal(validateMarketplaceFile({name:'My product.pdf',contentType:'application/pdf',size:100}),'My_product.pdf');
 });
 
@@ -61,4 +61,20 @@ test('new sellers have no invented trust score; only completed/upheld outcomes a
   assert.equal(trustScoreForSeller(null),null);
   assert.equal(trustScoreForSeller({completed_orders_count:0,upheld_disputes_count:0,trust_score:100}),null);
   assert.equal(trustScoreForSeller({completed_orders_count:9,upheld_disputes_count:1}),90);
+});
+
+test('buyer library only returns active entitlements backed by paid orders', async () => {
+  const source = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8'));
+  const libraryStart = source.indexOf('async function library');
+  const deliveryStart = source.indexOf('async function delivery', libraryStart);
+  const librarySource = source.slice(libraryStart, deliveryStart);
+  assert.match(librarySource, /\.eq\(["']access_status["'],\s*["']active["']\)/);
+  assert.match(librarySource, /\.eq\(["']order\.payment_status["'],\s*["']paid["']\)/);
+});
+
+test('refund migration repairs and continuously revokes refunded entitlements', async () => {
+  const source = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../supabase/migrations/20261007143000_marketplace_refund_access_enforcement_v1.sql', import.meta.url), 'utf8'));
+  assert.match(source, /payment_status\s*=\s*'refunded'/i);
+  assert.match(source, /set\s+access_status\s*=\s*'revoked'/i);
+  assert.match(source, /after\s+update\s+of\s+payment_status/i);
 });

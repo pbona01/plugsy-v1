@@ -874,8 +874,11 @@ async function library(req, res) {
   if (!actor) return;
   const supabase = getClient();
   const { data, error } = await supabase.from("marketplace_entitlements")
-    .select("id,access_status,granted_at,order:marketplace_orders!inner(id,order_reference,amount,funds_status,hold_expires_at,created_at),listing:marketplace_listings!inner(id,title,slug,summary,category,cover_image_url,delivery_label)")
-    .eq("buyer_id", actor.userId).order("granted_at", { ascending: false });
+    .select("id,access_status,granted_at,order:marketplace_orders!inner(id,order_reference,amount,payment_status,funds_status,hold_expires_at,created_at),listing:marketplace_listings!inner(id,title,slug,summary,category,cover_image_url,delivery_label)")
+    .eq("buyer_id", actor.userId)
+    .eq("access_status", "active")
+    .eq("order.payment_status", "paid")
+    .order("granted_at", { ascending: false });
   if (error) throw error;
   return res.status(200).json({ success: true, entitlements: data || [] });
 }
