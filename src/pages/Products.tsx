@@ -373,7 +373,7 @@ export default function Products() {
 
                   {Array.isArray(plan.features) && plan.features.length > 0 && (
                     <ul className="mb-4 flex-1 space-y-2 sm:mb-8 sm:space-y-3">
-                      {plan.features.map((feature: string, i: number) => (
+                      {plan.features.slice(0, 2).map((feature: string, i: number) => (
                         <li key={i} className="flex items-start gap-1.5 text-[9px] sm:gap-3 sm:text-sm">
                           <CheckCircle2
                             size={16}
@@ -384,6 +384,11 @@ export default function Products() {
                           </span>
                         </li>
                       ))}
+                      {plan.features.length > 2 && (
+                        <li className="text-[9px] font-black text-brand-accent sm:text-xs">
+                          +{plan.features.length - 2} more benefits
+                        </li>
+                      )}
                     </ul>
                   )}
 
