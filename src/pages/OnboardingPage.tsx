@@ -42,9 +42,8 @@ export default function OnboardingPage() {
             transition={{ duration: 0.8, delay: 0.1, ease: "easeOut" }}
             className="font-display text-[2.25rem] sm:text-5xl md:text-7xl font-black tracking-tight leading-[1.08] md:leading-[1.05] text-slate-900 dark:text-white mb-6"
           >
-            Verified portfolios &amp; <br className="hidden sm:inline" />
-            premium subscriptions, <br className="hidden sm:inline" />
-            <span className="text-slate-700 dark:text-white/90">all in one place.</span>
+            Built for what you <br className="hidden sm:inline" />
+            <span className="text-slate-700 dark:text-white/90">actually need.</span>
           </motion.h1>
 
           {/* Subheadline */}
@@ -54,7 +53,7 @@ export default function OnboardingPage() {
             transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
             className="text-base sm:text-lg text-slate-600 dark:text-white/50 leading-relaxed max-w-2xl mb-10"
           >
-            Plugsy gives individuals an affordable way to access digital services while connecting them to the best valued products.
+            Create your presence, discover useful digital products, and manage payments, sales, and referrals in one clear space.
           </motion.p>
 
           {/* CTA Buttons */}
@@ -102,7 +101,7 @@ export default function OnboardingPage() {
         </div>
 
         <div className="grid md:grid-cols-2 gap-8">
-          {/* Card 1 — CapCut Pro */}
+          {/* Card 1 — Digital Marketplace */}
           <motion.div 
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -112,22 +111,22 @@ export default function OnboardingPage() {
           >
             <div>
               <h3 className="text-xl md:text-2xl font-black font-display mb-3 text-slate-900 dark:text-white tracking-tight">
-                CapCut Pro Subscriptions
+                Digital Marketplace
               </h3>
               <p className="text-sm md:text-base text-slate-600 dark:text-white/60 leading-relaxed mb-8">
-                Choose a CapCut plan, pay from your Plugsy Wallet and follow delivery in Plugsy Chat. Your login details appear there when they are ready.
+                Discover digital products from Plugsy creators with clear pricing, protected checkout, and delivery to your personal library.
               </p>
             </div>
             
             <ul className="space-y-3.5 border-t border-slate-200 dark:border-white/[0.06] pt-6">
               <li className="flex items-center gap-3 text-sm text-slate-700 dark:text-white/80">
-                <span className="text-[#0066ff] font-bold">✓</span> Flexible monthly plans
+                <span className="text-[#0066ff] font-bold">✓</span> Products from verified creators
               </li>
               <li className="flex items-center gap-3 text-sm text-slate-700 dark:text-white/80">
-                <span className="text-[#0066ff] font-bold">✓</span> Fast delivery via in-app chat
+                <span className="text-[#0066ff] font-bold">✓</span> Protected wallet checkout
               </li>
               <li className="flex items-center gap-3 text-sm text-slate-700 dark:text-white/80">
-                <span className="text-[#0066ff] font-bold">✓</span> Renew anytime, no long contracts
+                <span className="text-[#0066ff] font-bold">✓</span> Purchases saved to your library
               </li>
             </ul>
           </motion.div>
@@ -214,7 +213,7 @@ export default function OnboardingPage() {
                 Choose what you need
               </h4>
               <p className="text-sm text-slate-600 dark:text-white/50 leading-relaxed max-w-xs">
-                CapCut subscription, a portfolio, or both
+                Explore digital products or build your professional portfolio
               </p>
             </motion.div>
 
@@ -230,10 +229,10 @@ export default function OnboardingPage() {
                 03
               </div>
               <h4 className="text-lg font-bold mb-2 text-slate-900 dark:text-white">
-                Get instant access
+                Keep everything together
               </h4>
               <p className="text-sm text-slate-600 dark:text-white/50 leading-relaxed max-w-xs">
-                Login details or your live portfolio link, ready to use
+                Manage purchases, sales, wallet activity, referrals, and support
               </p>
             </motion.div>
           </div>
@@ -250,7 +249,7 @@ export default function OnboardingPage() {
             Get up to 30% every time someone uses your code
           </h2>
           <p className="text-sm md:text-base text-slate-600 dark:text-white/60 leading-relaxed max-w-2xl mb-12">
-            Every Plugsy user gets a unique referral code. Share your code. When someone buys a subscription or portfolio using your code, you get a commission straight in your wallet automatically.
+            Every Plugsy user gets a unique referral code. Share your code. When someone completes an eligible purchase using it, your commission goes straight to your wallet automatically.
           </p>
 
           {/* Simple before/after style stat mockup */}
@@ -318,7 +317,7 @@ export default function OnboardingPage() {
             Ready to get started?
           </h2>
           <p className="text-sm md:text-base text-slate-600 dark:text-white/50 leading-relaxed mb-10 max-w-md">
-            Join Plugsy and get instant access to CapCut Pro and your own verified portfolio.
+            Join Plugsy to discover digital products, build your presence, and manage your activity in one place.
           </p>
 
           <Link
