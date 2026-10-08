@@ -23,30 +23,7 @@ import { clearDefaultPurchaseCode, loadSavedPurchaseCode, saveDefaultPurchaseCod
 import { WhatsappIcon } from '../utils/onelinkPlatforms';
 
 const CAPCUT_WHATSAPP_CAMPAIGN_END_AT = Date.parse('2026-10-16T00:00:00+01:00');
-const CAPCUT_WHATSAPP_MESSAGE = 'Hello Plugsy, I want to buy a CapCut Pro subscription.';
-
-const getCapCutWhatsAppUrl = (configuredValue: unknown) => {
-  const value = String(configuredValue || '').trim();
-  const digits = value.replace(/\D/g, '');
-
-  if (/^\+?[\d\s().-]{7,}$/.test(value) && digits) {
-    return `https://wa.me/${digits}?text=${encodeURIComponent(CAPCUT_WHATSAPP_MESSAGE)}`;
-  }
-
-  try {
-    const url = new URL(value);
-    const hostname = url.hostname.toLowerCase();
-    if (!['wa.me', 'api.whatsapp.com', 'www.whatsapp.com', 'whatsapp.com'].includes(hostname)) {
-      return '';
-    }
-    if (!url.searchParams.has('text')) {
-      url.searchParams.set('text', CAPCUT_WHATSAPP_MESSAGE);
-    }
-    return url.toString();
-  } catch {
-    return '';
-  }
-};
+const CAPCUT_WHATSAPP_URL = 'https://wa.me/message/NJ3G74ENJ2KHD1';
 
 export default function Dashboard() {
   const { userId, getToken } = useAuth();
@@ -59,7 +36,6 @@ export default function Dashboard() {
   const [localProfile, setLocalProfile] = useState<any>(null);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
-  const [siteSettings, setSiteSettings] = useState<any>(null);
   
   // Modals & Menu Overlay
   const [isMoreOpen, setIsMoreOpen] = useState(false);
@@ -116,7 +92,6 @@ export default function Dashboard() {
   const currentProfile = localProfile || hookProfile;
   const greetingName = currentProfile?.fullName?.split(' ')[0] || user?.firstName || 'Chief';
   const purchaseCode = currentProfile?.purchase_code || '...';
-  const capCutWhatsAppUrl = getCapCutWhatsAppUrl(siteSettings?.support_whatsapp);
   const showCapCutWhatsAppCampaign = Date.now() < CAPCUT_WHATSAPP_CAMPAIGN_END_AT;
 
   // Fetch Referral Stats
@@ -201,10 +176,9 @@ export default function Dashboard() {
         queryStr += `,user_email.eq.${userEmail}`;
       }
 
-      const [subRes, orderRes, settingsRes, profileRes] = await Promise.all([
+      const [subRes, orderRes, profileRes] = await Promise.all([
         supabase.from('subscriptions').select('*').eq('user_id', userId).eq('status', 'active'),
         supabase.from('orders').select('*').or(queryStr).in('status', ['paid', 'confirmed', 'completed', 'success', 'active', 'pending']).order('created_at', { ascending: false }),
-        supabase.from('site_settings').select(),
         supabase.from('profiles').select().eq('clerk_id', userId).maybeSingle()
       ]);
 
@@ -214,7 +188,6 @@ export default function Dashboard() {
 
       const subData = subRes.data || [];
       const orderData = orderRes.data || [];
-      const allSettings = settingsRes.data || [];
 
       const activeOrdersAsSubs = orderData
         .filter((o: any) => o.status === 'completed' && o.delivery_status === 'login_sent')
@@ -241,18 +214,6 @@ export default function Dashboard() {
         console.warn("Error fetching active medal in dashboard:", mErr);
       }
 
-      if (allSettings.length > 0) {
-        const isKeyVal = 'setting_key' in allSettings[0];
-        if (isKeyVal) {
-          const settingsObj = allSettings.reduce((acc: any, item: any) => {
-            acc[item.setting_key] = item.setting_value;
-            return acc;
-          }, {});
-          setSiteSettings(settingsObj);
-        } else {
-          setSiteSettings(allSettings[0]);
-        }
-      }
     } catch (err) {
       console.error("Dashboard fetch error:", err);
     }
@@ -365,9 +326,9 @@ export default function Dashboard() {
       <div className="w-full max-w-[480px] mx-auto px-4 flex-grow flex flex-col justify-start">
         {showCapCutWhatsAppCampaign && (
           <motion.a
-            href={capCutWhatsAppUrl || '/chat'}
-            target={capCutWhatsAppUrl ? '_blank' : undefined}
-            rel={capCutWhatsAppUrl ? 'noreferrer' : undefined}
+            href={CAPCUT_WHATSAPP_URL}
+            target="_blank"
+            rel="noreferrer"
             initial={{ opacity: 0, y: -12, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ type: 'spring', stiffness: 340, damping: 28, delay: 0.08 }}

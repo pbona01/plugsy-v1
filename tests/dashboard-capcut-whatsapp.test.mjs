@@ -11,11 +11,10 @@ test('dashboard shows the one-week CapCut WhatsApp campaign only through October
   assert.match(source, /Tap here to subscribe through Plugsy on WhatsApp\./);
 });
 
-test('dashboard uses the configured Plugsy WhatsApp line and rejects unrelated hosts', async () => {
+test('dashboard uses the supplied Plugsy CapCut WhatsApp link', async () => {
   const source = await readFile(new URL('../src/pages/Dashboard.tsx', import.meta.url), 'utf8');
 
-  assert.match(source, /siteSettings\?\.support_whatsapp/);
-  assert.match(source, /\['wa\.me', 'api\.whatsapp\.com', 'www\.whatsapp\.com', 'whatsapp\.com'\]/);
-  assert.match(source, /CAPCUT_WHATSAPP_MESSAGE/);
-  assert.match(source, /href=\{capCutWhatsAppUrl \|\| '\/chat'\}/);
+  assert.match(source, /const CAPCUT_WHATSAPP_URL = 'https:\/\/wa\.me\/message\/NJ3G74ENJ2KHD1'/);
+  assert.match(source, /href=\{CAPCUT_WHATSAPP_URL\}/);
+  assert.match(source, /target="_blank"/);
 });
