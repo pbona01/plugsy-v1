@@ -941,6 +941,7 @@ async function startServer() {
           .from("plans")
           .select("*")
           .eq("id", planId)
+          .eq("is_active", true)
           .maybeSingle();
 
         if (planError || !plan) {
@@ -949,7 +950,7 @@ async function startServer() {
             .status(400)
             .json({
               success: false,
-              error: "Plan not found: " + (planError?.message || "No data"),
+              error: "This product is no longer available.",
             });
         }
 

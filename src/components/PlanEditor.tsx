@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Trash2, UploadCloud, Save, Loader2, Calendar } from 'lucide-react';
+import { Trash2, UploadCloud, Save, Loader2, RotateCcw } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 export const PlanEditor: React.FC<{ 
@@ -20,6 +20,7 @@ export const PlanEditor: React.FC<{
 
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isChangingVisibility, setIsChangingVisibility] = useState(false);
 
   // Formatter for datetime-local input (YYYY-MM-DDTHH:mm)
   const formatDateTimeLocal = (dateStr: string) => {
@@ -92,16 +93,38 @@ export const PlanEditor: React.FC<{
     }
   };
 
+  const handleVisibilityChange = async () => {
+    setIsChangingVisibility(true);
+    try {
+      if (plan.is_active === false && onReactivate) {
+        await onReactivate(plan.id);
+      } else {
+        await onDelete(plan.id);
+      }
+    } finally {
+      setIsChangingVisibility(false);
+    }
+  };
+
   return (
     <div className={`card-premium p-10 group relative transition-all hover:scale-[1.02] bg-brand-surface space-y-6 border ${plan.is_active === false ? 'opacity-60 border-red-500/30' : 'border-brand-border'}`}>
-      <div className="absolute top-3 right-3 flex items-center gap-2">
+      <div className="flex items-center justify-between gap-3">
          {plan.is_active === false && (
-           <span className="text-[9px] font-black uppercase tracking-widest text-red-500 bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-md">Deactivated</span>
+           <span className="text-[9px] font-black uppercase tracking-widest text-red-500 bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-md">Removed from site</span>
          )}
-         <button onClick={() => onDelete(plan.id)} className="p-3 bg-brand-surface border border-brand-border rounded-xl text-red-500 hover:bg-red-500 hover:text-white transition-all shadow-lg"><Trash2 size={16} /></button>
+         <button
+           type="button"
+           onClick={handleVisibilityChange}
+           disabled={isChangingVisibility}
+           aria-label={plan.is_active === false ? `Restore ${formData.name} to the site` : `Remove ${formData.name} from the site`}
+           className={`ml-auto inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border px-4 text-[9px] font-black uppercase tracking-widest transition-all disabled:cursor-wait disabled:opacity-60 ${plan.is_active === false ? 'border-blue-500/30 bg-blue-500/10 text-blue-500 hover:bg-blue-500 hover:text-white' : 'border-red-500/30 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white'}`}
+         >
+           {isChangingVisibility ? <Loader2 className="animate-spin" size={15} /> : plan.is_active === false ? <RotateCcw size={15} /> : <Trash2 size={15} />}
+           {plan.is_active === false ? 'Restore to site' : 'Remove from site'}
+         </button>
       </div>
 
-      <div className="pt-4">
+      <div>
         <label className="text-[8px] font-black uppercase tracking-widest text-brand-text-secondary block mb-1">Product Name</label>
         <input 
           type="text" 
@@ -172,15 +195,6 @@ export const PlanEditor: React.FC<{
            <p className="text-[10px] font-black uppercase tracking-widest text-brand-text-secondary mt-2">Upload Image</p>
         </div>
       </div>
-
-      {plan.is_active === false && onReactivate && (
-        <button 
-          onClick={() => onReactivate(plan.id)}
-          className="w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all bg-blue-500 hover:bg-blue-600 border border-transparent text-white shadow-lg shadow-blue-500/20 flex justify-center items-center gap-2 mt-2"
-        >
-          Reactivate Product
-        </button>
-      )}
 
       <button 
         onClick={handleSave}

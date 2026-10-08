@@ -83,12 +83,13 @@ export default function CheckoutConfirm() {
           .from("plans")
           .select("*")
           .eq("id", planId)
+          .eq("is_active", true)
           .single();
         if (error) throw error;
         setPlan(data);
       } catch (err) {
         console.error("Plan fetch error:", err);
-        toast.error("Failed to load plan details.");
+        toast.error("This product is no longer available.");
         navigate("/products");
       } finally {
         setLoading(false);

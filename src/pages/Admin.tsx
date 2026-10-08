@@ -920,7 +920,10 @@ export default function Admin() {
         case 'update':
           result = await supabase.from(collection).update(data).eq('id', id).select();
           if (result.error) throw result.error;
-          return result.data && result.data.length > 0 ? result.data[0] : null;
+          if (!result.data || result.data.length === 0) {
+            throw new Error('The update was not applied. Refresh and confirm your admin access.');
+          }
+          return result.data[0];
         case 'delete':
           result = await supabase.from(collection).delete().eq('id', id);
           if (result.error) throw result.error;
@@ -1055,11 +1058,14 @@ export default function Admin() {
 
   const handleUpdatePlan = async (id: string, data: any) => {
     try {
+      const existingPlan = plans.find((plan) => plan.id === id);
       const planName = data.name || data.product_name || 'New Product';
       const price = data.price;
       const discountPriceValue = data.discount_price != null ? data.discount_price : data.discountPrice;
       const discountExpiry = data.discount_expires_at;
-      const isActive = data.is_active !== undefined ? data.is_active : true;
+      const isActive = data.is_active !== undefined
+        ? Boolean(data.is_active)
+        : existingPlan?.is_active !== false;
 
       const allowedData = {
         name: planName,
@@ -1068,7 +1074,8 @@ export default function Admin() {
         discount_expires_at: discountExpiry || null,
         description: data.description || '',
         features: data.features || [],
-        image_url: data.image_url || ''
+        image_url: data.image_url || '',
+        is_active: isActive,
       };
 
       // Optimistic Update
@@ -1126,8 +1133,8 @@ export default function Admin() {
     if (!planObj) return;
 
     const confirmed = window.confirm(
-      "Deactivate this product? It will be hidden from " +
-      "users but order history will be preserved."
+      `Remove “${planObj.name || 'this product'}” from the site?\n\n` +
+      "It will disappear from the Products page immediately and cannot be purchased, while past orders remain safe. You can restore it later."
     );
     if (!confirmed) return;
 
@@ -1138,15 +1145,17 @@ export default function Admin() {
         data: { is_active: false } 
       });
       setPlans(prev => prev.map(p => p.id === id ? { ...p, is_active: false } : p));
-      toast.success("✅ Product deactivated");
+      toast.success("Product removed from the site");
     } catch (err: any) {
       console.error(err);
-      toast.error("Failed to deactivate product: " + err.message);
+      toast.error("Failed to remove product: " + err.message);
     }
   };
 
   const handleReactivatePlan = async (id: string) => {
-    const confirmed = window.confirm("Reactivate this product?");
+    const planObj = plans.find(p => p.id === id);
+    if (!planObj) return;
+    const confirmed = window.confirm(`Restore “${planObj.name || 'this product'}” to the site?`);
     if (!confirmed) return;
 
     try {
@@ -1156,10 +1165,10 @@ export default function Admin() {
         data: { is_active: true } 
       });
       setPlans(prev => prev.map(p => p.id === id ? { ...p, is_active: true } : p));
-      toast.success("✅ Product reactivated");
+      toast.success("Product restored to the site");
     } catch (err: any) {
       console.error(err);
-      toast.error("Failed to reactivate: " + err.message);
+      toast.error("Failed to restore product: " + err.message);
     }
   };
 
