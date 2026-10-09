@@ -17,7 +17,9 @@ test("admin exposes a dedicated TikTok portfolio ads section", () => {
 
 test("portfolio tracking is consent gated and stores only pseudonymous attribution", () => {
   const client = read("src/utils/portfolioAds.ts");
-  const api = read("api/portfolio-ads.js");
+  const api = read("api-handlers/portfolio-ads.js");
+  const misc = read("api/misc.js");
+  const vercel = read("vercel.json");
   const migration = read("supabase/migrations/20261009100000_portfolio_ads_analytics_v1.sql");
   assert.match(client, /CONSENT_NOT_GRANTED/);
   assert.match(client, /utm_source/);
@@ -25,6 +27,8 @@ test("portfolio tracking is consent gated and stores only pseudonymous attributi
   assert.match(api, /body\.analyticsConsent !== true && body\.marketingConsent !== true/);
   assert.match(api, /session_id_hash: sha256\(sessionId\)/);
   assert.match(api, /click_id_hash: clickId \? sha256\(clickId\) : null/);
+  assert.match(misc, /portfolioAdsHandler/);
+  assert.match(vercel, /\/api\/portfolio-ads\(\.\*\).*\/api\/misc\?route=portfolio-ads/s);
   assert.doesNotMatch(migration, /email text|ip_address text|user_agent text/i);
   assert.match(migration, /revoke all on table public\.portfolio_ad_events_v1 from anon, authenticated/);
 });

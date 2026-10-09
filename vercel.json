@@ -123,6 +123,7 @@
     { "source": "/api/categories(.*)", "destination": "/api/misc?route=categories" },
     { "source": "/api/status(.*)", "destination": "/api/misc?route=status" },
     { "source": "/api/purchase-code(.*)", "destination": "/api/misc?route=purchase-code" },
+    { "source": "/api/portfolio-ads(.*)", "destination": "/api/misc?route=portfolio-ads" },
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]

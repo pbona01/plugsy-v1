@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { rejectDisallowedOrigin } from "./_httpSecurity.js";
-import { decryptMarketplaceAdToken } from "./_marketplaceAds.js";
+import { rejectDisallowedOrigin } from "../api/_httpSecurity.js";
+import { decryptMarketplaceAdToken } from "../api/_marketplaceAds.js";
 
 const EVENT_NAMES = new Set([
   "ViewContent",
