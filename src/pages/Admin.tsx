@@ -9,6 +9,7 @@ import { toast } from 'react-hot-toast';
 import { SafeImage } from '../components/SafeImage';
 import { ScaleButton } from '../components/PageTransition';
 import { PlanEditor } from '../components/PlanEditor';
+import { TikTokAdsPanel } from '../components/admin/TikTokAdsPanel';
 import { cn } from '../lib/utils';
 import { 
   Users as UsersIcon, 
@@ -35,6 +36,7 @@ import {
   Calendar,
   DollarSign,
   TrendingUp,
+  BarChart3,
   Inbox,
   Clock,
   ShieldCheck,
@@ -1247,6 +1249,7 @@ export default function Admin() {
 
   const sidebarLinks = [
     { id: 'overview', icon: LayoutDashboard, label: 'Overview' },
+    { id: 'portfolio-ads', icon: BarChart3, label: 'TikTok Ads' },
     { id: 'pending', icon: Clock, label: 'Pending Queue' },
     { id: 'users', icon: UsersIcon, label: 'Users' },
     { id: 'onelinks', icon: Globe, label: 'One Links' },
@@ -1684,6 +1687,10 @@ export default function Admin() {
                   </div>
                 </div>
               </div>
+            )}
+
+            {activeTab === 'portfolio-ads' && (
+              <TikTokAdsPanel getToken={getToken} />
             )}
 
             {activeTab === 'onelinks' && (

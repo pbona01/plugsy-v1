@@ -150,15 +150,19 @@ export const PrivacyPolicy = () => {
           </p>
           <p className="mb-4">
             If you choose to allow ad measurement in Marketplace cookie
-            settings, the seller whose product you view may use their connected
+            settings or on a public portfolio, the seller whose product you view may use their connected
             Meta Pixel or TikTok Pixel to receive product-view and checkout
-            events. For a completed purchase, Plugsy may also send a server-side
+            events. Plugsy may also record campaign labels, portfolio views,
+            contact actions, broad device type and broad country in aggregated
+            administrative reports. These reports use a one-way session hash and
+            do not store the visitor&apos;s raw IP address, full browser signature or
+            raw advertising click identifier. For a completed purchase, Plugsy may also send a server-side
             conversion event to that seller&apos;s connected Meta Conversions API
             or TikTok Events API. Plugsy confirms payment first and shares only
             the event and order/product details needed for measurement, with
             customer email hashed where supplied. These optional events are not
             sent when you decline ad measurement; you can change this choice in
-            Marketplace Cookie settings. The seller&apos;s ad platform may process
+            Cookie settings. The seller&apos;s ad platform may process
             the event under its own privacy terms.
           </p>
 

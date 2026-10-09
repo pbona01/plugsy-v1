@@ -76,6 +76,8 @@ import { WorkGrid } from "../components/portfolio/WorkGrid";
 import { YoutubeThumbnail } from "../components/portfolio/YoutubeThumbnail";
 import { getCategoryConfig, CATEGORY_CONFIG } from "../utils/categoryConfig";
 import { showToast } from "../components/Toast";
+import MarketplaceCookieConsent from "../components/marketplace/MarketplaceCookieConsent";
+import { readPlugsyAdConsent, trackPortfolioAdEvent } from "../utils/portfolioAds";
 import {
   EXTRA_CATEGORY_MAX_LENGTH,
   EXTRA_CATEGORY_MIN_LENGTH,
@@ -443,6 +445,34 @@ export function PublicPortfolio({
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+
+  useEffect(() => {
+    if (previewMode || isEditMode || !activeSlug || portfolio?.status !== "published") return;
+    const viewedKey = `plugsy:portfolio-ad-viewed:${activeSlug}`;
+    const recordView = () => {
+      const consent = readPlugsyAdConsent();
+      if ((!consent.analytics && !consent.marketing) || sessionStorage.getItem(viewedKey)) return;
+      void trackPortfolioAdEvent(activeSlug, "ViewContent")
+        .then(() => sessionStorage.setItem(viewedKey, "true"))
+        .catch(() => undefined);
+    };
+    recordView();
+    window.addEventListener("plugsy-cookie-consent", recordView);
+    return () => window.removeEventListener("plugsy-cookie-consent", recordView);
+  }, [activeSlug, isEditMode, portfolio?.status, previewMode]);
+
+  useEffect(() => {
+    if (previewMode || isEditMode || !activeSlug || portfolio?.status !== "published") return;
+    const handleTrackedClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target.closest("a,button") : null;
+      if (!target || !target.closest("#vp-root")) return;
+      const href = target instanceof HTMLAnchorElement ? target.href.toLowerCase() : "";
+      const isContact = href.startsWith("mailto:") || href.startsWith("tel:") || href.includes("wa.me/") || href.includes("whatsapp.com/");
+      void trackPortfolioAdEvent(activeSlug, isContact ? "Contact" : "ClickButton").catch(() => undefined);
+    };
+    document.addEventListener("click", handleTrackedClick, { capture: true });
+    return () => document.removeEventListener("click", handleTrackedClick, { capture: true });
+  }, [activeSlug, isEditMode, portfolio?.status, previewMode]);
 
   const [showVideoComingSoon, setShowVideoComingSoon] = useState(false);
 
@@ -3485,6 +3515,7 @@ export function PublicPortfolio({
           <span className="text-[10px] tracking-widest font-black uppercase opacity-60">Powered by Plugsy</span>
         </div>
       </div>
+      {!previewMode && !isEditMode && <MarketplaceCookieConsent />}
     </>
   );
 }

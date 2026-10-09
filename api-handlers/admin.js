@@ -12,6 +12,7 @@ import { clerkClient } from "@clerk/clerk-sdk-node";
 import { reconcileWalletFunding } from "../api/_walletFundingWebhook.js";
 import { deterministicEventUuid, sendOneSignal } from "../api/_oneSignal.js";
 import { resolveCanonicalClerkId } from "../api/_recipient.js";
+import { encryptMarketplaceAdToken } from "../api/_marketplaceAds.js";
 import {
   AdminOverviewFailure,
   buildOverviewMetrics,
@@ -1468,6 +1469,182 @@ export async function handleAnalytics(req, res, dependencies = {}) {
   }
 }
 
+const PORTFOLIO_AD_RANGES = new Set(["7d", "30d", "90d"]);
+const portfolioAdStart = (range) => {
+  const days = range === "90d" ? 90 : range === "30d" ? 30 : 7;
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCDate(start.getUTCDate() - (days - 1));
+  return { days, start };
+};
+
+function emptyPortfolioAdDays(days) {
+  const result = [];
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const date = new Date();
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCDate(date.getUTCDate() - offset);
+    result.push({ date: date.toISOString().slice(0, 10), views: 0, contacts: 0 });
+  }
+  return result;
+}
+
+export async function handlePortfolioAds(req, res, dependencies = {}) {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  if (!/^Bearer\s+\S+$/i.test(textValue(req.headers?.authorization))) {
+    return res.status(401).json({ success: false, code: "ADMIN_AUTH_REQUIRED", error: "Sign-in is required." });
+  }
+  try {
+    const actor = await (dependencies.authenticate || requireVerifiedClerkUser)(req, res);
+    if (!actor) return;
+    const supabase = dependencies.supabase || getAdminUsersClient();
+    if (!await (dependencies.authorize || authorizeAdminUsersActor)(actor, res, supabase)) return;
+
+    if (req.method === "PUT") {
+      const body = req.body || {};
+      const pixelId = textValue(body.tiktokPixelId);
+      const token = textValue(body.tiktokAccessToken);
+      if (pixelId && !/^[A-Za-z0-9_-]{5,80}$/.test(pixelId)) {
+        return res.status(400).json({ success: false, code: "TIKTOK_PIXEL_INVALID", error: "Enter a valid TikTok Pixel ID." });
+      }
+      if (token && (token.length < 20 || token.length > 2000)) {
+        return res.status(400).json({ success: false, code: "TIKTOK_TOKEN_INVALID", error: "Enter a valid TikTok Events API token." });
+      }
+      const { data: existing, error: readError } = await supabase
+        .from("portfolio_ad_settings_v1")
+        .select("*")
+        .eq("id", "primary")
+        .maybeSingle();
+      if (readError) throw readError;
+      const encryptedToken = body.removeTiktokToken === true
+        ? null
+        : token
+          ? encryptMarketplaceAdToken(token)
+          : existing?.tiktok_access_token_encrypted || null;
+      const enabled = body.enabled === true;
+      if (enabled && (!pixelId || !encryptedToken)) {
+        return res.status(400).json({ success: false, code: "TIKTOK_CONNECTION_INCOMPLETE", error: "Pixel ID and Events API token are required before tracking can be enabled." });
+      }
+      const { data, error } = await supabase
+        .from("portfolio_ad_settings_v1")
+        .upsert({
+          id: "primary",
+          tiktok_pixel_id: pixelId || null,
+          tiktok_access_token_encrypted: encryptedToken,
+          enabled,
+          updated_by: actor.userId,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "id" })
+        .select("tiktok_pixel_id,tiktok_access_token_encrypted,enabled,updated_at")
+        .single();
+      if (error) throw error;
+      return res.status(200).json({
+        success: true,
+        settings: {
+          tiktokPixelId: data.tiktok_pixel_id || "",
+          tiktokTokenConnected: Boolean(data.tiktok_access_token_encrypted),
+          enabled: data.enabled === true,
+          updatedAt: data.updated_at,
+        },
+      });
+    }
+
+    if (req.method !== "GET") {
+      res.setHeader("Allow", "GET, PUT");
+      return res.status(405).json({ success: false, code: "METHOD_NOT_ALLOWED", error: "GET or PUT is required." });
+    }
+    const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
+    const requestedRange = textValue(req.query?.range || url.searchParams.get("range"));
+    const range = PORTFOLIO_AD_RANGES.has(requestedRange) ? requestedRange : "7d";
+    const { days, start } = portfolioAdStart(range);
+    const [eventsResult, settingsResult, portfoliosResult] = await Promise.all([
+      supabase.from("portfolio_ad_events_v1").select("event_id,event_name,occurred_at,portfolio_id,portfolio_slug,session_id_hash,source,medium,campaign,content,device_type,country_code,marketing_consent,provider_delivery_status").gte("occurred_at", start.toISOString()).order("occurred_at", { ascending: true }).limit(10000),
+      supabase.from("portfolio_ad_settings_v1").select("tiktok_pixel_id,tiktok_access_token_encrypted,enabled,updated_at").eq("id", "primary").maybeSingle(),
+      supabase.from("vp_portfolios").select("id,slug,full_name,username,status").eq("status", "published").order("updated_at", { ascending: false }).limit(500),
+    ]);
+    if (eventsResult.error || settingsResult.error || portfoliosResult.error) {
+      const relationMissing = [eventsResult.error, settingsResult.error].some((error) => error?.code === "42P01");
+      if (relationMissing) return res.status(503).json({ success: false, code: "PORTFOLIO_ADS_SCHEMA_REQUIRED", error: "Portfolio Ads database setup is required." });
+      throw eventsResult.error || settingsResult.error || portfoliosResult.error;
+    }
+    const events = eventsResult.data || [];
+    const daily = emptyPortfolioAdDays(days);
+    const dailyMap = new Map(daily.map((item) => [item.date, item]));
+    const campaigns = new Map();
+    const portfolios = new Map();
+    const uniqueViewSessions = new Set();
+    const conversionSessions = new Set();
+    let views = 0;
+    let buttonClicks = 0;
+    let contacts = 0;
+    let registrations = 0;
+    let purchases = 0;
+    let tiktokSent = 0;
+    let tiktokFailed = 0;
+    for (const event of events) {
+      const source = textValue(event.source) || "direct";
+      const campaign = textValue(event.campaign) || "(not set)";
+      const content = textValue(event.content);
+      const key = `${source}\u0000${campaign}\u0000${content}`;
+      const campaignRow = campaigns.get(key) || { source, medium: textValue(event.medium) || "none", campaign, content, views: 0, contacts: 0, registrations: 0, purchases: 0 };
+      const portfolioKey = textValue(event.portfolio_id);
+      const portfolioRow = portfolios.get(portfolioKey) || { id: portfolioKey, slug: event.portfolio_slug, views: 0, contacts: 0 };
+      const day = dailyMap.get(String(event.occurred_at || "").slice(0, 10));
+      if (event.event_name === "ViewContent") {
+        views += 1; campaignRow.views += 1; portfolioRow.views += 1;
+        uniqueViewSessions.add(event.session_id_hash);
+        if (day) day.views += 1;
+      } else if (event.event_name === "ClickButton") buttonClicks += 1;
+      else if (event.event_name === "Contact" || event.event_name === "SubmitForm") {
+        contacts += 1; campaignRow.contacts += 1; portfolioRow.contacts += 1;
+        conversionSessions.add(event.session_id_hash);
+        if (day) day.contacts += 1;
+      } else if (event.event_name === "CompleteRegistration") {
+        registrations += 1; campaignRow.registrations += 1;
+        conversionSessions.add(event.session_id_hash);
+      } else if (event.event_name === "Purchase") {
+        purchases += 1; campaignRow.purchases += 1;
+        conversionSessions.add(event.session_id_hash);
+      }
+      if (event.provider_delivery_status === "sent") tiktokSent += 1;
+      if (event.provider_delivery_status === "failed") tiktokFailed += 1;
+      campaigns.set(key, campaignRow);
+      portfolios.set(portfolioKey, portfolioRow);
+    }
+    const portfolioNames = new Map((portfoliosResult.data || []).map((portfolio) => [portfolio.id, portfolio.full_name || portfolio.username || portfolio.slug]));
+    return res.status(200).json({
+      success: true,
+      range,
+      analytics: {
+        views,
+        uniqueVisitors: uniqueViewSessions.size,
+        buttonClicks,
+        contacts,
+        registrations,
+        purchases,
+        conversionRate: uniqueViewSessions.size > 0 ? (conversionSessions.size / uniqueViewSessions.size) * 100 : 0,
+        tiktokSent,
+        tiktokFailed,
+        daily,
+        campaigns: [...campaigns.values()].sort((a, b) => b.views - a.views || b.contacts - a.contacts).slice(0, 100),
+        portfolios: [...portfolios.values()].map((item) => ({ ...item, name: portfolioNames.get(item.id) || item.slug })).sort((a, b) => b.views - a.views).slice(0, 50),
+      },
+      settings: {
+        tiktokPixelId: settingsResult.data?.tiktok_pixel_id || "",
+        tiktokTokenConnected: Boolean(settingsResult.data?.tiktok_access_token_encrypted),
+        enabled: settingsResult.data?.enabled === true,
+        updatedAt: settingsResult.data?.updated_at || null,
+      },
+      publishedPortfolios: (portfoliosResult.data || []).map((portfolio) => ({ id: portfolio.id, slug: portfolio.slug, name: portfolio.full_name || portfolio.username || portfolio.slug })),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("[portfolio-ads-admin] request failed:", error?.message || error);
+    return res.status(503).json({ success: false, code: "PORTFOLIO_ADS_UNAVAILABLE", error: "Portfolio Ads analytics are temporarily unavailable." });
+  }
+}
+
 export async function handleListPublishedOneLinks(req, res, dependencies = {}) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
@@ -1711,7 +1888,7 @@ async function handleFinancialDashboard(req, res) {
 
 export default async function handler(req, res) {
   if (rejectDisallowedOrigin(req, res, {
-    methods: "POST, OPTIONS, GET",
+    methods: "POST, PUT, OPTIONS, GET",
     headers: "Content-Type, Authorization",
   })) return;
   if (req.method === "OPTIONS") return res.status(200).end()
@@ -1725,6 +1902,7 @@ export default async function handler(req, res) {
   if (action === "list-profiles") return await handleListProfiles(req, res)
   if (action === "overview-metrics") return await handleOverviewMetrics(req, res)
   if (action === "analytics") return await handleAnalytics(req, res)
+  if (action === "portfolio-ads") return await handlePortfolioAds(req, res)
   if (action === "list-published-onelinks") return await handleListPublishedOneLinks(req, res)
   if (action === "list-users") return await handleListUsers(req, res)
   if (action === "list-portfolio_purchases") return await handleListPortfolioPurchases(req, res)

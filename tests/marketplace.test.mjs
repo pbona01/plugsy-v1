@@ -98,7 +98,7 @@ test('cookie choices persist ad consent and clearly confirm the selected mode', 
   const source = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../src/components/marketplace/MarketplaceCookieConsent.tsx', import.meta.url), 'utf8'));
   assert.match(source, /marketing, savedAt/);
   assert.match(source, /plugsy-cookie-consent/);
-  assert.match(source, /Ad measurement enabled for Marketplace purchases/);
+  assert.match(source, /Ad measurement enabled for Plugsy visits and purchases/);
 });
 
 test('marketplace ad measurement is consent gated, encrypted and wired to both providers', async () => {

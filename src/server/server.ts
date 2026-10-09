@@ -1921,6 +1921,7 @@ async function startServer() {
   createApiProxy("/api/purchase-code", "../../api-handlers/purchase-code.js");
   createApiProxy("/api/onelink", "../../api/onelink.js");
   createApiProxy("/api/profile", "../../api/profile.js");
+  createApiProxy("/api/portfolio-ads", "../../api/portfolio-ads.js");
 
   app.all("/api/portfolio", async (req: any, res) => {
     try {

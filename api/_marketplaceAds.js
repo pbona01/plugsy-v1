@@ -15,7 +15,7 @@ export function encryptMarketplaceAdToken(value) {
   return `${iv.toString("hex")}.${cipher.getAuthTag().toString("hex")}.${ciphertext.toString("hex")}`;
 }
 
-function decrypt(value) {
+export function decryptMarketplaceAdToken(value) {
   const [iv, tag, ciphertext] = text(value).split(".");
   if (!/^[a-f0-9]{24}$/i.test(iv || "") || !/^[a-f0-9]{32}$/i.test(tag || "") || !/^[a-f0-9]+$/i.test(ciphertext || "")) throw new Error("AD_TOKEN_INVALID");
   const decipher = createDecipheriv("aes-256-gcm", key(), Buffer.from(iv, "hex"));
@@ -38,7 +38,7 @@ export async function sendMarketplacePurchaseEvents(supabase, { sellerId, listin
 
   if (config.meta_pixel_id && config.meta_access_token_encrypted) tasks.push((async () => {
     const version = /^v\d+\.\d+$/.test(text(process.env.META_GRAPH_API_VERSION)) ? text(process.env.META_GRAPH_API_VERSION) : "v26.0";
-    const accessToken = decrypt(config.meta_access_token_encrypted);
+    const accessToken = decryptMarketplaceAdToken(config.meta_access_token_encrypted);
     const response = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(config.meta_pixel_id)}/events?access_token=${encodeURIComponent(accessToken)}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ data: [{ event_name: "Purchase", event_time: time, event_id: reference, action_source: "website", event_source_url: sourceUrl || undefined,
@@ -49,7 +49,7 @@ export async function sendMarketplacePurchaseEvents(supabase, { sellerId, listin
   })());
 
   if (config.tiktok_pixel_id && config.tiktok_access_token_encrypted) tasks.push((async () => {
-    const accessToken = decrypt(config.tiktok_access_token_encrypted);
+    const accessToken = decryptMarketplaceAdToken(config.tiktok_access_token_encrypted);
     const response = await fetch("https://business-api.tiktok.com/open_api/v1.3/event/track/", {
       method: "POST", headers: { "Content-Type": "application/json", "Access-Token": accessToken },
       body: JSON.stringify({ event_source: "web", event_source_id: config.tiktok_pixel_id, data: [{ event: "Purchase", event_time: time, event_id: reference,
