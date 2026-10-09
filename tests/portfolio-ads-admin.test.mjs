@@ -24,6 +24,10 @@ test("portfolio tracking is consent gated and stores only pseudonymous attributi
   assert.match(client, /CONSENT_NOT_GRANTED/);
   assert.match(client, /utm_source/);
   assert.match(client, /ttclid/);
+  assert.match(client, /DB4HTERC77UFAQAVQO80/);
+  assert.match(client, /trackPlugsyTikTokEvent\(tiktokPixelId/);
+  assert.match(client, /if \(consent\.marketing\)/);
+  assert.match(vercel, /https:\/\/analytics\.tiktok\.com/);
   assert.match(api, /body\.analyticsConsent !== true && body\.marketingConsent !== true/);
   assert.match(api, /session_id_hash: sha256\(sessionId\)/);
   assert.match(api, /click_id_hash: clickId \? sha256\(clickId\) : null/);
@@ -37,6 +41,7 @@ test("TikTok credentials are encrypted and never returned to the browser", () =>
   const adminApi = read("api-handlers/admin.js");
   const crypto = read("api/_marketplaceAds.js");
   assert.match(adminApi, /encryptMarketplaceAdToken\(token\)/);
+  assert.match(adminApi, /DEFAULT_PORTFOLIO_TIKTOK_PIXEL_ID = "DB4HTERC77UFAQAVQO80"/);
   assert.match(adminApi, /tiktokTokenConnected: Boolean/);
   assert.doesNotMatch(adminApi, /tiktokAccessToken:\s*data\./);
   assert.match(crypto, /aes-256-gcm/);

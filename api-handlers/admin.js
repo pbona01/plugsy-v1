@@ -1470,6 +1470,7 @@ export async function handleAnalytics(req, res, dependencies = {}) {
 }
 
 const PORTFOLIO_AD_RANGES = new Set(["7d", "30d", "90d"]);
+const DEFAULT_PORTFOLIO_TIKTOK_PIXEL_ID = "DB4HTERC77UFAQAVQO80";
 const portfolioAdStart = (range) => {
   const days = range === "90d" ? 90 : range === "30d" ? 30 : 7;
   const start = new Date();
@@ -1631,7 +1632,7 @@ export async function handlePortfolioAds(req, res, dependencies = {}) {
         portfolios: [...portfolios.values()].map((item) => ({ ...item, name: portfolioNames.get(item.id) || item.slug })).sort((a, b) => b.views - a.views).slice(0, 50),
       },
       settings: {
-        tiktokPixelId: settingsResult.data?.tiktok_pixel_id || "",
+        tiktokPixelId: settingsResult.data?.tiktok_pixel_id || DEFAULT_PORTFOLIO_TIKTOK_PIXEL_ID,
         tiktokTokenConnected: Boolean(settingsResult.data?.tiktok_access_token_encrypted),
         enabled: settingsResult.data?.enabled === true,
         updatedAt: settingsResult.data?.updated_at || null,

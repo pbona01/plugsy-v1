@@ -1,3 +1,5 @@
+import { trackPlugsyTikTokEvent } from "./marketplaceAds";
+
 export type PortfolioAdEventName =
   | "ViewContent"
   | "ClickButton"
@@ -12,6 +14,7 @@ type Attribution = { source: string; medium: string; campaign: string; content: 
 const consentKey = "plugsy:marketplace:cookie-consent:v1";
 const sessionKey = "plugsy:portfolio-ad-session:v1";
 const attributionKey = "plugsy:portfolio-ad-attribution:v1";
+const tiktokPixelId = "DB4HTERC77UFAQAVQO80";
 
 export function readPlugsyAdConsent(): Consent {
   try {
@@ -67,13 +70,21 @@ export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: Po
   const consent = readPlugsyAdConsent();
   if (!consent.analytics && !consent.marketing) return { recorded: false, reason: "CONSENT_NOT_GRANTED" };
   const attribution = readAttribution();
+  const eventId = crypto.randomUUID();
+  if (consent.marketing) {
+    trackPlugsyTikTokEvent(tiktokPixelId, eventName, {
+      content_id: portfolioSlug,
+      content_name: `Portfolio: ${portfolioSlug}`,
+      content_type: "product",
+    }, eventId);
+  } else window.ttq?.revokeConsent?.();
   const response = await fetch("/api/portfolio-ads?action=track", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     keepalive: true,
     body: JSON.stringify({
       eventName,
-      eventId: crypto.randomUUID(),
+      eventId,
       sessionId: sessionId(),
       portfolioSlug,
       analyticsConsent: consent.analytics,

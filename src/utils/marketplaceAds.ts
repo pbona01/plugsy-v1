@@ -44,6 +44,17 @@ function ensureTikTok(id: string) {
   if (!window.__plugsyTikTokPixels.has(id)) { window.ttq.load(id); window.__plugsyTikTokPixels.add(id); }
 }
 
+export function trackPlugsyTikTokEvent(pixelId: string, eventName: string, properties: Record<string, unknown>, eventId?: string) {
+  if (!pixelId || !getMarketingConsent()) {
+    window.ttq?.revokeConsent?.();
+    return false;
+  }
+  ensureTikTok(pixelId);
+  window.ttq?.grantConsent?.();
+  window.ttq?.instance?.(pixelId)?.track?.(eventName, properties, eventId ? { event_id: eventId } : undefined);
+  return true;
+}
+
 export function trackMarketplaceProductView(pixels: MarketplaceAdPixels | null | undefined, product: MarketplaceAdProduct) {
   if (!getMarketingConsent()) return;
   if (pixels?.metaPixelId) {
