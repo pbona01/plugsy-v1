@@ -14,6 +14,7 @@ type Attribution = { source: string; medium: string; campaign: string; content: 
 const consentKey = "plugsy:marketplace:cookie-consent:v1";
 const sessionKey = "plugsy:portfolio-ad-session:v1";
 const attributionKey = "plugsy:portfolio-ad-attribution:v1";
+const portfolioSlugKey = "plugsy:portfolio-ad-slug:v1";
 const tiktokPixelId = "DB4HTERC77UFAQAVQO80";
 
 export function readPlugsyAdConsent(): Consent {
@@ -66,11 +67,12 @@ function sessionId() {
   }
 }
 
-export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: PortfolioAdEventName) {
+export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: PortfolioAdEventName, authToken?: string | null) {
   const consent = readPlugsyAdConsent();
   if (!consent.analytics && !consent.marketing) return { recorded: false, reason: "CONSENT_NOT_GRANTED" };
   const attribution = readAttribution();
   const eventId = crypto.randomUUID();
+  try { sessionStorage.setItem(portfolioSlugKey, portfolioSlug); } catch { /* attribution remains best effort */ }
   if (consent.marketing) {
     trackPlugsyTikTokEvent(tiktokPixelId, eventName, {
       content_id: portfolioSlug,
@@ -80,7 +82,7 @@ export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: Po
   } else window.ttq?.revokeConsent?.();
   const response = await fetch("/api/portfolio-ads?action=track", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
     keepalive: true,
     body: JSON.stringify({
       eventName,
@@ -95,4 +97,11 @@ export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: Po
   });
   if (!response.ok) throw new Error("Portfolio event could not be recorded.");
   return response.json();
+}
+
+export async function trackPortfolioRegistration(authToken: string) {
+  let portfolioSlug = "";
+  try { portfolioSlug = String(sessionStorage.getItem(portfolioSlugKey) || "").trim(); } catch { /* no attributable portfolio */ }
+  if (!portfolioSlug || !authToken) return { recorded: false, reason: "ATTRIBUTION_NOT_FOUND" };
+  return trackPortfolioAdEvent(portfolioSlug, "CompleteRegistration", authToken);
 }

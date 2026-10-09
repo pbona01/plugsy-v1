@@ -142,7 +142,7 @@ async function performVerifiedClerkProfileSync({ supabase, actor, requestCountry
   if (existing) {
     if (Object.keys(identityPatch).length === 0) {
       const profile = normalizeProfile(existing);
-      return { success: true, status: 200, profile };
+      return { success: true, status: 200, profile, created: false };
     }
     identityPatch.updated_at = new Date().toISOString();
     result = await supabase
@@ -176,6 +176,7 @@ async function performVerifiedClerkProfileSync({ supabase, actor, requestCountry
     success: true,
     status: 200,
     profile,
+    created: !existing,
   };
 }
 

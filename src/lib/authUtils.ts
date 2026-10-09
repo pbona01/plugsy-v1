@@ -53,7 +53,7 @@ export const syncClerkUserToSupabase = async (
       );
     }
 
-    return data.profile;
+    return { ...data.profile, _wasCreated: data.created === true };
   })();
 
   inFlightSyncs.set(user.id, syncPromise);

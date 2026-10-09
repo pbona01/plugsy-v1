@@ -98,6 +98,7 @@ import { safeAuthRedirect } from "./utils/safeAuthRedirect";
 import RealtimeNotifications from "./components/RealtimeNotifications";
 import { Toaster } from "react-hot-toast";
 import { initOneSignal, clearAppBadge, silentlyLinkOneSignalUser, logoutOneSignalUser } from "./utils/onesignal";
+import { trackPortfolioRegistration } from "./utils/portfolioAds";
 
 const EditPortfolioGuard = () => {
   const { id } = useParams()
@@ -335,7 +336,11 @@ export default function App() {
     async function syncUser() {
       if (isReady && userId && user && isSupabaseReady) {
         try {
-          await syncClerkUserToSupabase(user, getToken);
+          const profile = await syncClerkUserToSupabase(user, getToken);
+          if (profile?._wasCreated) {
+            const token = await getToken();
+            if (token) await trackPortfolioRegistration(token);
+          }
         } catch (error) {
           console.error("Error syncing user:", error);
         }

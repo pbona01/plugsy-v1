@@ -53,3 +53,19 @@ test("public portfolios record views after consent and classify contact actions"
   assert.match(portfolio, /isContact \? "Contact" : "ClickButton"/);
   assert.match(portfolio, /<MarketplaceCookieConsent \/>/);
 });
+
+test("CompleteRegistration fires only after a new authenticated Plugsy profile is confirmed", () => {
+  const app = read("src/App.tsx");
+  const auth = read("src/lib/authUtils.ts");
+  const profileSync = read("api/_profileSync.js");
+  const client = read("src/utils/portfolioAds.ts");
+  const api = read("api-handlers/portfolio-ads.js");
+  assert.match(profileSync, /created: !existing/);
+  assert.match(auth, /_wasCreated: data\.created === true/);
+  assert.match(app, /if \(profile\?\._wasCreated\)/);
+  assert.match(app, /trackPortfolioRegistration\(token\)/);
+  assert.match(client, /"CompleteRegistration", authToken/);
+  assert.match(api, /eventName === "CompleteRegistration"/);
+  assert.match(api, /requireVerifiedClerkUser\(req, res\)/);
+  assert.match(api, /REGISTRATION_NOT_NEW/);
+});

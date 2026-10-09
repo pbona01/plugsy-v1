@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { rejectDisallowedOrigin } from "../api/_httpSecurity.js";
 import { decryptMarketplaceAdToken } from "../api/_marketplaceAds.js";
+import { requireVerifiedClerkUser } from "../api/_clerkAuth.js";
 
 const EVENT_NAMES = new Set([
   "ViewContent",
@@ -114,6 +115,21 @@ async function handleTrack(req, res) {
   if (device === "bot") return res.status(202).json({ success: true, recorded: false, reason: "AUTOMATION_FILTERED" });
 
   const supabase = client();
+  let registrationActor = null;
+  if (eventName === "CompleteRegistration") {
+    registrationActor = await requireVerifiedClerkUser(req, res);
+    if (!registrationActor) return;
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("created_at")
+      .eq("clerk_id", registrationActor.userId)
+      .maybeSingle();
+    if (profileError) throw profileError;
+    const createdAt = new Date(profile?.created_at || 0).getTime();
+    if (!Number.isFinite(createdAt) || Date.now() - createdAt > 30 * 60_000) {
+      return res.status(202).json({ success: true, recorded: false, reason: "REGISTRATION_NOT_NEW" });
+    }
+  }
   const { data: portfolio, error: portfolioError } = await supabase
     .from("vp_portfolios")
     .select("id,slug,status")
@@ -166,7 +182,7 @@ async function handleTrack(req, res) {
 }
 
 export default async function handler(req, res) {
-  if (rejectDisallowedOrigin(req, res, { methods: "POST, OPTIONS", headers: "Content-Type" })) return;
+  if (rejectDisallowedOrigin(req, res, { methods: "POST, OPTIONS", headers: "Authorization, Content-Type" })) return;
   if (req.method === "OPTIONS") return res.status(200).end();
   try {
     const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
