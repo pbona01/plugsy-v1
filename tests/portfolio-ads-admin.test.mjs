@@ -69,3 +69,10 @@ test("CompleteRegistration fires only after a new authenticated Plugsy profile i
   assert.match(api, /requireVerifiedClerkUser\(req, res\)/);
   assert.match(api, /REGISTRATION_NOT_NEW/);
 });
+
+test("admin portfolio ads query uses only real vp_portfolios columns", () => {
+  const admin = read("api-handlers/admin.js");
+  assert.match(admin, /select\("id,slug,full_name,status"\)/);
+  assert.doesNotMatch(admin, /select\("id,slug,full_name,username,status"\)/);
+  assert.match(admin, /portfolio\.full_name \|\| portfolio\.slug/);
+});

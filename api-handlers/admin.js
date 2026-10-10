@@ -1562,7 +1562,7 @@ export async function handlePortfolioAds(req, res, dependencies = {}) {
     const [eventsResult, settingsResult, portfoliosResult] = await Promise.all([
       supabase.from("portfolio_ad_events_v1").select("event_id,event_name,occurred_at,portfolio_id,portfolio_slug,session_id_hash,source,medium,campaign,content,device_type,country_code,marketing_consent,provider_delivery_status").gte("occurred_at", start.toISOString()).order("occurred_at", { ascending: true }).limit(10000),
       supabase.from("portfolio_ad_settings_v1").select("tiktok_pixel_id,tiktok_access_token_encrypted,enabled,updated_at").eq("id", "primary").maybeSingle(),
-      supabase.from("vp_portfolios").select("id,slug,full_name,username,status").eq("status", "published").order("updated_at", { ascending: false }).limit(500),
+      supabase.from("vp_portfolios").select("id,slug,full_name,status").eq("status", "published").order("updated_at", { ascending: false }).limit(500),
     ]);
     if (eventsResult.error || settingsResult.error || portfoliosResult.error) {
       const relationMissing = [eventsResult.error, settingsResult.error].some((error) => error?.code === "42P01");
@@ -1613,7 +1613,7 @@ export async function handlePortfolioAds(req, res, dependencies = {}) {
       campaigns.set(key, campaignRow);
       portfolios.set(portfolioKey, portfolioRow);
     }
-    const portfolioNames = new Map((portfoliosResult.data || []).map((portfolio) => [portfolio.id, portfolio.full_name || portfolio.username || portfolio.slug]));
+    const portfolioNames = new Map((portfoliosResult.data || []).map((portfolio) => [portfolio.id, portfolio.full_name || portfolio.slug]));
     return res.status(200).json({
       success: true,
       range,
@@ -1637,7 +1637,7 @@ export async function handlePortfolioAds(req, res, dependencies = {}) {
         enabled: settingsResult.data?.enabled === true,
         updatedAt: settingsResult.data?.updated_at || null,
       },
-      publishedPortfolios: (portfoliosResult.data || []).map((portfolio) => ({ id: portfolio.id, slug: portfolio.slug, name: portfolio.full_name || portfolio.username || portfolio.slug })),
+      publishedPortfolios: (portfoliosResult.data || []).map((portfolio) => ({ id: portfolio.id, slug: portfolio.slug, name: portfolio.full_name || portfolio.slug })),
       updatedAt: new Date().toISOString(),
     });
   } catch (error) {
