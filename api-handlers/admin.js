@@ -1614,6 +1614,7 @@ export async function handlePortfolioAds(req, res, dependencies = {}) {
       portfolios.set(portfolioKey, portfolioRow);
     }
     const portfolioNames = new Map((portfoliosResult.data || []).map((portfolio) => [portfolio.id, portfolio.full_name || portfolio.slug]));
+    portfolioNames.set("00000000-0000-4000-8000-000000000001", "Plugsy Portfolio Builder");
     return res.status(200).json({
       success: true,
       range,

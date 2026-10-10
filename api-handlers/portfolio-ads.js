@@ -15,6 +15,8 @@ const EVENT_NAMES = new Set([
 const text = (value, max = 160) => String(value || "").trim().slice(0, max);
 const sha256 = (value) => createHash("sha256").update(String(value || "")).digest("hex");
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PORTFOLIO_BUILDER_SLUG = "plugsy-portfolio-builder";
+const PORTFOLIO_BUILDER_ID = "00000000-0000-4000-8000-000000000001";
 const rateWindows = new Map();
 
 function client() {
@@ -130,13 +132,19 @@ async function handleTrack(req, res) {
       return res.status(202).json({ success: true, recorded: false, reason: "REGISTRATION_NOT_NEW" });
     }
   }
-  const { data: portfolio, error: portfolioError } = await supabase
-    .from("vp_portfolios")
-    .select("id,slug,status")
-    .eq("slug", slug)
-    .eq("status", "published")
-    .maybeSingle();
-  if (portfolioError) throw portfolioError;
+  let portfolio = slug === PORTFOLIO_BUILDER_SLUG
+    ? { id: PORTFOLIO_BUILDER_ID, slug: PORTFOLIO_BUILDER_SLUG, status: "published" }
+    : null;
+  if (!portfolio) {
+    const { data, error: portfolioError } = await supabase
+      .from("vp_portfolios")
+      .select("id,slug,status")
+      .eq("slug", slug)
+      .eq("status", "published")
+      .maybeSingle();
+    if (portfolioError) throw portfolioError;
+    portfolio = data;
+  }
   if (!portfolio) return res.status(404).json({ success: false, error: "Published portfolio not found." });
 
   const attribution = body.attribution && typeof body.attribution === "object" ? body.attribution : {};

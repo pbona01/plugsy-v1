@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Helmet } from "react-helmet-async";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { useAuth, useUser } from "@clerk/clerk-react";
 import {
@@ -21,6 +21,8 @@ import { LiquidGlass } from "../components/ui/LiquidGlass";
 import { cn } from "../lib/utils";
 import { ProductCardSkeleton } from "../components/ProductCardSkeleton";
 import { PaymentModeBanner } from "../components/PaymentModeBanner";
+import MarketplaceCookieConsent from "../components/marketplace/MarketplaceCookieConsent";
+import { trackPortfolioAdEvent } from "../utils/portfolioAds";
 
 const CountdownTimer = ({ expiresAt }: { expiresAt?: string }) => {
   const [timeLeft, setTimeLeft] = useState({ hours: 0, minutes: 0, seconds: 0 });
@@ -72,6 +74,8 @@ export default function Products() {
   const { userId, getToken } = useAuth();
   const { user } = useUser();
   const navigate = useNavigate();
+  const location = useLocation();
+  const portfolioCampaignTracked = useRef(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [plans, setPlans] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,6 +83,24 @@ export default function Products() {
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [activeMedal, setActiveMedal] = useState<any>(null);
   const [loadingMedal, setLoadingMedal] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("portfolio_campaign") !== "builder") return;
+    const recordVisit = () => {
+      if (portfolioCampaignTracked.current) return;
+      void trackPortfolioAdEvent("plugsy-portfolio-builder", "ViewContent")
+        .then((result) => { if (result?.recorded) portfolioCampaignTracked.current = true; })
+        .catch(() => undefined);
+    };
+    recordVisit();
+    const onConsent = (event: Event) => {
+      const choice = (event as CustomEvent<{ analytics?: boolean; marketing?: boolean }>).detail;
+      if (choice?.analytics || choice?.marketing) recordVisit();
+    };
+    window.addEventListener("plugsy-cookie-consent", onConsent);
+    return () => window.removeEventListener("plugsy-cookie-consent", onConsent);
+  }, [location.search]);
 
   useEffect(() => {
     if (userId) {
@@ -459,7 +481,12 @@ export default function Products() {
                     button
                     chromaticAberration={2}
                     className="btn-primary w-full !px-2 !py-3 sm:!py-4"
-                    onClick={() => navigate("/portfolio")}
+                    onClick={() => {
+                      if (new URLSearchParams(location.search).get("portfolio_campaign") === "builder") {
+                        void trackPortfolioAdEvent("plugsy-portfolio-builder", "ClickButton").catch(() => undefined);
+                      }
+                      navigate("/portfolio");
+                    }}
                   >
                     <span className="flex items-center justify-center gap-1 text-[9px] font-black uppercase tracking-wider sm:gap-2 sm:text-xs sm:tracking-widest">
                       Build Portfolio <ArrowRight size={16} />
@@ -519,6 +546,7 @@ export default function Products() {
         </div>
       </div>
 
+      <MarketplaceCookieConsent />
     </div>
   );
 }
