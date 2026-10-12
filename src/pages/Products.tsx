@@ -546,7 +546,7 @@ export default function Products() {
         </div>
       </div>
 
-      <MarketplaceCookieConsent />
+      {new URLSearchParams(location.search).get("portfolio_campaign") === "builder" && <MarketplaceCookieConsent />}
     </div>
   );
 }

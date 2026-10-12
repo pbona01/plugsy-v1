@@ -49,11 +49,16 @@ test("TikTok credentials are encrypted and never returned to the browser", () =>
   assert.match(crypto, /aes-256-gcm/);
 });
 
-test("public portfolios record views after consent and classify contact actions", () => {
+test("public portfolios track and show consent only for actual ad campaign visits", () => {
   const portfolio = read("src/pages/PublicPortfolio.tsx");
+  const client = read("src/utils/portfolioAds.ts");
+  assert.match(portfolio, /const isAdCampaignVisit = .*hasPortfolioAdAttribution\(\)/);
   assert.match(portfolio, /trackPortfolioAdEvent\(activeSlug, "ViewContent"\)/);
   assert.match(portfolio, /isContact \? "Contact" : "ClickButton"/);
-  assert.match(portfolio, /<MarketplaceCookieConsent \/>/);
+  assert.match(portfolio, /\{isAdCampaignVisit && <MarketplaceCookieConsent \/>\}/);
+  assert.match(client, /source === "tiktok"/);
+  assert.match(client, /medium === "paid_social"/);
+  assert.match(client, /params\.get\("ttclid"\)/);
 });
 
 test("general Plugsy portfolio campaigns never default to an individual profile", () => {
@@ -64,6 +69,7 @@ test("general Plugsy portfolio campaigns never default to an individual profile"
   assert.match(panel, /isBuilderCampaign \? "\/products" : `\/vp\/\$\{selectedPortfolio\}`/);
   assert.match(products, /trackPortfolioAdEvent\("plugsy-portfolio-builder", "ViewContent"\)/);
   assert.match(products, /trackPortfolioAdEvent\("plugsy-portfolio-builder", "ClickButton"\)/);
+  assert.match(products, /portfolio_campaign.*builder.*<MarketplaceCookieConsent \/>/);
   assert.match(api, /PORTFOLIO_BUILDER_SLUG/);
   assert.match(api, /PORTFOLIO_BUILDER_ID/);
 });

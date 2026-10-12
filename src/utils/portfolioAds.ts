@@ -26,6 +26,17 @@ export function readPlugsyAdConsent(): Consent {
   }
 }
 
+export function hasPortfolioAdAttribution(search?: string): boolean {
+  const value = search ?? (typeof window === "undefined" ? "" : window.location.search);
+  const params = new URLSearchParams(value);
+  const source = safeValue(params.get("utm_source"), 80).toLowerCase();
+  const medium = safeValue(params.get("utm_medium"), 80).toLowerCase();
+  return params.get("portfolio_campaign") === "builder"
+    || source === "tiktok"
+    || medium === "paid_social"
+    || Boolean(safeValue(params.get("ttclid"), 220));
+}
+
 const safeValue = (value: string | null, max: number) => String(value || "").trim().slice(0, max);
 
 function readAttribution(): Attribution {

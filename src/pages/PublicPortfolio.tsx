@@ -77,7 +77,7 @@ import { YoutubeThumbnail } from "../components/portfolio/YoutubeThumbnail";
 import { getCategoryConfig, CATEGORY_CONFIG } from "../utils/categoryConfig";
 import { showToast } from "../components/Toast";
 import MarketplaceCookieConsent from "../components/marketplace/MarketplaceCookieConsent";
-import { readPlugsyAdConsent, trackPortfolioAdEvent } from "../utils/portfolioAds";
+import { hasPortfolioAdAttribution, readPlugsyAdConsent, trackPortfolioAdEvent } from "../utils/portfolioAds";
 import {
   EXTRA_CATEGORY_MAX_LENGTH,
   EXTRA_CATEGORY_MIN_LENGTH,
@@ -416,6 +416,7 @@ export function PublicPortfolio({
 }) {
   const { slug } = useParams<{ slug: string }>();
   const activeSlug = slugOrId || slug;
+  const isAdCampaignVisit = !previewMode && !isEditMode && hasPortfolioAdAttribution();
 
   const [portfolio, setPortfolio] = useState<VPPortfolio | null>(
     previewData || null,
@@ -447,7 +448,7 @@ export function PublicPortfolio({
   }, []);
 
   useEffect(() => {
-    if (previewMode || isEditMode || !activeSlug || portfolio?.status !== "published") return;
+    if (!isAdCampaignVisit || !activeSlug || portfolio?.status !== "published") return;
     const viewedKey = `plugsy:portfolio-ad-viewed:${activeSlug}`;
     const recordView = () => {
       const consent = readPlugsyAdConsent();
@@ -459,10 +460,10 @@ export function PublicPortfolio({
     recordView();
     window.addEventListener("plugsy-cookie-consent", recordView);
     return () => window.removeEventListener("plugsy-cookie-consent", recordView);
-  }, [activeSlug, isEditMode, portfolio?.status, previewMode]);
+  }, [activeSlug, isAdCampaignVisit, portfolio?.status]);
 
   useEffect(() => {
-    if (previewMode || isEditMode || !activeSlug || portfolio?.status !== "published") return;
+    if (!isAdCampaignVisit || !activeSlug || portfolio?.status !== "published") return;
     const handleTrackedClick = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target.closest("a,button") : null;
       if (!target || !target.closest("#vp-root")) return;
@@ -472,7 +473,7 @@ export function PublicPortfolio({
     };
     document.addEventListener("click", handleTrackedClick, { capture: true });
     return () => document.removeEventListener("click", handleTrackedClick, { capture: true });
-  }, [activeSlug, isEditMode, portfolio?.status, previewMode]);
+  }, [activeSlug, isAdCampaignVisit, portfolio?.status]);
 
   const [showVideoComingSoon, setShowVideoComingSoon] = useState(false);
 
@@ -3515,7 +3516,7 @@ export function PublicPortfolio({
           <span className="text-[10px] tracking-widest font-black uppercase opacity-60">Powered by Plugsy</span>
         </div>
       </div>
-      {!previewMode && !isEditMode && <MarketplaceCookieConsent />}
+      {isAdCampaignVisit && <MarketplaceCookieConsent />}
     </>
   );
 }
