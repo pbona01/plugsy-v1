@@ -10,8 +10,8 @@ test("admin exposes a dedicated TikTok portfolio ads section", () => {
   assert.match(admin, /id: 'portfolio-ads'/);
   assert.match(admin, /<TikTokAdsPanel getToken=\{getToken\}/);
   assert.match(panel, /Campaign attribution/);
-  assert.match(panel, /Create a trackable Plugsy URL/);
-  assert.match(panel, /Plugsy Portfolio Builder — use for Plugsy ads/);
+  assert.match(panel, /Create a trackable Portfolio Builder link/);
+  assert.match(panel, /Plugsy Portfolio Builder/);
   assert.match(panel, /portfolio_campaign/);
   assert.match(panel, /TikTok Events API/);
   assert.match(panel, /Privacy-safe by design/);
@@ -69,8 +69,9 @@ test("general Plugsy portfolio campaigns never default to an individual profile"
   const panel = read("src/components/admin/TikTokAdsPanel.tsx");
   const products = read("src/pages/Products.tsx");
   const api = read("api-handlers/portfolio-ads.js");
-  assert.match(panel, /useState\("plugsy-portfolio-builder"\)/);
-  assert.match(panel, /isBuilderCampaign \? "\/products" : `\/vp\/\$\{selectedPortfolio\}`/);
+  assert.match(panel, /new URL\("\/products", origin\)/);
+  assert.match(panel, /url\.searchParams\.set\("portfolio_campaign", "builder"\)/);
+  assert.doesNotMatch(panel, /selectedPortfolio|publishedPortfolios\.map|Public profile:/);
   assert.match(products, /trackPortfolioAdEvent\("plugsy-portfolio-builder", "ViewContent"\)/);
   assert.match(products, /trackPortfolioAdEvent\("plugsy-portfolio-builder", "ClickButton"\)/);
   assert.match(products, /portfolio_campaign.*builder.*<MarketplaceCookieConsent \/>/);
