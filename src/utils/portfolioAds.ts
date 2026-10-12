@@ -14,8 +14,12 @@ type Attribution = { source: string; medium: string; campaign: string; content: 
 const consentKey = "plugsy:marketplace:cookie-consent:v1";
 const sessionKey = "plugsy:portfolio-ad-session:v1";
 const attributionKey = "plugsy:portfolio-ad-attribution:v1";
+const persistentAttributionKey = "plugsy:portfolio-ad-attribution-persisted:v1";
 const portfolioSlugKey = "plugsy:portfolio-ad-slug:v1";
+const persistentPortfolioSlugKey = "plugsy:portfolio-ad-slug-persisted:v1";
+const pendingRegistrationKey = "plugsy:portfolio-ad-registration-pending:v1";
 const tiktokPixelId = "DB4HTERC77UFAQAVQO80";
+const attributionLifetimeMs = 24 * 60 * 60 * 1000;
 
 export function readPlugsyAdConsent(): Consent {
   try {
@@ -51,8 +55,16 @@ function readAttribution(): Attribution {
   };
   const hasIncoming = Boolean(incoming.source || incoming.campaign || incoming.ttclid);
   try {
-    if (hasIncoming) sessionStorage.setItem(attributionKey, JSON.stringify(incoming));
-    const stored = JSON.parse(sessionStorage.getItem(attributionKey) || "{}");
+    if (hasIncoming) {
+      sessionStorage.setItem(attributionKey, JSON.stringify(incoming));
+      localStorage.setItem(persistentAttributionKey, JSON.stringify({ ...incoming, savedAt: Date.now() }));
+    }
+    const sessionStored = JSON.parse(sessionStorage.getItem(attributionKey) || "{}");
+    const persistentStored = JSON.parse(localStorage.getItem(persistentAttributionKey) || "{}");
+    const persistedIsFresh = Number.isFinite(Number(persistentStored.savedAt))
+      && Date.now() - Number(persistentStored.savedAt) <= attributionLifetimeMs;
+    const stored = Object.keys(sessionStored).length ? sessionStored : persistedIsFresh ? persistentStored : {};
+    if (!persistedIsFresh && persistentStored.savedAt) localStorage.removeItem(persistentAttributionKey);
     return {
       source: safeValue(hasIncoming ? incoming.source : stored.source, 80).toLowerCase() || "direct",
       medium: safeValue(hasIncoming ? incoming.medium : stored.medium, 80).toLowerCase() || "none",
@@ -78,12 +90,15 @@ function sessionId() {
   }
 }
 
-export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: PortfolioAdEventName, authToken?: string | null) {
+export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: PortfolioAdEventName, authToken?: string | null, stableEventId?: string) {
   const consent = readPlugsyAdConsent();
   if (!consent.analytics && !consent.marketing) return { recorded: false, reason: "CONSENT_NOT_GRANTED" };
   const attribution = readAttribution();
-  const eventId = crypto.randomUUID();
-  try { sessionStorage.setItem(portfolioSlugKey, portfolioSlug); } catch { /* attribution remains best effort */ }
+  const eventId = stableEventId || crypto.randomUUID();
+  try {
+    sessionStorage.setItem(portfolioSlugKey, portfolioSlug);
+    localStorage.setItem(persistentPortfolioSlugKey, JSON.stringify({ slug: portfolioSlug, savedAt: Date.now() }));
+  } catch { /* attribution remains best effort */ }
   if (consent.marketing) {
     trackPlugsyTikTokEvent(tiktokPixelId, eventName, {
       content_id: portfolioSlug,
@@ -112,7 +127,34 @@ export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: Po
 
 export async function trackPortfolioRegistration(authToken: string) {
   let portfolioSlug = "";
-  try { portfolioSlug = String(sessionStorage.getItem(portfolioSlugKey) || "").trim(); } catch { /* no attributable portfolio */ }
+  try {
+    portfolioSlug = String(sessionStorage.getItem(portfolioSlugKey) || "").trim();
+    if (!portfolioSlug) {
+      const persisted = JSON.parse(localStorage.getItem(persistentPortfolioSlugKey) || "{}");
+      if (Date.now() - Number(persisted.savedAt || 0) <= attributionLifetimeMs) portfolioSlug = String(persisted.slug || "").trim();
+    }
+  } catch { /* no attributable portfolio */ }
   if (!portfolioSlug || !authToken) return { recorded: false, reason: "ATTRIBUTION_NOT_FOUND" };
-  return trackPortfolioAdEvent(portfolioSlug, "CompleteRegistration", authToken);
+  const consent = readPlugsyAdConsent();
+  if (!consent.analytics && !consent.marketing) return { recorded: false, reason: "CONSENT_NOT_GRANTED" };
+  const pending = { portfolioSlug, eventId: crypto.randomUUID(), createdAt: Date.now() };
+  try { localStorage.setItem(pendingRegistrationKey, JSON.stringify(pending)); } catch { /* retry remains best effort */ }
+  const result = await trackPortfolioAdEvent(portfolioSlug, "CompleteRegistration", authToken, pending.eventId);
+  try { localStorage.removeItem(pendingRegistrationKey); } catch { /* no-op */ }
+  return result;
+}
+
+export async function retryPendingPortfolioRegistration(authToken: string) {
+  if (!authToken) return { recorded: false, reason: "AUTH_REQUIRED" };
+  let pending: { portfolioSlug?: string; eventId?: string; createdAt?: number } = {};
+  try { pending = JSON.parse(localStorage.getItem(pendingRegistrationKey) || "{}"); } catch { /* malformed pending state */ }
+  const isFresh = Number.isFinite(Number(pending.createdAt))
+    && Date.now() - Number(pending.createdAt) <= 30 * 60 * 1000;
+  if (!isFresh || !pending.portfolioSlug || !pending.eventId) {
+    try { localStorage.removeItem(pendingRegistrationKey); } catch { /* no-op */ }
+    return { recorded: false, reason: "NO_PENDING_REGISTRATION" };
+  }
+  const result = await trackPortfolioAdEvent(pending.portfolioSlug, "CompleteRegistration", authToken, pending.eventId);
+  try { localStorage.removeItem(pendingRegistrationKey); } catch { /* no-op */ }
+  return result;
 }

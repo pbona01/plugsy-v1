@@ -81,7 +81,7 @@ async function sendTikTokEvent(settings, event, req, rawClickId) {
           ttclid: rawClickId || undefined,
           ip: requestIp(req) || undefined,
           user_agent: text(req.headers?.["user-agent"], 500) || undefined,
-          external_id: [event.session_id_hash],
+          external_id: event.session_id_hash,
         },
         page: { url: safePageUrl(req.body?.pageUrl), referrer: safePageUrl(req.headers?.referer) },
         properties: {

@@ -98,7 +98,7 @@ import { safeAuthRedirect } from "./utils/safeAuthRedirect";
 import RealtimeNotifications from "./components/RealtimeNotifications";
 import { Toaster } from "react-hot-toast";
 import { initOneSignal, clearAppBadge, silentlyLinkOneSignalUser, logoutOneSignalUser } from "./utils/onesignal";
-import { trackPortfolioRegistration } from "./utils/portfolioAds";
+import { retryPendingPortfolioRegistration, trackPortfolioRegistration } from "./utils/portfolioAds";
 
 const EditPortfolioGuard = () => {
   const { id } = useParams()
@@ -348,6 +348,18 @@ export default function App() {
     }
     syncUser();
   }, [isReady, userId, user, isSupabaseReady, getToken]);
+
+  useEffect(() => {
+    if (!isReady || !userId || !isSupabaseReady) return;
+    const retryRegistration = () => {
+      void getToken()
+        .then((token) => token ? retryPendingPortfolioRegistration(token) : undefined)
+        .catch(() => undefined);
+    };
+    retryRegistration();
+    window.addEventListener("online", retryRegistration);
+    return () => window.removeEventListener("online", retryRegistration);
+  }, [getToken, isReady, isSupabaseReady, userId]);
 
   // Combined loading condition
   const showSpinner =

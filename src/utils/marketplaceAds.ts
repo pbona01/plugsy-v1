@@ -14,6 +14,7 @@ declare global {
     ttq?: any;
     __plugsyMetaPixels?: Set<string>;
     __plugsyTikTokPixels?: Set<string>;
+    __plugsyTikTokPagePixels?: Set<string>;
   }
 }
 
@@ -32,6 +33,7 @@ function ensureMeta(id: string) {
 
 function ensureTikTok(id: string) {
   window.__plugsyTikTokPixels ||= new Set<string>();
+  window.__plugsyTikTokPagePixels ||= new Set<string>();
   if (!window.ttq) {
     const ttq: any = window.ttq = [];
     ttq.methods = ["page", "track", "identify", "instances", "debug", "on", "off", "once", "ready", "alias", "group", "enableCookie", "disableCookie", "holdConsent", "revokeConsent", "grantConsent"];
@@ -42,6 +44,10 @@ function ensureTikTok(id: string) {
     ttq.load = (pixel: string, options?: any) => { ttq._i[pixel] = []; ttq._t[pixel] = Date.now(); ttq._o[pixel] = options || {}; const script = document.createElement("script"); script.async = true; script.src = `https://analytics.tiktok.com/i18n/pixel/events.js?sdkid=${encodeURIComponent(pixel)}&lib=ttq`; document.head.appendChild(script); };
   }
   if (!window.__plugsyTikTokPixels.has(id)) { window.ttq.load(id); window.__plugsyTikTokPixels.add(id); }
+  if (!window.__plugsyTikTokPagePixels.has(id)) {
+    window.ttq?.instance?.(id)?.page?.();
+    window.__plugsyTikTokPagePixels.add(id);
+  }
 }
 
 export function trackPlugsyTikTokEvent(pixelId: string, eventName: string, properties: Record<string, unknown>, eventId?: string) {

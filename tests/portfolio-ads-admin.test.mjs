@@ -29,10 +29,14 @@ test("portfolio tracking is consent gated and stores only pseudonymous attributi
   assert.match(client, /DB4HTERC77UFAQAVQO80/);
   assert.match(client, /trackPlugsyTikTokEvent\(tiktokPixelId/);
   assert.match(client, /if \(consent\.marketing\)/);
+  const pixel = read("src/utils/marketplaceAds.ts");
+  assert.match(pixel, /instance\?\.\(id\)\?\.page\?\.\(\)/);
   assert.match(vercel, /https:\/\/analytics\.tiktok\.com/);
   assert.match(api, /body\.analyticsConsent !== true && body\.marketingConsent !== true/);
   assert.match(api, /session_id_hash: sha256\(sessionId\)/);
   assert.match(api, /click_id_hash: clickId \? sha256\(clickId\) : null/);
+  assert.match(api, /external_id: event\.session_id_hash/);
+  assert.doesNotMatch(api, /external_id: \[event\.session_id_hash\]/);
   assert.match(misc, /portfolioAdsHandler/);
   assert.match(vercel, /\/api\/portfolio-ads\(\.\*\).*\/api\/misc\?route=portfolio-ads/s);
   assert.doesNotMatch(migration, /email text|ip_address text|user_agent text/i);
@@ -84,7 +88,13 @@ test("CompleteRegistration fires only after a new authenticated Plugsy profile i
   assert.match(auth, /_wasCreated: data\.created === true/);
   assert.match(app, /if \(profile\?\._wasCreated\)/);
   assert.match(app, /trackPortfolioRegistration\(token\)/);
+  assert.match(app, /retryPendingPortfolioRegistration\(token\)/);
+  assert.match(app, /addEventListener\("online", retryRegistration\)/);
   assert.match(client, /"CompleteRegistration", authToken/);
+  assert.match(client, /pendingRegistrationKey/);
+  assert.match(client, /persistentAttributionKey/);
+  assert.match(client, /stableEventId \|\| crypto\.randomUUID\(\)/);
+  assert.match(client, /30 \* 60 \* 1000/);
   assert.match(api, /eventName === "CompleteRegistration"/);
   assert.match(api, /requireVerifiedClerkUser\(req, res\)/);
   assert.match(api, /REGISTRATION_NOT_NEW/);
