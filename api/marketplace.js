@@ -40,7 +40,7 @@ const getClient = () => {
 
 async function loadListingDeliveries(supabase, listingId) {
   const { data, error } = await supabase.from('marketplace_listing_deliveries')
-    .select('id,kind,asset_id,delivery_url,label,sort_order,created_at,updated_at')
+    .select('id,kind,asset_id,delivery_url,label,description,sort_order,created_at,updated_at')
     .eq('listing_id', listingId).order('sort_order', { ascending: true }).order('created_at', { ascending: true });
   if (error && error.code !== '42P01') throw error;
   return data || [];
@@ -846,12 +846,12 @@ async function resolveDeliveryItems(supabase, listingId, snapshot) {
   const source = rows.length ? rows : (snapshot?.delivery_asset_id ? [{ kind: 'file', asset_id: snapshot.delivery_asset_id, label: snapshot.delivery_label || 'Download product' }] : snapshot?.delivery_url ? [{ kind: 'link', delivery_url: snapshot.delivery_url, label: snapshot.delivery_label || 'Open product' }] : []);
   const deliveries = [];
   for (const row of source) {
-    if (row.kind === 'link') { if (isUrl(row.delivery_url)) deliveries.push({ id: row.id || row.delivery_url, label: row.label, kind: 'link', deliveryUrl: row.delivery_url }); continue; }
-    const { data: asset, error } = await supabase.from('marketplace_assets').select('id,object_key,status,original_name').eq('id', row.asset_id).maybeSingle();
+    if (row.kind === 'link') { if (isUrl(row.delivery_url)) deliveries.push({ id: row.id || row.delivery_url, label: row.label, description: row.description || '', kind: 'link', deliveryUrl: row.delivery_url }); continue; }
+    const { data: asset, error } = await supabase.from('marketplace_assets').select('id,object_key,status,original_name,content_type').eq('id', row.asset_id).maybeSingle();
     if (error) throw error;
     if (!asset) continue;
     if (asset.status !== 'clean') continue;
-    deliveries.push({ id: row.id || asset.id, label: row.label || asset.original_name, kind: 'file', deliveryUrl: await createDownloadUrl(asset), originalName: asset.original_name });
+    deliveries.push({ id: row.id || asset.id, label: row.label || asset.original_name, description: row.description || '', kind: 'file', contentType: asset.content_type || '', deliveryUrl: await createDownloadUrl(asset), originalName: asset.original_name });
   }
   return deliveries;
 }
@@ -1424,7 +1424,10 @@ async function fileMutation(req,res,action) {
   if(!asset||!['uploading','quarantined'].includes(asset.status)) return send(res,409,'UPLOAD_UNAVAILABLE','This upload is not awaiting confirmation.');
   let actualSize; try{actualSize=await verifyUploadedFile(asset);}catch{ return send(res,409,'UPLOAD_MISMATCH','Upload is missing or does not match the expected file.'); }
   const result=await supabase.rpc('marketplace_complete_asset_v1',{p_actor_id:actor.userId,p_asset_id:asset.id,p_size:actualSize}); if(result.error) throw result.error;
-  const { error: deliveryInsertError } = await supabase.from('marketplace_listing_deliveries').upsert({ listing_id: asset.listing_id, seller_id: actor.userId, kind: 'file', asset_id: asset.id, label: text(body.deliveryLabel) || asset.original_name, sort_order: Number.isFinite(Number(body.sortOrder)) ? Math.max(0, Number(body.sortOrder)) : 0 }, { onConflict: 'id' });
+  const deliveryTitle = text(body.deliveryTitle || body.deliveryLabel) || asset.original_name;
+  const deliveryDescription = text(body.deliveryDescription);
+  if (deliveryTitle.length > 120 || deliveryDescription.length > 2000) return send(res, 400, 'DELIVERY_METADATA_INVALID', 'Use a lesson title under 120 characters and description under 2,000 characters.');
+  const { error: deliveryInsertError } = await supabase.from('marketplace_listing_deliveries').upsert({ listing_id: asset.listing_id, seller_id: actor.userId, kind: 'file', asset_id: asset.id, label: deliveryTitle, description: deliveryDescription, sort_order: Number.isFinite(Number(body.sortOrder)) ? Math.max(0, Number(body.sortOrder)) : 0 }, { onConflict: 'id' });
   if (deliveryInsertError && deliveryInsertError.code !== '42P01') throw deliveryInsertError;
   let scan = { state: 'manual', reason: 'scanner_unavailable' };
   try { scan = await scanMarketplaceAsset({ ...asset, actual_size: actualSize }); } catch (scanError) { const code=text(scanError?.message); console.error('[marketplace] private file scan pending manual review', code || scanError); scan={ state:'manual', reason:code==='VIRUSTOTAL_401'||code==='VIRUSTOTAL_403'?'scanner_access_denied':'scanner_unavailable' }; }
@@ -1455,10 +1458,52 @@ async function addDeliveryLink(req, res) {
   const { data: listing, error: listingError } = await supabase.from('marketplace_listings').select('id,title').eq('id', listingId).eq('seller_id', actor.userId).maybeSingle();
   if (listingError) throw listingError;
   if (!listing) return send(res, 404, 'LISTING_NOT_FOUND', 'That listing was not found.');
-  const { data, error } = await supabase.from('marketplace_listing_deliveries').insert({ listing_id: listingId, seller_id: actor.userId, kind: 'link', delivery_url: url, label, sort_order: Number.isFinite(Number(body.sortOrder)) ? Math.max(0, Number(body.sortOrder)) : 0 }).select('id,kind,delivery_url,label,sort_order').single();
+  const description = text(body.description);
+  if (description.length > 2000) return send(res, 400, 'DELIVERY_LINK_INVALID', 'Keep the lesson description under 2,000 characters.');
+  const { data, error } = await supabase.from('marketplace_listing_deliveries').insert({ listing_id: listingId, seller_id: actor.userId, kind: 'link', delivery_url: url, label, description, sort_order: Number.isFinite(Number(body.sortOrder)) ? Math.max(0, Number(body.sortOrder)) : 0 }).select('id,kind,delivery_url,label,description,sort_order').single();
   if (error) throw error;
   try { await queueProductUpdateNotifications(supabase, listingId, listing.title); await flushProductUpdateEmails(supabase); } catch (notificationError) { console.error('[marketplace] delivery link update notifications pending', notificationError?.message || notificationError); }
   return res.status(201).json({ success: true, delivery: data });
+}
+
+async function updateDeliveries(req, res) {
+  const actor = await requireActor(req, res); if (!actor) return;
+  const body = readBody(req);
+  const listingId = text(body.listingId);
+  const items = Array.isArray(body.items) ? body.items : [];
+  const removedIds = Array.isArray(body.removedIds) ? body.removedIds.map(text) : [];
+  if (!/^[0-9a-f-]{36}$/i.test(listingId) || items.length > 100 || removedIds.length > 100) return send(res, 400, 'DELIVERY_UPDATE_INVALID', 'Choose a valid product and up to 100 course items.');
+  const normalized = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index] || {};
+    const id = text(item.id);
+    const kind = text(item.kind);
+    const label = text(item.label);
+    const description = text(item.description);
+    const deliveryUrl = text(item.deliveryUrl);
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !['file', 'link'].includes(kind) || label.length < 1 || label.length > 120 || description.length > 2000 || (kind === 'link' && !isUrl(deliveryUrl))) return send(res, 400, 'DELIVERY_UPDATE_INVALID', 'Every course item needs a short title, an optional description under 2,000 characters, and a valid link when applicable.');
+    normalized.push({ id, kind, label, description, deliveryUrl, sortOrder: index });
+  }
+  if (removedIds.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) return send(res, 400, 'DELIVERY_UPDATE_INVALID', 'A course item could not be removed safely.');
+  const supabase = getClient();
+  const { data: listing, error: listingError } = await supabase.from('marketplace_listings').select('id,title').eq('id', listingId).eq('seller_id', actor.userId).maybeSingle();
+  if (listingError) throw listingError;
+  if (!listing) return send(res, 404, 'LISTING_NOT_FOUND', 'That listing was not found.');
+  for (const item of normalized) {
+    const changes = { label: item.label, description: item.description, sort_order: item.sortOrder, updated_at: new Date().toISOString() };
+    if (item.kind === 'link') changes.delivery_url = item.deliveryUrl;
+    const { data, error } = await supabase.from('marketplace_listing_deliveries').update(changes).eq('id', item.id).eq('listing_id', listingId).eq('seller_id', actor.userId).eq('kind', item.kind).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return send(res, 409, 'DELIVERY_CHANGED', 'A course item changed. Refresh and try again.');
+  }
+  if (removedIds.length) {
+    const { error } = await supabase.from('marketplace_listing_deliveries').delete().in('id', removedIds).eq('listing_id', listingId).eq('seller_id', actor.userId);
+    if (error) throw error;
+  }
+  if (normalized.length || removedIds.length) {
+    try { await queueProductUpdateNotifications(supabase, listingId, listing.title); await flushProductUpdateEmails(supabase); } catch (notificationError) { console.error('[marketplace] course update notifications pending', notificationError?.message || notificationError); }
+  }
+  return res.status(200).json({ success: true });
 }
 
 async function adminMutation(req, res, action) {
@@ -1510,6 +1555,7 @@ export default async function handler(req, res) {
     if (req.method === "POST" && ['request-resale','decide-resale'].includes(action)) return await resaleMutation(req,res,action);
     if (req.method === "POST" && ['prepare-upload','complete-upload'].includes(action)) return await fileMutation(req,res,action);
     if (req.method === "POST" && action === 'add-delivery-link') return await addDeliveryLink(req, res);
+    if (req.method === "PATCH" && action === 'update-deliveries') return await updateDeliveries(req, res);
     if (req.method === "POST" && ['resolve-dispute','review-seller','review-asset'].includes(action)) return await adminMutation(req, res, action);
     if (req.method === "GET" && action === "private-listing") return await privateListing(req, res);
     if (req.method === "GET" && action === "onboarding") return await marketplaceOnboarding(req, res);

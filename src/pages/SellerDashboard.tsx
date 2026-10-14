@@ -11,90 +11,1131 @@ import { compressAndUpload } from "../utils/uploadMedia";
 
 type Tab = "home" | "products" | "orders" | "affiliate" | "setup" | "integrations";
 const money = (n: number) => `₦${Number(n || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 })}`;
-const emptyForm = { title:"", summary:"", description:"", category:"templates", price:"", coverImageUrl:"", deliveryUrl:"", deliveryLabel:"Open product", visibility:"private", resalePolicy:"not_allowed", resaleCommissionPercent:"" };
-const categories = ["templates","courses","design","video","comics","social_media","business","creator_tools"];
+const emptyForm = {
+  title: "",
+  summary: "",
+  description: "",
+  category: "templates",
+  price: "",
+  coverImageUrl: "",
+  deliveryUrl: "",
+  deliveryLabel: "Open product",
+  visibility: "private",
+  resalePolicy: "not_allowed",
+  resaleCommissionPercent: "",
+};
+const categories = ["templates", "courses", "design", "video", "comics", "social_media", "business", "creator_tools"];
 
 export default function SellerDashboard() {
   const { getToken } = useAuth();
   const navigate = useNavigate();
-  const [data,setData]=useState<any>(null), [loading,setLoading]=useState(true), [busy,setBusy]=useState("");
-  const [tab,setTab]=useState<Tab>("home"), [period,setPeriod]=useState(30), [query,setQuery]=useState(""), [orderFilter,setOrderFilter]=useState<"all"|"held"|"released">("all");
-  const [open,setOpen]=useState(false), [step,setStep]=useState(1), [editing,setEditing]=useState<any>(null), [form,setForm]=useState<any>(emptyForm);
-  const [productFiles,setProductFiles]=useState<File[]>([]), [deliveryLinks,setDeliveryLinks]=useState<{label:string;url:string}[]>([]), [coverBusy,setCoverBusy]=useState(false);
-  const [premiumOpen,setPremiumOpen]=useState(false);
-  const request=useCallback(async(action:string,options:RequestInit={})=>{const token=await getToken();const headers=new Headers(options.headers||{});headers.set("Authorization",`Bearer ${token||""}`);if(options.body)headers.set("Content-Type","application/json");const response=await fetch(`/api/marketplace?action=${action}`,{...options,headers});const payload=await response.json().catch(()=>null);if(!response.ok||!payload?.success)throw new Error(payload?.error||"Marketplace request failed.");return payload;},[getToken]);
-  const load=useCallback(async()=>{try{setData(await request("workspace"));}catch(error:any){toast.error(error.message);}finally{setLoading(false);}},[request]);
-  useEffect(()=>{void load();},[load]);
-  useEffect(()=>{if(!loading && tab==="home" && !(data?.seller?.public_selling_enabled && data?.seller?.public_plan_expires_at && new Date(data.seller.public_plan_expires_at).getTime()>Date.now()) )setPremiumOpen(true);},[loading,tab,data?.seller?.public_selling_enabled,data?.seller?.public_plan_expires_at]);
-  const listings=data?.listings||[], allSales=(data?.sales||[]).filter((sale:any)=>sale.payment_status === "paid");
-  const premiumActive=Boolean(data?.seller?.public_selling_enabled && data?.seller?.public_plan_expires_at && new Date(data.seller.public_plan_expires_at).getTime()>Date.now());
-  const verified=data?.seller?.verification_status==="verified";
-  const goToVerification=()=>{setPremiumOpen(false);setTab("setup");window.requestAnimationFrame(()=>document.getElementById("seller-verification")?.scrollIntoView({behavior:"smooth",block:"start"}));};
-  const publishPublicly=(item:any)=>{if(!premiumActive){setPremiumOpen(true);return;}if(!verified){goToVerification();return;}start({...item,visibility:"public"});setStep(3);};
-  const sales=useMemo(()=>allSales.filter((s:any)=>new Date(s.created_at).getTime()>=Date.now()-period*86400000),[allSales,period]);
-  const metrics=useMemo(()=>({revenue:sales.reduce((n:number,s:any)=>n+Number(s.seller_amount||0),0),released:sales.filter((s:any)=>s.funds_status==="released").reduce((n:number,s:any)=>n+Number(s.seller_amount||0),0),held:sales.filter((s:any)=>s.funds_status==="held").reduce((n:number,s:any)=>n+Number(s.seller_amount||0),0),buyers:new Set(sales.map((s:any)=>s.buyer_id||s.buyer_email).filter(Boolean)).size}),[sales]);
-  const top=useMemo(()=>Object.values(sales.reduce((m:any,s:any)=>{m[s.listing_id]||={id:s.listing_id,title:s.product_title,orders:0,revenue:0};m[s.listing_id].orders++;m[s.listing_id].revenue+=Number(s.seller_amount||0);return m;},{})).sort((a:any,b:any)=>b.revenue-a.revenue).slice(0,4) as any[],[sales]);
-  const orders=useMemo(()=>{const q=query.toLowerCase().trim();return allSales.filter((s:any)=>(orderFilter==="all"||s.funds_status===orderFilter)&&(!q||s.product_title?.toLowerCase().includes(q)||s.buyer?.name?.toLowerCase().includes(q)||s.order_reference?.toLowerCase().includes(q)));},[allSales,query,orderFilter]);
-  const start=(item?:any)=>{setEditing(item||null);setProductFiles([]);setDeliveryLinks([]);setForm(item?{title:item.title,summary:item.summary||"",description:item.description||"",category:item.category,price:String(item.price),coverImageUrl:item.cover_image_url||"",deliveryUrl:item.delivery_url||"",deliveryLabel:item.delivery_label||"Open product",visibility:item.visibility,resalePolicy:item.resale_policy,resaleCommissionPercent:item.resale_commission_percent==null?"":String(item.resale_commission_percent)}:emptyForm);setStep(1);setOpen(true);};
-  const uploadProductFile=async(listingId:string,file:File)=>{const extension=file.name.toLowerCase().split(".").pop();const fallbackTypes:Record<string,string>={zip:"application/zip",mp4:"video/mp4",webm:"video/webm",mov:"video/quicktime"};const contentType=file.type||fallbackTypes[extension||""]||"";const job=await request("prepare-upload",{method:"POST",body:JSON.stringify({listingId,name:file.name,size:file.size,contentType})});const uploaded=await fetch(job.uploadUrl,{method:"PUT",headers:{"Content-Type":contentType},body:file});if(!uploaded.ok)throw new Error("The product was saved, but its file could not be uploaded.");return request("complete-upload",{method:"POST",body:JSON.stringify({assetId:job.assetId,deliveryLabel:file.name})});};
-  const save=async()=>{setBusy("save");try{const result=await request(editing?"update-listing":"create-listing",{method:editing?"PATCH":"POST",body:JSON.stringify({...form,listingId:editing?.id})});const fileResults=await Promise.all(productFiles.map((file)=>uploadProductFile(result.listing.id,file)));await Promise.all(deliveryLinks.filter((link)=>link.url.trim()).map((link,index)=>request("add-delivery-link",{method:"POST",body:JSON.stringify({listingId:result.listing.id,url:link.url.trim(),label:link.label.trim()||`Product link ${index+1}`,sortOrder:index+1})})));toast.success(fileResults.at(-1)?.message||"Saved as a draft. Activate its private link from Products when ready.");setOpen(false);setTab("products");await load();}catch(error:any){toast.error(error.message);}finally{setBusy("");}};
-  const uploadCover=async(file:File)=>{if(!file.type.startsWith("image/")){toast.error("Choose an image for the product cover.");return;}setCoverBusy(true);try{const url=await compressAndUpload(file);setForm((current:any)=>({...current,coverImageUrl:url}));toast.success("Cover uploaded.");}catch(error:any){toast.error(error.message||"Cover upload failed.");}finally{setCoverBusy(false);}};
-  const status=async(item:any,next:string)=>{setBusy(item.id);try{await request("publish",{method:"POST",body:JSON.stringify({listingId:item.id,status:next})});toast.success(`Product ${next}.`);await load();}catch(error:any){toast.error(error.message);}finally{setBusy("");}};
-  const copyProductLink=async(item:any)=>{setBusy(item.id);try{let listing=item;let activated=false;if(item.status!=="published"){if(item.visibility!=="private"){const changed=await request("update-listing",{method:"PATCH",body:JSON.stringify({listingId:item.id,title:item.title,summary:item.summary||"",description:item.description||"",category:item.category,price:item.price,coverImageUrl:item.cover_image_url||"",deliveryUrl:item.delivery_url||"",deliveryLabel:item.delivery_label||"Open product",visibility:"private",resalePolicy:item.resale_policy||"not_allowed",resaleCommissionPercent:item.resale_commission_percent})});listing=changed.listing||{...item,visibility:"private"};}const result=await request("publish",{method:"POST",body:JSON.stringify({listingId:item.id,status:"published"})});listing=result.listing||{...listing,status:"published",visibility:"private"};activated=true;}const url=listing.visibility==="private"?`${location.origin}/marketplace/private/${listing.private_access_token}`:`${location.origin}/marketplace/product/${listing.id}`;await navigator.clipboard.writeText(url);toast.success(activated?"Private link activated and copied. This product is not public.":"Product link copied.");if(activated)await load();}catch(error:any){toast.error(error.message||"Could not copy this product link.");}finally{setBusy("");}};
-  if(loading)return <main className="grid min-h-screen place-items-center bg-brand-bg"><Loader2 className="animate-spin text-brand-accent"/></main>;
-  const nav=[{id:"home",label:"Overview",icon:LayoutDashboard},{id:"products",label:"Products",icon:Box},{id:"orders",label:"Orders",icon:Users},{id:"affiliate",label:"Affiliate",icon:BadgePercent},{id:"integrations",label:"Integrations",icon:PlugZap},{id:"setup",label:"Store setup",icon:Settings2}] as const;
-  return <main className="min-h-screen bg-brand-bg pb-28 pt-20 text-brand-text"><div className="mx-auto flex max-w-[1400px] gap-5 px-4 sm:px-6 lg:px-8">
-    <aside className="sticky top-24 hidden h-[calc(100vh-7rem)] w-60 shrink-0 flex-col rounded-3xl border border-brand-border bg-brand-surface p-4 lg:flex"><Link to="/marketplace" className="flex items-center gap-2 px-2 py-3 text-sm font-black"><ArrowLeft size={16}/> Marketplace</Link><div className="my-4 h-px bg-brand-border"/><p className="px-3 text-[9px] font-black uppercase tracking-[.2em] text-brand-text-secondary">Your store</p><nav className="mt-3 space-y-1">{nav.map(({id,label,icon:Icon})=><button key={id} onClick={()=>setTab(id)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-bold transition ${tab===id?"bg-brand-text text-brand-surface shadow-md":"text-brand-text-secondary hover:bg-brand-bg"}`}><Icon size={18}/>{label}</button>)}</nav><button onClick={()=>start()} className="btn-primary mt-5 flex h-11 items-center justify-center gap-2 text-xs font-black"><Plus size={16}/>New product</button><div className="mt-auto rounded-2xl bg-brand-bg p-4"><div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${data?.seller?.verification_status==="verified"?"bg-emerald-500":"bg-amber-500"}`}/><span className="text-xs font-black">{data?.seller?.verification_status==="verified"?"Store verified":"Setup incomplete"}</span></div><p className="mt-2 text-[10px] leading-4 text-brand-text-secondary">Private product links are free. Verification is only needed for public selling.</p></div></aside>
-    <section className="min-w-0 flex-1"><header className="flex items-end justify-between gap-3 py-3"><div><p className="text-[10px] font-black uppercase tracking-[.2em] text-brand-accent">Seller workspace</p><h1 className="mt-1 text-3xl font-black">{nav.find(n=>n.id===tab)?.label}</h1></div><div className="flex gap-2"><button onClick={()=>setPremiumOpen(true)} className="hidden h-11 items-center gap-2 rounded-xl border border-brand-accent/40 bg-brand-accent/10 px-4 text-xs font-black text-brand-accent sm:flex"><Crown size={15}/>Go Premium</button><select value={period} onChange={e=>setPeriod(Number(e.target.value))} className="h-11 rounded-xl border border-brand-border bg-brand-surface px-3 text-xs font-bold"><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option></select><button onClick={()=>start()} className="btn-primary flex h-11 items-center gap-2 px-4 text-xs font-black"><Plus size={16}/><span className="hidden sm:inline">New product</span></button></div></header>
-      <nav className="mt-3 flex gap-1 overflow-x-auto rounded-2xl border border-brand-border bg-brand-surface p-1.5 lg:hidden">{nav.map(({id,label,icon:Icon})=><button key={id} onClick={()=>setTab(id)} className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-[11px] font-bold ${tab===id?"bg-brand-text text-brand-surface":"text-brand-text-secondary"}`}><Icon size={15}/>{label}</button>)}</nav>
-      {(tab==="home"||tab==="products")&&<PublicSellingNextStep seller={data?.seller} premiumActive={premiumActive} verified={verified} listings={listings} onPremium={()=>setPremiumOpen(true)} onVerify={goToVerification} onProducts={()=>setTab("products")} onCreate={()=>start()}/>}
-      {tab==="home"&&<><Home listings={listings} sales={sales} metrics={metrics} top={top} create={()=>start()} products={()=>setTab("products")} viewOrders={(filter:any)=>{setOrderFilter(filter);setTab("orders");}}/>{!premiumActive&&<SellerPremiumPlan seller={data?.seller} onComplete={async(kind)=>{await load();if(kind==="plan")goToVerification();}}/>}</>}
-      {tab==="products"&&<ProductList listings={listings} busy={busy} create={()=>start()} edit={start} status={status} copyLink={copyProductLink} publishPublicly={publishPublicly} premiumActive={premiumActive} verified={verified}/>}
-      {tab==="orders"&&<OrderList orders={orders} query={query} setQuery={setQuery} filter={orderFilter} setFilter={setOrderFilter} support={(order:any)=>navigate(`/support?marketplace_order=${encodeURIComponent(order.order_reference||order.id)}`)}/>}
-      {tab==="affiliate"&&<ResaleWorkspace/>}
-      {tab==="integrations"&&<AdIntegrations request={request}/>}
-      {tab==="setup"&&<div className="mt-6"><Setup seller={data?.seller} listings={listings}/><div id="seller-verification" className="scroll-mt-6"><SellerVerification seller={data?.seller} onComplete={load}/></div>{verified&&<button type="button" onClick={()=>setTab("products")} className="btn-primary mt-5 flex h-11 items-center gap-2 px-5 text-xs font-black">Choose a product to publish publicly<ArrowRight size={16}/></button>}</div>}
-  </section>
-  </div>{premiumOpen&&<div className="fixed inset-0 z-[12000] flex items-start justify-center overflow-y-auto bg-black/75 px-3 py-6 backdrop-blur-md sm:items-center sm:p-6"><div className="relative w-full max-w-5xl"><button onClick={()=>setPremiumOpen(false)} aria-label="Close Premium offer" className="absolute right-3 top-3 z-10 grid h-10 w-10 place-items-center rounded-xl border border-brand-border bg-brand-bg text-brand-text"><X size={18}/></button><SellerPremiumPlan seller={data?.seller} onComplete={async(kind)=>{await load();if(kind==="plan")goToVerification();}}/></div></div>}<Wizard open={open} step={step} setStep={setStep} form={form} setForm={setForm} editing={editing} busy={busy==="save"} coverBusy={coverBusy} uploadCover={uploadCover} productFiles={productFiles} setProductFiles={setProductFiles} deliveryLinks={deliveryLinks} setDeliveryLinks={setDeliveryLinks} close={()=>setOpen(false)} save={save}/></main>;
+  const [data, setData] = useState<any>(null),
+    [loading, setLoading] = useState(true),
+    [busy, setBusy] = useState("");
+  const [tab, setTab] = useState<Tab>("home"),
+    [period, setPeriod] = useState(30),
+    [query, setQuery] = useState(""),
+    [orderFilter, setOrderFilter] = useState<"all" | "held" | "released">("all");
+  const [open, setOpen] = useState(false),
+    [step, setStep] = useState(1),
+    [editing, setEditing] = useState<any>(null),
+    [form, setForm] = useState<any>(emptyForm);
+  const [productFiles, setProductFiles] = useState<Array<{ file: File; title: string; description: string }>>([]),
+    [deliveryLinks, setDeliveryLinks] = useState<
+      Array<{
+        id?: string;
+        kind: "file" | "link";
+        label: string;
+        description: string;
+        url: string;
+      }>
+    >([]),
+    [removedDeliveryIds, setRemovedDeliveryIds] = useState<string[]>([]),
+    [coverBusy, setCoverBusy] = useState(false);
+  const [premiumOpen, setPremiumOpen] = useState(false);
+  const request = useCallback(
+    async (action: string, options: RequestInit = {}) => {
+      const token = await getToken();
+      const headers = new Headers(options.headers || {});
+      headers.set("Authorization", `Bearer ${token || ""}`);
+      if (options.body) headers.set("Content-Type", "application/json");
+      const response = await fetch(`/api/marketplace?action=${action}`, {
+        ...options,
+        headers,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) throw new Error(payload?.error || "Marketplace request failed.");
+      return payload;
+    },
+    [getToken],
+  );
+  const load = useCallback(async () => {
+    try {
+      setData(await request("workspace"));
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [request]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  useEffect(() => {
+    if (!loading && tab === "home" && !(data?.seller?.public_selling_enabled && data?.seller?.public_plan_expires_at && new Date(data.seller.public_plan_expires_at).getTime() > Date.now())) setPremiumOpen(true);
+  }, [loading, tab, data?.seller?.public_selling_enabled, data?.seller?.public_plan_expires_at]);
+  const listings = data?.listings || [],
+    allSales = (data?.sales || []).filter((sale: any) => sale.payment_status === "paid");
+  const premiumActive = Boolean(data?.seller?.public_selling_enabled && data?.seller?.public_plan_expires_at && new Date(data.seller.public_plan_expires_at).getTime() > Date.now());
+  const verified = data?.seller?.verification_status === "verified";
+  const goToVerification = () => {
+    setPremiumOpen(false);
+    setTab("setup");
+    window.requestAnimationFrame(() => document.getElementById("seller-verification")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+  const publishPublicly = (item: any) => {
+    if (!premiumActive) {
+      setPremiumOpen(true);
+      return;
+    }
+    if (!verified) {
+      goToVerification();
+      return;
+    }
+    start({ ...item, visibility: "public" });
+    setStep(3);
+  };
+  const sales = useMemo(() => allSales.filter((s: any) => new Date(s.created_at).getTime() >= Date.now() - period * 86400000), [allSales, period]);
+  const metrics = useMemo(
+    () => ({
+      revenue: sales.reduce((n: number, s: any) => n + Number(s.seller_amount || 0), 0),
+      released: sales.filter((s: any) => s.funds_status === "released").reduce((n: number, s: any) => n + Number(s.seller_amount || 0), 0),
+      held: sales.filter((s: any) => s.funds_status === "held").reduce((n: number, s: any) => n + Number(s.seller_amount || 0), 0),
+      buyers: new Set(sales.map((s: any) => s.buyer_id || s.buyer_email).filter(Boolean)).size,
+    }),
+    [sales],
+  );
+  const top = useMemo(
+    () =>
+      Object.values(
+        sales.reduce((m: any, s: any) => {
+          m[s.listing_id] ||= {
+            id: s.listing_id,
+            title: s.product_title,
+            orders: 0,
+            revenue: 0,
+          };
+          m[s.listing_id].orders++;
+          m[s.listing_id].revenue += Number(s.seller_amount || 0);
+          return m;
+        }, {}),
+      )
+        .sort((a: any, b: any) => b.revenue - a.revenue)
+        .slice(0, 4) as any[],
+    [sales],
+  );
+  const orders = useMemo(() => {
+    const q = query.toLowerCase().trim();
+    return allSales.filter((s: any) => (orderFilter === "all" || s.funds_status === orderFilter) && (!q || s.product_title?.toLowerCase().includes(q) || s.buyer?.name?.toLowerCase().includes(q) || s.order_reference?.toLowerCase().includes(q)));
+  }, [allSales, query, orderFilter]);
+  const start = (item?: any) => {
+    setEditing(item || null);
+    setProductFiles([]);
+    setRemovedDeliveryIds([]);
+    setDeliveryLinks(
+      (item?.delivery_items || []).map((delivery: any) => ({
+        id: delivery.id,
+        kind: delivery.kind,
+        label: delivery.label || delivery.original_name || "Course item",
+        description: delivery.description || "",
+        url: delivery.delivery_url || "",
+      })),
+    );
+    setForm(
+      item
+        ? {
+            title: item.title,
+            summary: item.summary || "",
+            description: item.description || "",
+            category: item.category,
+            price: String(item.price),
+            coverImageUrl: item.cover_image_url || "",
+            deliveryUrl: item.delivery_url || "",
+            deliveryLabel: item.delivery_label || "Open product",
+            visibility: item.visibility,
+            resalePolicy: item.resale_policy,
+            resaleCommissionPercent: item.resale_commission_percent == null ? "" : String(item.resale_commission_percent),
+          }
+        : emptyForm,
+    );
+    setStep(1);
+    setOpen(true);
+  };
+  const uploadProductFile = async (listingId: string, item: { file: File; title: string; description: string }, sortOrder: number) => {
+    const { file } = item;
+    const extension = file.name.toLowerCase().split(".").pop();
+    const fallbackTypes: Record<string, string> = {
+      zip: "application/zip",
+      mp4: "video/mp4",
+      webm: "video/webm",
+      mov: "video/quicktime",
+    };
+    const contentType = file.type || fallbackTypes[extension || ""] || "";
+    const job = await request("prepare-upload", {
+      method: "POST",
+      body: JSON.stringify({
+        listingId,
+        name: file.name,
+        size: file.size,
+        contentType,
+      }),
+    });
+    const uploaded = await fetch(job.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: file,
+    });
+    if (!uploaded.ok) throw new Error("The product was saved, but its file could not be uploaded.");
+    return request("complete-upload", {
+      method: "POST",
+      body: JSON.stringify({
+        assetId: job.assetId,
+        deliveryTitle: item.title.trim() || file.name,
+        deliveryDescription: item.description.trim(),
+        sortOrder,
+      }),
+    });
+  };
+  const save = async () => {
+    setBusy("save");
+    try {
+      const result = await request(editing ? "update-listing" : "create-listing", {
+        method: editing ? "PATCH" : "POST",
+        body: JSON.stringify({ ...form, listingId: editing?.id }),
+      });
+      const listingId = result.listing.id;
+      const existing = deliveryLinks.filter((item) => item.id);
+      if (editing && (existing.length || removedDeliveryIds.length))
+        await request("update-deliveries", {
+          method: "PATCH",
+          body: JSON.stringify({
+            listingId,
+            items: existing.map((item) => ({
+              id: item.id,
+              kind: item.kind,
+              label: item.label,
+              description: item.description,
+              deliveryUrl: item.url,
+            })),
+            removedIds: removedDeliveryIds,
+          }),
+        });
+      const newLinks = deliveryLinks.filter((item) => !item.id && item.kind === "link" && item.url.trim());
+      await Promise.all(
+        newLinks.map((link, index) =>
+          request("add-delivery-link", {
+            method: "POST",
+            body: JSON.stringify({
+              listingId,
+              url: link.url.trim(),
+              label: link.label.trim() || `Course link ${index + 1}`,
+              description: link.description.trim(),
+              sortOrder: existing.length + index,
+            }),
+          }),
+        ),
+      );
+      const fileResults = await Promise.all(productFiles.map((item, index) => uploadProductFile(listingId, item, existing.length + newLinks.length + index)));
+      toast.success(fileResults.at(-1)?.message || (editing ? "Course updated. Every buyer now sees the latest content." : "Saved as a draft. Activate its private link from Products when ready."));
+      setOpen(false);
+      setTab("products");
+      await load();
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const uploadCover = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Choose an image for the product cover.");
+      return;
+    }
+    setCoverBusy(true);
+    try {
+      const url = await compressAndUpload(file);
+      setForm((current: any) => ({ ...current, coverImageUrl: url }));
+      toast.success("Cover uploaded.");
+    } catch (error: any) {
+      toast.error(error.message || "Cover upload failed.");
+    } finally {
+      setCoverBusy(false);
+    }
+  };
+  const status = async (item: any, next: string) => {
+    setBusy(item.id);
+    try {
+      await request("publish", {
+        method: "POST",
+        body: JSON.stringify({ listingId: item.id, status: next }),
+      });
+      toast.success(`Product ${next}.`);
+      await load();
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const copyProductLink = async (item: any) => {
+    setBusy(item.id);
+    try {
+      let listing = item;
+      let activated = false;
+      if (item.status !== "published") {
+        if (item.visibility !== "private") {
+          const changed = await request("update-listing", {
+            method: "PATCH",
+            body: JSON.stringify({
+              listingId: item.id,
+              title: item.title,
+              summary: item.summary || "",
+              description: item.description || "",
+              category: item.category,
+              price: item.price,
+              coverImageUrl: item.cover_image_url || "",
+              deliveryUrl: item.delivery_url || "",
+              deliveryLabel: item.delivery_label || "Open product",
+              visibility: "private",
+              resalePolicy: item.resale_policy || "not_allowed",
+              resaleCommissionPercent: item.resale_commission_percent,
+            }),
+          });
+          listing = changed.listing || { ...item, visibility: "private" };
+        }
+        const result = await request("publish", {
+          method: "POST",
+          body: JSON.stringify({ listingId: item.id, status: "published" }),
+        });
+        listing = result.listing || {
+          ...listing,
+          status: "published",
+          visibility: "private",
+        };
+        activated = true;
+      }
+      const url = listing.visibility === "private" ? `${location.origin}/marketplace/private/${listing.private_access_token}` : `${location.origin}/marketplace/product/${listing.id}`;
+      await navigator.clipboard.writeText(url);
+      toast.success(activated ? "Private link activated and copied. This product is not public." : "Product link copied.");
+      if (activated) await load();
+    } catch (error: any) {
+      toast.error(error.message || "Could not copy this product link.");
+    } finally {
+      setBusy("");
+    }
+  };
+  if (loading)
+    return (
+      <main className="grid min-h-screen place-items-center bg-brand-bg">
+        <Loader2 className="animate-spin text-brand-accent" />
+      </main>
+    );
+  const nav = [
+    { id: "home", label: "Overview", icon: LayoutDashboard },
+    { id: "products", label: "Products", icon: Box },
+    { id: "orders", label: "Orders", icon: Users },
+    { id: "affiliate", label: "Affiliate", icon: BadgePercent },
+    { id: "integrations", label: "Integrations", icon: PlugZap },
+    { id: "setup", label: "Store setup", icon: Settings2 },
+  ] as const;
+  return (
+    <main className="min-h-screen bg-brand-bg pb-28 pt-20 text-brand-text">
+      <div className="mx-auto flex max-w-[1400px] gap-5 px-4 sm:px-6 lg:px-8">
+        <aside className="sticky top-24 hidden h-[calc(100vh-7rem)] w-60 shrink-0 flex-col rounded-3xl border border-brand-border bg-brand-surface p-4 lg:flex">
+          <Link to="/marketplace" className="flex items-center gap-2 px-2 py-3 text-sm font-black">
+            <ArrowLeft size={16} /> Marketplace
+          </Link>
+          <div className="my-4 h-px bg-brand-border" />
+          <p className="px-3 text-[9px] font-black uppercase tracking-[.2em] text-brand-text-secondary">Your store</p>
+          <nav className="mt-3 space-y-1">
+            {nav.map(({ id, label, icon: Icon }) => (
+              <button key={id} onClick={() => setTab(id)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-bold transition ${tab === id ? "bg-brand-text text-brand-surface shadow-md" : "text-brand-text-secondary hover:bg-brand-bg"}`}>
+                <Icon size={18} />
+                {label}
+              </button>
+            ))}
+          </nav>
+          <button onClick={() => start()} className="btn-primary mt-5 flex h-11 items-center justify-center gap-2 text-xs font-black">
+            <Plus size={16} />
+            New product
+          </button>
+          <div className="mt-auto rounded-2xl bg-brand-bg p-4">
+            <div className="flex items-center gap-2">
+              <span className={`h-2 w-2 rounded-full ${data?.seller?.verification_status === "verified" ? "bg-emerald-500" : "bg-amber-500"}`} />
+              <span className="text-xs font-black">{data?.seller?.verification_status === "verified" ? "Store verified" : "Setup incomplete"}</span>
+            </div>
+            <p className="mt-2 text-[10px] leading-4 text-brand-text-secondary">Private product links are free. Verification is only needed for public selling.</p>
+          </div>
+        </aside>
+        <section className="min-w-0 flex-1">
+          <header className="flex items-end justify-between gap-3 py-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[.2em] text-brand-accent">Seller workspace</p>
+              <h1 className="mt-1 text-3xl font-black">{nav.find((n) => n.id === tab)?.label}</h1>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setPremiumOpen(true)} className="hidden h-11 items-center gap-2 rounded-xl border border-brand-accent/40 bg-brand-accent/10 px-4 text-xs font-black text-brand-accent sm:flex">
+                <Crown size={15} />
+                Go Premium
+              </button>
+              <select value={period} onChange={(e) => setPeriod(Number(e.target.value))} className="h-11 rounded-xl border border-brand-border bg-brand-surface px-3 text-xs font-bold">
+                <option value={7}>7 days</option>
+                <option value={30}>30 days</option>
+                <option value={90}>90 days</option>
+              </select>
+              <button onClick={() => start()} className="btn-primary flex h-11 items-center gap-2 px-4 text-xs font-black">
+                <Plus size={16} />
+                <span className="hidden sm:inline">New product</span>
+              </button>
+            </div>
+          </header>
+          <nav className="mt-3 flex gap-1 overflow-x-auto rounded-2xl border border-brand-border bg-brand-surface p-1.5 lg:hidden">
+            {nav.map(({ id, label, icon: Icon }) => (
+              <button key={id} onClick={() => setTab(id)} className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-[11px] font-bold ${tab === id ? "bg-brand-text text-brand-surface" : "text-brand-text-secondary"}`}>
+                <Icon size={15} />
+                {label}
+              </button>
+            ))}
+          </nav>
+          {(tab === "home" || tab === "products") && <PublicSellingNextStep seller={data?.seller} premiumActive={premiumActive} verified={verified} listings={listings} onPremium={() => setPremiumOpen(true)} onVerify={goToVerification} onProducts={() => setTab("products")} onCreate={() => start()} />}
+          {tab === "home" && (
+            <>
+              <Home
+                listings={listings}
+                sales={sales}
+                metrics={metrics}
+                top={top}
+                create={() => start()}
+                products={() => setTab("products")}
+                viewOrders={(filter: any) => {
+                  setOrderFilter(filter);
+                  setTab("orders");
+                }}
+              />
+              {!premiumActive && (
+                <SellerPremiumPlan
+                  seller={data?.seller}
+                  onComplete={async (kind) => {
+                    await load();
+                    if (kind === "plan") goToVerification();
+                  }}
+                />
+              )}
+            </>
+          )}
+          {tab === "products" && <ProductList listings={listings} busy={busy} create={() => start()} edit={start} status={status} copyLink={copyProductLink} publishPublicly={publishPublicly} premiumActive={premiumActive} verified={verified} />}
+          {tab === "orders" && <OrderList orders={orders} query={query} setQuery={setQuery} filter={orderFilter} setFilter={setOrderFilter} support={(order: any) => navigate(`/support?marketplace_order=${encodeURIComponent(order.order_reference || order.id)}`)} />}
+          {tab === "affiliate" && <ResaleWorkspace />}
+          {tab === "integrations" && <AdIntegrations request={request} />}
+          {tab === "setup" && (
+            <div className="mt-6">
+              <Setup seller={data?.seller} listings={listings} />
+              <div id="seller-verification" className="scroll-mt-6">
+                <SellerVerification seller={data?.seller} onComplete={load} />
+              </div>
+              {verified && (
+                <button type="button" onClick={() => setTab("products")} className="btn-primary mt-5 flex h-11 items-center gap-2 px-5 text-xs font-black">
+                  Choose a product to publish publicly
+                  <ArrowRight size={16} />
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+      {premiumOpen && (
+        <div className="fixed inset-0 z-[12000] flex items-start justify-center overflow-y-auto bg-black/75 px-3 py-6 backdrop-blur-md sm:items-center sm:p-6">
+          <div className="relative w-full max-w-5xl">
+            <button onClick={() => setPremiumOpen(false)} aria-label="Close Premium offer" className="absolute right-3 top-3 z-10 grid h-10 w-10 place-items-center rounded-xl border border-brand-border bg-brand-bg text-brand-text">
+              <X size={18} />
+            </button>
+            <SellerPremiumPlan
+              seller={data?.seller}
+              onComplete={async (kind) => {
+                await load();
+                if (kind === "plan") goToVerification();
+              }}
+            />
+          </div>
+        </div>
+      )}
+      <Wizard open={open} step={step} setStep={setStep} form={form} setForm={setForm} editing={editing} busy={busy === "save"} coverBusy={coverBusy} uploadCover={uploadCover} productFiles={productFiles} setProductFiles={setProductFiles} deliveryLinks={deliveryLinks} setDeliveryLinks={setDeliveryLinks} setRemovedDeliveryIds={setRemovedDeliveryIds} close={() => setOpen(false)} save={save} />
+    </main>
+  );
 }
 
-function AdIntegrations({request}:any){
-  const [form,setForm]=useState({metaPixelId:"",metaAccessToken:"",tiktokPixelId:"",tiktokAccessToken:""});
-  const [connected,setConnected]=useState({metaTokenConnected:false,tiktokTokenConnected:false});
-  const [loading,setLoading]=useState(true),[saving,setSaving]=useState(false);
-  const load=useCallback(async()=>{try{const result=await request("ad-integrations");setForm((value:any)=>({...value,metaPixelId:result.integrations.metaPixelId||"",tiktokPixelId:result.integrations.tiktokPixelId||""}));setConnected(result.integrations);}catch(error:any){toast.error(error.message||"Could not load integrations.");}finally{setLoading(false);}},[request]);
-  useEffect(()=>{void load();},[load]);
-  const save=async(extra:any={})=>{setSaving(true);try{const result=await request("ad-integrations",{method:"PUT",body:JSON.stringify({...form,...extra})});setConnected(result.integrations);setForm((value:any)=>({...value,metaAccessToken:"",tiktokAccessToken:""}));toast.success("Ad integrations saved. Purchase events will only send after payment confirmation and buyer consent.");}catch(error:any){toast.error(error.message||"Could not save integrations.");}finally{setSaving(false);}};
-  const field=(label:string,key:string,props:any={})=><label className="seller-field block"><span className="mb-2 block text-[10px] font-black uppercase tracking-[.13em] text-brand-text-secondary">{label}</span><input {...props} value={(form as any)[key]} onChange={event=>setForm((current:any)=>({...current,[key]:event.target.value}))}/></label>;
-  if(loading)return <section className="mt-6 grid min-h-64 place-items-center rounded-3xl border border-brand-border bg-brand-surface"><Loader2 className="animate-spin text-brand-accent"/></section>;
-  return <section className="mt-6 space-y-5">
-    <div className="rounded-3xl border border-brand-accent/25 bg-brand-accent/[.06] p-6"><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-accent/15 text-brand-accent"><PlugZap size={20}/></span><div><h2 className="text-lg font-black">Track your product marketing</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-brand-text-secondary">Connect your Meta Pixel and TikTok Pixel to measure product views and confirmed purchases from your own Plugsy product links. Events are seller-specific and never fire for unpaid checkouts.</p></div></div></div>
-    <article className="rounded-3xl border border-brand-border bg-brand-surface p-6"><div className="flex items-center justify-between gap-3"><div><h3 className="text-lg font-black">Meta</h3><p className="mt-1 text-xs leading-5 text-brand-text-secondary">Meta Pixel for browser events, plus Conversions API for confirmed server-side purchases.</p></div><span className={`rounded-full px-3 py-1 text-[10px] font-black ${connected.metaTokenConnected?"bg-emerald-500/10 text-emerald-500":"bg-brand-bg text-brand-text-secondary"}`}>{connected.metaTokenConnected?"Connected":"Not connected"}</span></div><div className="mt-5 grid gap-4 md:grid-cols-2">{field("Meta Pixel ID","metaPixelId",{inputMode:"numeric",placeholder:"e.g. 123456789012345"})}{field("Conversions API access token","metaAccessToken",{type:"password",autoComplete:"new-password",placeholder:connected.metaTokenConnected?"Saved securely — blank keeps current token":"Paste token from Meta Events Manager"})}</div><p className="mt-3 text-[11px] leading-5 text-brand-text-secondary">Tokens are encrypted before storage and are never returned to this page. Leave the token field blank to keep the current token.</p>{connected.metaTokenConnected&&<button type="button" onClick={()=>void save({removeMetaToken:true})} disabled={saving} className="mt-3 text-xs font-bold text-red-500">Remove saved Meta token</button>}</article>
-    <article className="rounded-3xl border border-brand-border bg-brand-surface p-6"><div className="flex items-center justify-between gap-3"><div><h3 className="text-lg font-black">TikTok</h3><p className="mt-1 text-xs leading-5 text-brand-text-secondary">TikTok Pixel for browser events, plus Events API for confirmed server-side purchases.</p></div><span className={`rounded-full px-3 py-1 text-[10px] font-black ${connected.tiktokTokenConnected?"bg-emerald-500/10 text-emerald-500":"bg-brand-bg text-brand-text-secondary"}`}>{connected.tiktokTokenConnected?"Connected":"Not connected"}</span></div><div className="mt-5 grid gap-4 md:grid-cols-2">{field("TikTok Pixel code","tiktokPixelId",{placeholder:"Enter the Pixel code from TikTok Ads Manager"})}{field("Events API access token","tiktokAccessToken",{type:"password",autoComplete:"new-password",placeholder:connected.tiktokTokenConnected?"Saved securely — blank keeps current token":"Paste token from TikTok Events Manager"})}</div><p className="mt-3 text-[11px] leading-5 text-brand-text-secondary">Tokens are encrypted before storage and are never returned to this page. Leave the token field blank to keep the current token.</p>{connected.tiktokTokenConnected&&<button type="button" onClick={()=>void save({removeTiktokToken:true})} disabled={saving} className="mt-3 text-xs font-bold text-red-500">Remove saved TikTok token</button>}</article>
-    <div className="flex flex-col gap-3 rounded-2xl border border-brand-border bg-brand-surface p-5 sm:flex-row sm:items-center sm:justify-between"><p className="max-w-2xl text-xs leading-5 text-brand-text-secondary">Purchase events use the same order reference for browser/server deduplication. Optional ad measurement only runs after the buyer opts in; Plugsy still confirms payment independently.</p><button onClick={()=>void save()} disabled={saving} className="btn-primary flex h-11 shrink-0 items-center justify-center gap-2 px-5 text-xs font-black">{saving?<Loader2 className="animate-spin" size={15}/>:<Check size={15}/>}Save integrations</button></div>
-    <style>{`.seller-field input{width:100%;border:1px solid var(--brand-border,rgba(128,128,128,.28));border-radius:13px;background:var(--brand-surface,transparent);padding:12px 14px;font-size:14px;outline:none}.seller-field input:focus{border-color:var(--brand-accent,#1677ff)}`}</style>
-  </section>;
+function AdIntegrations({ request }: any) {
+  const [form, setForm] = useState({
+    metaPixelId: "",
+    metaAccessToken: "",
+    tiktokPixelId: "",
+    tiktokAccessToken: "",
+  });
+  const [connected, setConnected] = useState({
+    metaTokenConnected: false,
+    tiktokTokenConnected: false,
+  });
+  const [loading, setLoading] = useState(true),
+    [saving, setSaving] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      const result = await request("ad-integrations");
+      setForm((value: any) => ({
+        ...value,
+        metaPixelId: result.integrations.metaPixelId || "",
+        tiktokPixelId: result.integrations.tiktokPixelId || "",
+      }));
+      setConnected(result.integrations);
+    } catch (error: any) {
+      toast.error(error.message || "Could not load integrations.");
+    } finally {
+      setLoading(false);
+    }
+  }, [request]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const save = async (extra: any = {}) => {
+    setSaving(true);
+    try {
+      const result = await request("ad-integrations", {
+        method: "PUT",
+        body: JSON.stringify({ ...form, ...extra }),
+      });
+      setConnected(result.integrations);
+      setForm((value: any) => ({
+        ...value,
+        metaAccessToken: "",
+        tiktokAccessToken: "",
+      }));
+      toast.success("Ad integrations saved. Purchase events will only send after payment confirmation and buyer consent.");
+    } catch (error: any) {
+      toast.error(error.message || "Could not save integrations.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const field = (label: string, key: string, props: any = {}) => (
+    <label className="seller-field block">
+      <span className="mb-2 block text-[10px] font-black uppercase tracking-[.13em] text-brand-text-secondary">{label}</span>
+      <input {...props} value={(form as any)[key]} onChange={(event) => setForm((current: any) => ({ ...current, [key]: event.target.value }))} />
+    </label>
+  );
+  if (loading)
+    return (
+      <section className="mt-6 grid min-h-64 place-items-center rounded-3xl border border-brand-border bg-brand-surface">
+        <Loader2 className="animate-spin text-brand-accent" />
+      </section>
+    );
+  return (
+    <section className="mt-6 space-y-5">
+      <div className="rounded-3xl border border-brand-accent/25 bg-brand-accent/[.06] p-6">
+        <div className="flex items-start gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-accent/15 text-brand-accent">
+            <PlugZap size={20} />
+          </span>
+          <div>
+            <h2 className="text-lg font-black">Track your product marketing</h2>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-brand-text-secondary">Connect your Meta Pixel and TikTok Pixel to measure product views and confirmed purchases from your own Plugsy product links. Events are seller-specific and never fire for unpaid checkouts.</p>
+          </div>
+        </div>
+      </div>
+      <article className="rounded-3xl border border-brand-border bg-brand-surface p-6">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-black">Meta</h3>
+            <p className="mt-1 text-xs leading-5 text-brand-text-secondary">Meta Pixel for browser events, plus Conversions API for confirmed server-side purchases.</p>
+          </div>
+          <span className={`rounded-full px-3 py-1 text-[10px] font-black ${connected.metaTokenConnected ? "bg-emerald-500/10 text-emerald-500" : "bg-brand-bg text-brand-text-secondary"}`}>{connected.metaTokenConnected ? "Connected" : "Not connected"}</span>
+        </div>
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          {field("Meta Pixel ID", "metaPixelId", {
+            inputMode: "numeric",
+            placeholder: "e.g. 123456789012345",
+          })}
+          {field("Conversions API access token", "metaAccessToken", {
+            type: "password",
+            autoComplete: "new-password",
+            placeholder: connected.metaTokenConnected ? "Saved securely — blank keeps current token" : "Paste token from Meta Events Manager",
+          })}
+        </div>
+        <p className="mt-3 text-[11px] leading-5 text-brand-text-secondary">Tokens are encrypted before storage and are never returned to this page. Leave the token field blank to keep the current token.</p>
+        {connected.metaTokenConnected && (
+          <button type="button" onClick={() => void save({ removeMetaToken: true })} disabled={saving} className="mt-3 text-xs font-bold text-red-500">
+            Remove saved Meta token
+          </button>
+        )}
+      </article>
+      <article className="rounded-3xl border border-brand-border bg-brand-surface p-6">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-black">TikTok</h3>
+            <p className="mt-1 text-xs leading-5 text-brand-text-secondary">TikTok Pixel for browser events, plus Events API for confirmed server-side purchases.</p>
+          </div>
+          <span className={`rounded-full px-3 py-1 text-[10px] font-black ${connected.tiktokTokenConnected ? "bg-emerald-500/10 text-emerald-500" : "bg-brand-bg text-brand-text-secondary"}`}>{connected.tiktokTokenConnected ? "Connected" : "Not connected"}</span>
+        </div>
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          {field("TikTok Pixel code", "tiktokPixelId", {
+            placeholder: "Enter the Pixel code from TikTok Ads Manager",
+          })}
+          {field("Events API access token", "tiktokAccessToken", {
+            type: "password",
+            autoComplete: "new-password",
+            placeholder: connected.tiktokTokenConnected ? "Saved securely — blank keeps current token" : "Paste token from TikTok Events Manager",
+          })}
+        </div>
+        <p className="mt-3 text-[11px] leading-5 text-brand-text-secondary">Tokens are encrypted before storage and are never returned to this page. Leave the token field blank to keep the current token.</p>
+        {connected.tiktokTokenConnected && (
+          <button type="button" onClick={() => void save({ removeTiktokToken: true })} disabled={saving} className="mt-3 text-xs font-bold text-red-500">
+            Remove saved TikTok token
+          </button>
+        )}
+      </article>
+      <div className="flex flex-col gap-3 rounded-2xl border border-brand-border bg-brand-surface p-5 sm:flex-row sm:items-center sm:justify-between">
+        <p className="max-w-2xl text-xs leading-5 text-brand-text-secondary">Purchase events use the same order reference for browser/server deduplication. Optional ad measurement only runs after the buyer opts in; Plugsy still confirms payment independently.</p>
+        <button onClick={() => void save()} disabled={saving} className="btn-primary flex h-11 shrink-0 items-center justify-center gap-2 px-5 text-xs font-black">
+          {saving ? <Loader2 className="animate-spin" size={15} /> : <Check size={15} />}
+          Save integrations
+        </button>
+      </div>
+      <style>{`.seller-field input{width:100%;border:1px solid var(--brand-border,rgba(128,128,128,.28));border-radius:13px;background:var(--brand-surface,transparent);padding:12px 14px;font-size:14px;outline:none}.seller-field input:focus{border-color:var(--brand-accent,#1677ff)}`}</style>
+    </section>
+  );
 }
 
-function PublicSellingNextStep({seller,premiumActive,verified,listings,onPremium,onVerify,onProducts,onCreate}:any){
-  const pending=seller?.verification_status==="pending" && seller?.verification_retry_available!==true;
-  const title=!premiumActive?"Get discovered in the public Marketplace":pending?"Your identity check is in progress":!verified?"Premium is active. Verify to publish publicly.":listings.some((item:any)=>item.visibility==="public"&&item.status==="published")?"Your public store is ready":"You're ready to publish publicly";
-  const detail=!premiumActive?"Private links work now. Premium and identity verification unlock public discovery.":pending?"We'll show your publishing options as soon as verification is complete. You can still sell with private links.":!verified?"One step left: complete a BVN or NIN face check. Your products and private links remain available while you do this.":"Choose a product and select Public marketplace to make it discoverable.";
-  return <section aria-label="Public marketplace publishing status" className="mt-5 flex flex-col gap-4 rounded-2xl border border-brand-accent/25 bg-brand-accent/[.06] p-5 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-accent/15 text-brand-accent"><Store size={20}/></span><div><p className="text-[10px] font-black uppercase tracking-[.16em] text-brand-accent">Public Marketplace · {premiumActive?verified?"Ready":"Premium active":"Not active"}</p><h2 className="mt-1 text-base font-black">{title}</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-brand-text-secondary">{detail}</p></div></div>{!pending&&<button type="button" onClick={!premiumActive?onPremium:!verified?onVerify:listings.length?onProducts:onCreate} className="btn-primary flex h-11 shrink-0 items-center justify-center gap-2 px-4 text-xs font-black">{!premiumActive?"View Premium plans":!verified?"Verify your account":listings.length?"Choose a product":"Create a product"}<ArrowRight size={15}/></button>}</section>;
+function PublicSellingNextStep({ seller, premiumActive, verified, listings, onPremium, onVerify, onProducts, onCreate }: any) {
+  const pending = seller?.verification_status === "pending" && seller?.verification_retry_available !== true;
+  const title = !premiumActive ? "Get discovered in the public Marketplace" : pending ? "Your identity check is in progress" : !verified ? "Premium is active. Verify to publish publicly." : listings.some((item: any) => item.visibility === "public" && item.status === "published") ? "Your public store is ready" : "You're ready to publish publicly";
+  const detail = !premiumActive ? "Private links work now. Premium and identity verification unlock public discovery." : pending ? "We'll show your publishing options as soon as verification is complete. You can still sell with private links." : !verified ? "One step left: complete a BVN or NIN face check. Your products and private links remain available while you do this." : "Choose a product and select Public marketplace to make it discoverable.";
+  return (
+    <section aria-label="Public marketplace publishing status" className="mt-5 flex flex-col gap-4 rounded-2xl border border-brand-accent/25 bg-brand-accent/[.06] p-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-accent/15 text-brand-accent">
+          <Store size={20} />
+        </span>
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[.16em] text-brand-accent">Public Marketplace · {premiumActive ? (verified ? "Ready" : "Premium active") : "Not active"}</p>
+          <h2 className="mt-1 text-base font-black">{title}</h2>
+          <p className="mt-1 max-w-2xl text-xs leading-5 text-brand-text-secondary">{detail}</p>
+        </div>
+      </div>
+      {!pending && (
+        <button type="button" onClick={!premiumActive ? onPremium : !verified ? onVerify : listings.length ? onProducts : onCreate} className="btn-primary flex h-11 shrink-0 items-center justify-center gap-2 px-4 text-xs font-black">
+          {!premiumActive ? "View Premium plans" : !verified ? "Verify your account" : listings.length ? "Choose a product" : "Create a product"}
+          <ArrowRight size={15} />
+        </button>
+      )}
+    </section>
+  );
 }
 
-function Home({listings,sales,metrics,top,create,products,viewOrders}:any){return <div className="mt-6 space-y-5">{!listings.length?<section className="relative overflow-hidden rounded-[30px] bg-blue-600 p-8 text-white shadow-[0_24px_70px_rgba(37,99,235,.25)] sm:p-10"><div className="relative z-10 max-w-xl"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-white/15"><PackagePlus/></span><h2 className="mt-6 text-3xl font-black sm:text-4xl">Start with one great product.</h2><p className="mt-3 max-w-md text-sm leading-6 text-white/75">Add the basics, choose how buyers receive it, then decide where to sell it.</p><button onClick={create} className="mt-7 flex h-12 items-center gap-2 rounded-xl bg-white px-5 text-sm font-black text-black">Create your first product<ArrowRight size={17}/></button></div><Store className="absolute -bottom-12 -right-8 h-64 w-64 text-white/10"/></section>:<section className="rounded-[30px] border border-brand-border bg-brand-surface p-7"><p className="text-xs font-bold text-brand-text-secondary">Revenue in this period</p><div className="mt-2 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-5xl font-black">{money(metrics.revenue)}</p><p className="mt-3 text-xs text-brand-text-secondary">{sales.length} sales · {metrics.buyers} customers</p></div><button onClick={products} className="h-11 rounded-xl border border-brand-border px-4 text-xs font-black">Manage products</button></div></section>}<div className="grid gap-4 sm:grid-cols-3"><button onClick={()=>viewOrders("released")} className="text-left"><Metric label="Released to wallet" value={money(metrics.released)} icon={BarChart3} hint="View wallet credits"/></button><button onClick={()=>viewOrders("held")} className="text-left"><Metric label="Protected hold" value={money(metrics.held)} icon={ShoppingBag} hint="View protected purchases"/></button><Metric label="Customers" value={metrics.buyers} icon={Users}/></div><section className="rounded-3xl border border-brand-border bg-brand-surface p-6"><h2 className="text-lg font-black">Top products</h2><p className="text-xs text-brand-text-secondary">Updates with the selected period</p><div className="mt-5 grid gap-3 md:grid-cols-2">{top.length?top.map((p:any,i:number)=><div key={p.id} className="flex items-center gap-3 rounded-2xl bg-brand-bg p-4"><span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-surface text-xs font-black">{i+1}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{p.title}</p><p className="text-[10px] text-brand-text-secondary">{p.orders} sales</p></div><strong>{money(p.revenue)}</strong></div>):<p className="py-8 text-sm text-brand-text-secondary">Product performance will appear after your first sale.</p>}</div></section></div>}
-function Metric({label,value,icon:Icon,hint}:any){return <article className="rounded-2xl border border-brand-border bg-brand-surface p-5 transition hover:border-brand-accent/50 hover:shadow-lg"><span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-accent/10 text-brand-accent"><Icon size={18}/></span><p className="mt-5 text-xs font-bold text-brand-text-secondary">{label}</p><p className="mt-1 text-2xl font-black">{value}</p>{hint&&<p className="mt-2 text-[10px] font-bold text-brand-accent">{hint} →</p>}</article>}
-
-function ProductList({listings,busy,create,edit,status,copyLink,publishPublicly,premiumActive,verified}:any){
-  if(!listings.length)return <div className="mt-6 rounded-3xl border border-dashed border-brand-border bg-brand-surface p-12 text-center"><PackagePlus className="mx-auto text-brand-accent" size={40}/><h2 className="mt-5 text-2xl font-black">No products yet</h2><p className="mt-2 text-sm text-brand-text-secondary">Create one in three simple steps.</p><button onClick={create} className="btn-primary mt-6 h-11 px-5">Create product</button></div>;
-  return <div className="mt-6 space-y-3">{listings.map((p:any)=><article key={p.id} className="flex flex-col gap-4 rounded-2xl border border-brand-border bg-brand-surface p-4 sm:flex-row sm:items-center"><span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-brand-bg">{p.cover_image_url?<img src={p.cover_image_url} alt="" className="h-full w-full object-cover"/>:<Box className="text-brand-accent"/>}</span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h3 className="truncate font-black">{p.title}</h3><span className={`rounded-full px-2 py-1 text-[8px] font-black uppercase ${p.status==="published"?"bg-emerald-500/10 text-emerald-500":"bg-brand-bg text-brand-text-secondary"}`}>{p.status}</span></div><p className="mt-1 text-xs text-brand-text-secondary">{money(p.price)} · {p.visibility==="private"?"Private link":"Public marketplace"}</p>{p.visibility==="private"&&<><p className="mt-2 text-[10px] font-bold text-brand-text-secondary">Private selling stays available whether or not you publish publicly.</p><button type="button" onClick={()=>publishPublicly(p)} className="mt-1 inline-flex items-center gap-1.5 text-xs font-black text-brand-accent hover:underline">{!premiumActive?"Go Premium to publish publicly":!verified?"Verify to publish publicly":"Publish on public Marketplace"}<ArrowRight size={13}/></button></>}</div><div className="flex gap-2"><button onClick={()=>edit(p)} className="h-9 rounded-xl border border-brand-border px-3 text-xs font-bold">Edit</button><button disabled={busy===p.id} onClick={()=>copyLink(p)} aria-label={p.status!=="published"?"Activate and copy private product link":"Copy product link"} title={p.status!=="published"?"Activate a private link without publishing publicly":"Copy product link"} className="grid h-9 w-9 place-items-center rounded-xl border border-brand-border disabled:opacity-50"><Copy size={14}/></button><button disabled={busy===p.id} onClick={()=>status(p,p.status==="published"?"paused":"published")} className="btn-primary h-9 px-3 text-xs">{p.visibility==="private"?(p.status==="published"?"Pause link":"Activate link"):(p.status==="published"?"Pause":"Publish")}</button></div></article>)}</div>;
+function Home({ listings, sales, metrics, top, create, products, viewOrders }: any) {
+  return (
+    <div className="mt-6 space-y-5">
+      {!listings.length ? (
+        <section className="relative overflow-hidden rounded-[30px] bg-blue-600 p-8 text-white shadow-[0_24px_70px_rgba(37,99,235,.25)] sm:p-10">
+          <div className="relative z-10 max-w-xl">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white/15">
+              <PackagePlus />
+            </span>
+            <h2 className="mt-6 text-3xl font-black sm:text-4xl">Start with one great product.</h2>
+            <p className="mt-3 max-w-md text-sm leading-6 text-white/75">Add the basics, choose how buyers receive it, then decide where to sell it.</p>
+            <button onClick={create} className="mt-7 flex h-12 items-center gap-2 rounded-xl bg-white px-5 text-sm font-black text-black">
+              Create your first product
+              <ArrowRight size={17} />
+            </button>
+          </div>
+          <Store className="absolute -bottom-12 -right-8 h-64 w-64 text-white/10" />
+        </section>
+      ) : (
+        <section className="rounded-[30px] border border-brand-border bg-brand-surface p-7">
+          <p className="text-xs font-bold text-brand-text-secondary">Revenue in this period</p>
+          <div className="mt-2 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-5xl font-black">{money(metrics.revenue)}</p>
+              <p className="mt-3 text-xs text-brand-text-secondary">
+                {sales.length} sales · {metrics.buyers} customers
+              </p>
+            </div>
+            <button onClick={products} className="h-11 rounded-xl border border-brand-border px-4 text-xs font-black">
+              Manage products
+            </button>
+          </div>
+        </section>
+      )}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <button onClick={() => viewOrders("released")} className="text-left">
+          <Metric label="Released to wallet" value={money(metrics.released)} icon={BarChart3} hint="View wallet credits" />
+        </button>
+        <button onClick={() => viewOrders("held")} className="text-left">
+          <Metric label="Protected hold" value={money(metrics.held)} icon={ShoppingBag} hint="View protected purchases" />
+        </button>
+        <Metric label="Customers" value={metrics.buyers} icon={Users} />
+      </div>
+      <section className="rounded-3xl border border-brand-border bg-brand-surface p-6">
+        <h2 className="text-lg font-black">Top products</h2>
+        <p className="text-xs text-brand-text-secondary">Updates with the selected period</p>
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          {top.length ? (
+            top.map((p: any, i: number) => (
+              <div key={p.id} className="flex items-center gap-3 rounded-2xl bg-brand-bg p-4">
+                <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-surface text-xs font-black">{i + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold">{p.title}</p>
+                  <p className="text-[10px] text-brand-text-secondary">{p.orders} sales</p>
+                </div>
+                <strong>{money(p.revenue)}</strong>
+              </div>
+            ))
+          ) : (
+            <p className="py-8 text-sm text-brand-text-secondary">Product performance will appear after your first sale.</p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+function Metric({ label, value, icon: Icon, hint }: any) {
+  return (
+    <article className="rounded-2xl border border-brand-border bg-brand-surface p-5 transition hover:border-brand-accent/50 hover:shadow-lg">
+      <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-accent/10 text-brand-accent">
+        <Icon size={18} />
+      </span>
+      <p className="mt-5 text-xs font-bold text-brand-text-secondary">{label}</p>
+      <p className="mt-1 text-2xl font-black">{value}</p>
+      {hint && <p className="mt-2 text-[10px] font-bold text-brand-accent">{hint} →</p>}
+    </article>
+  );
 }
 
-function Countdown({until}:any){const [now,setNow]=useState(Date.now());useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),1000);return()=>window.clearInterval(timer);},[]);const left=Math.max(0,new Date(until).getTime()-now);const hours=Math.floor(left/3600000);const minutes=Math.floor((left%3600000)/60000);const seconds=Math.floor((left%60000)/1000);return <span>{left?`${hours}h ${minutes}m ${seconds}s remaining`:'Protection period complete — payout processing'}</span>}
-function payoutStatus(order:any){if(order.funds_status==="released")return "Paid to your wallet";if(order.funds_status==="disputed")return "In review";const date=order.payout_available_at?new Date(order.payout_available_at):null;if(date&&!Number.isNaN(date.getTime()))return date.getTime()<=Date.now()?"Processing payout":"Wallet payout " + date.toLocaleString("en-NG",{weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"});return "10-hour buyer protection"}
-function OrderList({orders,query,setQuery,support,filter,setFilter}:any){return <section className="mt-6 overflow-hidden rounded-3xl border border-brand-border bg-brand-surface"><div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><label className="relative block max-w-md"><Search className="absolute left-4 top-3.5 text-brand-text-secondary" size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search buyer, product or order" className="h-11 w-full rounded-xl border border-brand-border bg-brand-bg pl-11 pr-4 text-sm outline-none"/></label><div className="flex gap-2"><select value={filter} onChange={e=>setFilter(e.target.value)} className="h-11 rounded-xl border border-brand-border bg-brand-bg px-3 text-xs font-bold"><option value="all">All payments</option><option value="held">Protected hold</option><option value="released">Released to wallet</option></select></div></div>{orders.length?orders.map((s:any)=><div key={s.id} className="flex flex-col gap-4 border-t border-brand-border p-5 sm:flex-row sm:items-center"><div className="flex min-w-0 flex-1 items-center gap-3">{s.buyer?.avatar?<img src={s.buyer.avatar} alt="" className="h-10 w-10 rounded-full object-cover"/>:<span className="grid h-10 w-10 place-items-center rounded-full bg-brand-accent/10 font-black text-brand-accent">{s.buyer?.name?.[0]||"P"}</span>}<div className="min-w-0"><p className="truncate text-sm font-bold">{s.buyer?.name||"Plugsy buyer"}</p><p className="truncate text-xs text-brand-text-secondary">{s.product_title} · {new Date(s.created_at).toLocaleDateString()} · {s.order_reference}</p>{s.guest&&<p className="mt-1 text-[10px] font-bold text-brand-text-secondary">Guest checkout</p>}</div></div><div className="min-w-[230px]"><p className="font-black">{money(s.seller_amount)} seller earnings</p><p className="mt-1 text-[9px] font-black uppercase text-brand-text-secondary">{payoutStatus(s)}</p>{s.funds_status==="held"&&s.hold_expires_at&&<p className="mt-1 text-[10px] font-bold text-brand-accent"><Countdown until={s.hold_expires_at}/></p>}</div><button onClick={()=>support(s)} className="flex h-10 items-center gap-2 rounded-xl border border-brand-border px-4 text-xs font-black"><MessageCircle size={15}/>Support</button></div>):<p className="border-t border-brand-border p-14 text-center text-sm text-brand-text-secondary">No matching payments.</p>}</section>}
-function Setup({seller,listings}:any){const steps=[{text:"Create product",done:listings.length>0},{text:"Activate public plan",done:Boolean(seller?.public_selling_enabled&&seller?.public_plan_expires_at&&new Date(seller.public_plan_expires_at).getTime()>Date.now())},{text:"Verify identity",done:seller?.verification_status==="verified"}];return <section className="rounded-3xl border border-brand-border bg-brand-surface p-6"><h2 className="text-xl font-black">Finish your store</h2><p className="mt-2 text-sm text-brand-text-secondary">Private links are always free. For public Marketplace visibility, activate your plan, then verify your identity.</p><div className="mt-6 grid gap-3 sm:grid-cols-3">{steps.map((s,i)=><div key={s.text} className="flex items-center gap-3 rounded-2xl bg-brand-bg p-4"><span className={`grid h-8 w-8 place-items-center rounded-full text-xs font-black ${s.done?"bg-emerald-500 text-white":"border border-brand-border"}`}>{s.done?<Check size={15}/>:i+1}</span><span className="text-xs font-bold">{s.text}</span></div>)}</div></section>}
+function ProductList({ listings, busy, create, edit, status, copyLink, publishPublicly, premiumActive, verified }: any) {
+  if (!listings.length)
+    return (
+      <div className="mt-6 rounded-3xl border border-dashed border-brand-border bg-brand-surface p-12 text-center">
+        <PackagePlus className="mx-auto text-brand-accent" size={40} />
+        <h2 className="mt-5 text-2xl font-black">No products yet</h2>
+        <p className="mt-2 text-sm text-brand-text-secondary">Create one in three simple steps.</p>
+        <button onClick={create} className="btn-primary mt-6 h-11 px-5">
+          Create product
+        </button>
+      </div>
+    );
+  return (
+    <div className="mt-6 space-y-3">
+      {listings.map((p: any) => (
+        <article key={p.id} className="flex flex-col gap-4 rounded-2xl border border-brand-border bg-brand-surface p-4 sm:flex-row sm:items-center">
+          <span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-brand-bg">{p.cover_image_url ? <img src={p.cover_image_url} alt="" className="h-full w-full object-cover" /> : <Box className="text-brand-accent" />}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="truncate font-black">{p.title}</h3>
+              <span className={`rounded-full px-2 py-1 text-[8px] font-black uppercase ${p.status === "published" ? "bg-emerald-500/10 text-emerald-500" : "bg-brand-bg text-brand-text-secondary"}`}>{p.status}</span>
+            </div>
+            <p className="mt-1 text-xs text-brand-text-secondary">
+              {money(p.price)} · {p.visibility === "private" ? "Private link" : "Public marketplace"}
+            </p>
+            {p.visibility === "private" && (
+              <>
+                <p className="mt-2 text-[10px] font-bold text-brand-text-secondary">Private selling stays available whether or not you publish publicly.</p>
+                <button type="button" onClick={() => publishPublicly(p)} className="mt-1 inline-flex items-center gap-1.5 text-xs font-black text-brand-accent hover:underline">
+                  {!premiumActive ? "Go Premium to publish publicly" : !verified ? "Verify to publish publicly" : "Publish on public Marketplace"}
+                  <ArrowRight size={13} />
+                </button>
+              </>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => edit(p)} className="h-9 rounded-xl border border-brand-border px-3 text-xs font-bold">
+              Edit
+            </button>
+            <button disabled={busy === p.id} onClick={() => copyLink(p)} aria-label={p.status !== "published" ? "Activate and copy private product link" : "Copy product link"} title={p.status !== "published" ? "Activate a private link without publishing publicly" : "Copy product link"} className="grid h-9 w-9 place-items-center rounded-xl border border-brand-border disabled:opacity-50">
+              <Copy size={14} />
+            </button>
+            <button disabled={busy === p.id} onClick={() => status(p, p.status === "published" ? "paused" : "published")} className="btn-primary h-9 px-3 text-xs">
+              {p.visibility === "private" ? (p.status === "published" ? "Pause link" : "Activate link") : p.status === "published" ? "Pause" : "Publish"}
+            </button>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
 
-function Wizard({open,step,setStep,form,setForm,editing,busy,coverBusy,uploadCover,productFiles,setProductFiles,deliveryLinks,setDeliveryLinks,close,save}:any){const put=(key:string,value:string)=>setForm((f:any)=>({...f,[key]:value}));const valid=form.title.trim().length>=3&&Number(form.price)>=100;const presets=["Open product","Download files","Start course","View resource"];const custom=!presets.includes(form.deliveryLabel);return <AnimatePresence>{open&&<motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 z-[10000] flex bg-black/65 backdrop-blur-sm"><motion.section initial={{x:40}} animate={{x:0}} exit={{x:40}} className="ml-auto flex h-full w-full max-w-2xl flex-col bg-brand-bg text-brand-text"><header className="flex items-center justify-between border-b border-brand-border px-5 py-4 sm:px-8"><div><p className="text-[9px] font-black uppercase tracking-[.2em] text-brand-accent">{editing?"Edit product":"New product"}</p><h2 className="mt-1 text-xl font-black">{step===1?"What are you selling?":step===2?"How will buyers get it?":"Where will you sell it?"}</h2></div><button onClick={close} className="grid h-10 w-10 place-items-center rounded-xl border border-brand-border"><X size={18}/></button></header><div className="flex gap-2 px-5 pt-5 sm:px-8">{[1,2,3].map(n=><span key={n} className={`h-1.5 flex-1 rounded-full ${n<=step?"bg-brand-accent":"bg-brand-border"}`}/>)}</div><div className="flex-1 overflow-y-auto px-5 py-7 sm:px-8">{step===1&&<div className="space-y-5"><Field label="Product name"><input autoFocus value={form.title} onChange={e=>put("title",e.target.value)} placeholder="e.g. The Content Planning Kit"/></Field><div className="grid gap-5 sm:grid-cols-2"><Field label="Category"><select value={form.category} onChange={e=>put("category",e.target.value)}>{categories.map(x=><option key={x} value={x}>{x.replace(/_/g," ")}</option>)}</select></Field><Field label="Price (₦)"><input type="number" min="100" value={form.price} onChange={e=>put("price",e.target.value)} placeholder="5000"/></Field></div><Field label="Short summary"><input maxLength={220} value={form.summary} onChange={e=>put("summary",e.target.value)} placeholder="What will this help the buyer achieve?"/></Field><Field label="Description"><textarea rows={5} value={form.description} onChange={e=>put("description",e.target.value)} placeholder="What is included and who is it for?"/></Field><Field label="Product cover"><label className="flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-brand-border bg-brand-surface p-4">{form.coverImageUrl?<img src={form.coverImageUrl} alt="Product cover preview" className="h-20 w-20 rounded-xl object-cover"/>:<span className="grid h-20 w-20 place-items-center rounded-xl bg-brand-bg text-brand-accent"><UploadCloud/></span>}<span><strong className="block text-sm">{coverBusy?"Uploading cover…":form.coverImageUrl?"Change cover image":"Upload cover image"}</strong><span className="mt-1 block text-xs text-brand-text-secondary">JPG, PNG or WebP</span></span><input disabled={coverBusy} type="file" accept="image/*" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)void uploadCover(file);}}/></label></Field></div>}{step===2&&<div className="space-y-6"><div className="rounded-2xl border border-brand-accent/25 bg-brand-accent/5 p-5"><div className="flex gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-accent text-white"><UploadCloud size={19}/></span><p className="text-sm leading-6 text-brand-text-secondary">Add as many files or links as your product needs. Buyers will see each one in their library.</p></div></div><Field label="Upload product files"><label className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-dashed border-brand-border bg-brand-surface p-5"><span><strong className="block text-sm">{productFiles.length?`${productFiles.length} file${productFiles.length===1?"":"s"} selected`:"Choose product files"}</strong><span className="mt-1 block text-xs text-brand-text-secondary">PDF, ZIP, images, MP4, WebM or MOV · up to 250 MB each. Files are security-scanned before activation.</span></span><span className="rounded-xl bg-brand-accent/10 px-3 py-2 text-xs font-black text-brand-accent">Browse</span><input multiple type="file" accept=".pdf,.zip,.png,.jpg,.jpeg,.webp,.mp4,.webm,.mov,video/mp4,video/webm,video/quicktime" className="hidden" onChange={e=>setProductFiles(Array.from(e.target.files||[]))}/></label></Field><div className="flex items-center gap-3"><span className="h-px flex-1 bg-brand-border"/><span className="text-[9px] font-black uppercase tracking-wider text-brand-text-secondary">or hosted elsewhere</span><span className="h-px flex-1 bg-brand-border"/></div><Field label="External product link (optional)"><input type="url" value={form.deliveryUrl} onChange={e=>put("deliveryUrl",e.target.value)} placeholder="Google Drive, Notion, Canva, course platform…"/><p className="mt-2 text-xs leading-5 text-brand-text-secondary">Use this when part of the product is hosted elsewhere. The buyer receives it after payment.</p></Field><div className="space-y-3"><div className="flex items-center justify-between"><span className="text-xs font-black">Additional links</span><button type="button" onClick={()=>setDeliveryLinks((links:any[])=>[...links,{label:"",url:""}])} className="text-xs font-black text-brand-accent">+ Add link</button></div>{deliveryLinks.map((link:any,index:number)=><div key={index} className="grid gap-2 sm:grid-cols-2"><input value={link.label} onChange={e=>setDeliveryLinks((links:any[])=>links.map((item:any,i:number)=>i===index?{...item,label:e.target.value}:item))} placeholder={`Link name ${index+1}`}/><div className="flex gap-2"><input type="url" value={link.url} onChange={e=>setDeliveryLinks((links:any[])=>links.map((item:any,i:number)=>i===index?{...item,url:e.target.value}:item))} placeholder="https://..."/><button type="button" onClick={()=>setDeliveryLinks((links:any[])=>links.filter((_:any,i:number)=>i!==index))} className="rounded-xl border border-brand-border px-3"><X size={14}/></button></div></div>)}</div><Field label="Buyer button"><select value={custom?"__custom":form.deliveryLabel} onChange={e=>put("deliveryLabel",e.target.value==="__custom"?"":e.target.value)}>{presets.map(label=><option key={label}>{label}</option>)}<option value="__custom">Custom text…</option></select></Field>{custom&&<Field label="Custom button text"><input autoFocus maxLength={80} value={form.deliveryLabel} onChange={e=>put("deliveryLabel",e.target.value)} placeholder="e.g. Get the toolkit"/></Field>}</div>}{step===3&&<div className="space-y-6"><div className="grid gap-3 sm:grid-cols-2">{[{id:"private",title:"Private link",text:"Free. Sell using your own link."},{id:"public",title:"Public marketplace",text:"Verification and ₦1,500 plan required."}].map(o=><button type="button" key={o.id} onClick={()=>put("visibility",o.id)} className={`rounded-2xl border p-5 text-left ${form.visibility===o.id?"border-brand-accent bg-brand-accent/5":"border-brand-border"}`}><span className="flex justify-between font-black">{o.title}{form.visibility===o.id&&<Check size={17} className="text-brand-accent"/>}</span><span className="mt-2 block text-xs leading-5 text-brand-text-secondary">{o.text}</span></button>)}</div><Field label="Refer & Earn"><select value={form.resalePolicy} onChange={e=>put("resalePolicy",e.target.value)}><option value="not_allowed">Off</option><option value="fixed_percent">Open — anyone can earn</option><option value="approval_required">Approval required</option></select><p className="mt-2 text-xs leading-5 text-brand-text-secondary">Referral commission comes from your seller proceeds. It is protected with the order for 10 hours before release.</p></Field>{form.resalePolicy==="fixed_percent"&&<Field label="Referral commission (%)"><input type="number" min="1" max="80" value={form.resaleCommissionPercent} onChange={e=>put("resaleCommissionPercent",e.target.value)}/></Field>}<div className="rounded-2xl bg-brand-surface p-5"><p className="text-xs text-brand-text-secondary">Ready to save</p><h3 className="mt-2 text-lg font-black">{form.title||"Untitled product"}</h3><p className="mt-1 text-sm text-brand-text-secondary">{money(form.price)} · {productFiles.length?`${productFiles.length} product files`:form.deliveryUrl?"External product link":"Add delivery later"} · Button: {form.deliveryLabel||"Custom text required"}</p></div></div>}</div><footer className="flex justify-between border-t border-brand-border px-5 py-4 sm:px-8"><button onClick={()=>setStep(step-1)} className={`h-11 px-3 text-sm font-bold ${step===1?"invisible":""}`}>Back</button>{step<3?<button disabled={(step===1&&!valid)||(step===2&&!form.deliveryLabel.trim())} onClick={()=>setStep(step+1)} className="btn-primary flex h-11 items-center gap-2 px-5 text-sm font-black disabled:opacity-40">Continue<ArrowRight size={16}/></button>:<button disabled={busy||!form.deliveryLabel.trim()} onClick={save} className="btn-primary flex h-11 items-center gap-2 px-5 text-sm font-black">{busy?<Loader2 className="animate-spin" size={16}/>:<Check size={16}/>}Save product</button>}</footer></motion.section></motion.div>}<style>{`.seller-field input,.seller-field select,.seller-field textarea{width:100%;border:1px solid var(--brand-border,rgba(128,128,128,.28));border-radius:13px;background:var(--brand-surface,transparent);padding:12px 14px;font-size:14px;outline:none}.seller-field input:focus,.seller-field select:focus,.seller-field textarea:focus{border-color:var(--brand-accent,#1677ff)}`}</style></AnimatePresence>}
-function Field({label,children}:{label:string;children:React.ReactNode}){return <label className="seller-field block"><span className="mb-2 block text-[10px] font-black uppercase tracking-[.13em] text-brand-text-secondary">{label}</span>{children}</label>}
+function Countdown({ until }: any) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const left = Math.max(0, new Date(until).getTime() - now);
+  const hours = Math.floor(left / 3600000);
+  const minutes = Math.floor((left % 3600000) / 60000);
+  const seconds = Math.floor((left % 60000) / 1000);
+  return <span>{left ? `${hours}h ${minutes}m ${seconds}s remaining` : "Protection period complete — payout processing"}</span>;
+}
+function payoutStatus(order: any) {
+  if (order.funds_status === "released") return "Paid to your wallet";
+  if (order.funds_status === "disputed") return "In review";
+  const date = order.payout_available_at ? new Date(order.payout_available_at) : null;
+  if (date && !Number.isNaN(date.getTime()))
+    return date.getTime() <= Date.now()
+      ? "Processing payout"
+      : "Wallet payout " +
+          date.toLocaleString("en-NG", {
+            weekday: "short",
+            day: "numeric",
+            month: "short",
+            hour: "numeric",
+            minute: "2-digit",
+          });
+  return "10-hour buyer protection";
+}
+function OrderList({ orders, query, setQuery, support, filter, setFilter }: any) {
+  return (
+    <section className="mt-6 overflow-hidden rounded-3xl border border-brand-border bg-brand-surface">
+      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <label className="relative block max-w-md">
+          <Search className="absolute left-4 top-3.5 text-brand-text-secondary" size={16} />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search buyer, product or order" className="h-11 w-full rounded-xl border border-brand-border bg-brand-bg pl-11 pr-4 text-sm outline-none" />
+        </label>
+        <div className="flex gap-2">
+          <select value={filter} onChange={(e) => setFilter(e.target.value)} className="h-11 rounded-xl border border-brand-border bg-brand-bg px-3 text-xs font-bold">
+            <option value="all">All payments</option>
+            <option value="held">Protected hold</option>
+            <option value="released">Released to wallet</option>
+          </select>
+        </div>
+      </div>
+      {orders.length ? (
+        orders.map((s: any) => (
+          <div key={s.id} className="flex flex-col gap-4 border-t border-brand-border p-5 sm:flex-row sm:items-center">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              {s.buyer?.avatar ? <img src={s.buyer.avatar} alt="" className="h-10 w-10 rounded-full object-cover" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-brand-accent/10 font-black text-brand-accent">{s.buyer?.name?.[0] || "P"}</span>}
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold">{s.buyer?.name || "Plugsy buyer"}</p>
+                <p className="truncate text-xs text-brand-text-secondary">
+                  {s.product_title} · {new Date(s.created_at).toLocaleDateString()} · {s.order_reference}
+                </p>
+                {s.guest && <p className="mt-1 text-[10px] font-bold text-brand-text-secondary">Guest checkout</p>}
+              </div>
+            </div>
+            <div className="min-w-[230px]">
+              <p className="font-black">{money(s.seller_amount)} seller earnings</p>
+              <p className="mt-1 text-[9px] font-black uppercase text-brand-text-secondary">{payoutStatus(s)}</p>
+              {s.funds_status === "held" && s.hold_expires_at && (
+                <p className="mt-1 text-[10px] font-bold text-brand-accent">
+                  <Countdown until={s.hold_expires_at} />
+                </p>
+              )}
+            </div>
+            <button onClick={() => support(s)} className="flex h-10 items-center gap-2 rounded-xl border border-brand-border px-4 text-xs font-black">
+              <MessageCircle size={15} />
+              Support
+            </button>
+          </div>
+        ))
+      ) : (
+        <p className="border-t border-brand-border p-14 text-center text-sm text-brand-text-secondary">No matching payments.</p>
+      )}
+    </section>
+  );
+}
+function Setup({ seller, listings }: any) {
+  const steps = [
+    { text: "Create product", done: listings.length > 0 },
+    {
+      text: "Activate public plan",
+      done: Boolean(seller?.public_selling_enabled && seller?.public_plan_expires_at && new Date(seller.public_plan_expires_at).getTime() > Date.now()),
+    },
+    {
+      text: "Verify identity",
+      done: seller?.verification_status === "verified",
+    },
+  ];
+  return (
+    <section className="rounded-3xl border border-brand-border bg-brand-surface p-6">
+      <h2 className="text-xl font-black">Finish your store</h2>
+      <p className="mt-2 text-sm text-brand-text-secondary">Private links are always free. For public Marketplace visibility, activate your plan, then verify your identity.</p>
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        {steps.map((s, i) => (
+          <div key={s.text} className="flex items-center gap-3 rounded-2xl bg-brand-bg p-4">
+            <span className={`grid h-8 w-8 place-items-center rounded-full text-xs font-black ${s.done ? "bg-emerald-500 text-white" : "border border-brand-border"}`}>{s.done ? <Check size={15} /> : i + 1}</span>
+            <span className="text-xs font-bold">{s.text}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Wizard({ open, step, setStep, form, setForm, editing, busy, coverBusy, uploadCover, productFiles, setProductFiles, deliveryLinks, setDeliveryLinks, setRemovedDeliveryIds, close, save }: any) {
+  const put = (key: string, value: string) => setForm((f: any) => ({ ...f, [key]: value }));
+  const valid = form.title.trim().length >= 3 && Number(form.price) >= 100;
+  const presets = ["Open product", "Download files", "Start course", "View resource"];
+  const custom = !presets.includes(form.deliveryLabel);
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[10000] flex bg-black/65 backdrop-blur-sm">
+          <motion.section initial={{ x: 40 }} animate={{ x: 0 }} exit={{ x: 40 }} className="ml-auto flex h-full w-full max-w-2xl flex-col bg-brand-bg text-brand-text">
+            <header className="flex items-center justify-between border-b border-brand-border px-5 py-4 sm:px-8">
+              <div>
+                <p className="text-[9px] font-black uppercase tracking-[.2em] text-brand-accent">{editing ? "Edit product" : "New product"}</p>
+                <h2 className="mt-1 text-xl font-black">{step === 1 ? "What are you selling?" : step === 2 ? "How will buyers get it?" : "Where will you sell it?"}</h2>
+              </div>
+              <button onClick={close} className="grid h-10 w-10 place-items-center rounded-xl border border-brand-border">
+                <X size={18} />
+              </button>
+            </header>
+            <div className="flex gap-2 px-5 pt-5 sm:px-8">
+              {[1, 2, 3].map((n) => (
+                <span key={n} className={`h-1.5 flex-1 rounded-full ${n <= step ? "bg-brand-accent" : "bg-brand-border"}`} />
+              ))}
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-7 sm:px-8">
+              {step === 1 && (
+                <div className="space-y-5">
+                  <Field label="Product name">
+                    <input autoFocus value={form.title} onChange={(e) => put("title", e.target.value)} placeholder="e.g. The Content Planning Kit" />
+                  </Field>
+                  <div className="grid gap-5 sm:grid-cols-2">
+                    <Field label="Category">
+                      <select value={form.category} onChange={(e) => put("category", e.target.value)}>
+                        {categories.map((x) => (
+                          <option key={x} value={x}>
+                            {x.replace(/_/g, " ")}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Price (₦)">
+                      <input type="number" min="100" value={form.price} onChange={(e) => put("price", e.target.value)} placeholder="5000" />
+                    </Field>
+                  </div>
+                  <Field label="Short summary">
+                    <input maxLength={220} value={form.summary} onChange={(e) => put("summary", e.target.value)} placeholder="What will this help the buyer achieve?" />
+                  </Field>
+                  <Field label="Description">
+                    <textarea rows={5} value={form.description} onChange={(e) => put("description", e.target.value)} placeholder="What is included and who is it for?" />
+                  </Field>
+                  <Field label="Product cover">
+                    <label className="flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-brand-border bg-brand-surface p-4">
+                      {form.coverImageUrl ? (
+                        <img src={form.coverImageUrl} alt="Product cover preview" className="h-20 w-20 rounded-xl object-cover" />
+                      ) : (
+                        <span className="grid h-20 w-20 place-items-center rounded-xl bg-brand-bg text-brand-accent">
+                          <UploadCloud />
+                        </span>
+                      )}
+                      <span>
+                        <strong className="block text-sm">{coverBusy ? "Uploading cover…" : form.coverImageUrl ? "Change cover image" : "Upload cover image"}</strong>
+                        <span className="mt-1 block text-xs text-brand-text-secondary">JPG, PNG or WebP</span>
+                      </span>
+                      <input
+                        disabled={coverBusy}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) void uploadCover(file);
+                        }}
+                      />
+                    </label>
+                  </Field>
+                </div>
+              )}
+              {step === 2 && (
+                <div className="space-y-6">
+                  <div className="rounded-2xl border border-brand-accent/25 bg-brand-accent/5 p-5">
+                    <div className="flex gap-3">
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-accent text-white">
+                        <UploadCloud size={19} />
+                      </span>
+                      <p className="text-sm leading-6 text-brand-text-secondary">Add as many files or links as your product needs. Buyers will see each one in their library.</p>
+                    </div>
+                  </div>
+                  <Field label="Upload product files">
+                    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-dashed border-brand-border bg-brand-surface p-5">
+                      <span>
+                        <strong className="block text-sm">{productFiles.length ? `${productFiles.length} file${productFiles.length === 1 ? "" : "s"} selected` : "Choose product files"}</strong>
+                        <span className="mt-1 block text-xs text-brand-text-secondary">PDF, ZIP, images, MP4, WebM or MOV · up to 250 MB each. Files are security-scanned before activation.</span>
+                      </span>
+                      <span className="rounded-xl bg-brand-accent/10 px-3 py-2 text-xs font-black text-brand-accent">Browse</span>
+                      <input
+                        multiple
+                        type="file"
+                        accept=".pdf,.zip,.png,.jpg,.jpeg,.webp,.mp4,.webm,.mov,video/mp4,video/webm,video/quicktime"
+                        className="hidden"
+                        onChange={(e) =>
+                          setProductFiles(
+                            (Array.from(e.target.files || []) as File[]).map((file) => ({
+                              file,
+                              title: file.name.replace(/\.[^.]+$/, ""),
+                              description: "",
+                            })),
+                          )
+                        }
+                      />
+                    </label>
+                    {productFiles.length > 0 && (
+                      <div className="mt-3 space-y-3">
+                        {productFiles.map((item: any, index: number) => (
+                          <div key={`${item.file.name}-${item.file.size}-${index}`} className="rounded-2xl border border-brand-border bg-brand-surface p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="truncate text-[10px] font-black uppercase tracking-wider text-brand-accent">{item.file.type.startsWith("video/") ? "Video lesson" : "Course file"}</span>
+                              <button type="button" onClick={() => setProductFiles((files: any[]) => files.filter((_: any, i: number) => i !== index))} className="rounded-lg border border-brand-border p-2" aria-label="Remove selected file">
+                                <X size={13} />
+                              </button>
+                            </div>
+                            <input className="mt-3" maxLength={120} value={item.title} onChange={(e) => setProductFiles((files: any[]) => files.map((file: any, i: number) => (i === index ? { ...file, title: e.target.value } : file)))} placeholder="Lesson title" />
+                            <textarea className="mt-2" rows={3} maxLength={2000} value={item.description} onChange={(e) => setProductFiles((files: any[]) => files.map((file: any, i: number) => (i === index ? { ...file, description: e.target.value } : file)))} placeholder="What will the buyer learn in this lesson?" />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Field>
+                  <div className="flex items-center gap-3">
+                    <span className="h-px flex-1 bg-brand-border" />
+                    <span className="text-[9px] font-black uppercase tracking-wider text-brand-text-secondary">or hosted elsewhere</span>
+                    <span className="h-px flex-1 bg-brand-border" />
+                  </div>
+                  <Field label="External product link (optional)">
+                    <input type="url" value={form.deliveryUrl} onChange={(e) => put("deliveryUrl", e.target.value)} placeholder="Google Drive, Notion, Canva, course platform…" />
+                    <p className="mt-2 text-xs leading-5 text-brand-text-secondary">Use this when part of the product is hosted elsewhere. The buyer receives it after payment.</p>
+                  </Field>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black">Course items and links</span>
+                      <button type="button" onClick={() => setDeliveryLinks((links: any[]) => [...links, { kind: "link", label: "", description: "", url: "" }])} className="text-xs font-black text-brand-accent">
+                        + Add link
+                      </button>
+                    </div>
+                    {deliveryLinks.map((link: any, index: number) => (
+                      <div key={link.id || index} className="rounded-2xl border border-brand-border bg-brand-surface p-4">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-brand-accent">{link.kind === "file" ? "Uploaded file" : "External lesson"}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (link.id) setRemovedDeliveryIds((ids: string[]) => [...ids, link.id]);
+                              setDeliveryLinks((links: any[]) => links.filter((_: any, i: number) => i !== index));
+                            }}
+                            className="rounded-lg border border-brand-border p-2"
+                            aria-label="Remove course item"
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                        <input maxLength={120} value={link.label} onChange={(e) => setDeliveryLinks((links: any[]) => links.map((item: any, i: number) => (i === index ? { ...item, label: e.target.value } : item)))} placeholder={`Lesson title ${index + 1}`} />
+                        <textarea rows={3} maxLength={2000} className="mt-2" value={link.description || ""} onChange={(e) => setDeliveryLinks((links: any[]) => links.map((item: any, i: number) => (i === index ? { ...item, description: e.target.value } : item)))} placeholder="Lesson description" />
+                        {link.kind === "link" && (
+                          <div className="mt-2 flex gap-2">
+                            <input type="url" value={link.url} onChange={(e) => setDeliveryLinks((links: any[]) => links.map((item: any, i: number) => (i === index ? { ...item, url: e.target.value } : item)))} placeholder="https://..." />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <Field label="Buyer button">
+                    <select value={custom ? "__custom" : form.deliveryLabel} onChange={(e) => put("deliveryLabel", e.target.value === "__custom" ? "" : e.target.value)}>
+                      {presets.map((label) => (
+                        <option key={label}>{label}</option>
+                      ))}
+                      <option value="__custom">Custom text…</option>
+                    </select>
+                  </Field>
+                  {custom && (
+                    <Field label="Custom button text">
+                      <input autoFocus maxLength={80} value={form.deliveryLabel} onChange={(e) => put("deliveryLabel", e.target.value)} placeholder="e.g. Get the toolkit" />
+                    </Field>
+                  )}
+                </div>
+              )}
+              {step === 3 && (
+                <div className="space-y-6">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {[
+                      {
+                        id: "private",
+                        title: "Private link",
+                        text: "Free. Sell using your own link.",
+                      },
+                      {
+                        id: "public",
+                        title: "Public marketplace",
+                        text: "Verification and ₦1,500 plan required.",
+                      },
+                    ].map((o) => (
+                      <button type="button" key={o.id} onClick={() => put("visibility", o.id)} className={`rounded-2xl border p-5 text-left ${form.visibility === o.id ? "border-brand-accent bg-brand-accent/5" : "border-brand-border"}`}>
+                        <span className="flex justify-between font-black">
+                          {o.title}
+                          {form.visibility === o.id && <Check size={17} className="text-brand-accent" />}
+                        </span>
+                        <span className="mt-2 block text-xs leading-5 text-brand-text-secondary">{o.text}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <Field label="Refer & Earn">
+                    <select value={form.resalePolicy} onChange={(e) => put("resalePolicy", e.target.value)}>
+                      <option value="not_allowed">Off</option>
+                      <option value="fixed_percent">Open — anyone can earn</option>
+                      <option value="approval_required">Approval required</option>
+                    </select>
+                    <p className="mt-2 text-xs leading-5 text-brand-text-secondary">Referral commission comes from your seller proceeds. It is protected with the order for 10 hours before release.</p>
+                  </Field>
+                  {form.resalePolicy === "fixed_percent" && (
+                    <Field label="Referral commission (%)">
+                      <input type="number" min="1" max="80" value={form.resaleCommissionPercent} onChange={(e) => put("resaleCommissionPercent", e.target.value)} />
+                    </Field>
+                  )}
+                  <div className="rounded-2xl bg-brand-surface p-5">
+                    <p className="text-xs text-brand-text-secondary">Ready to save</p>
+                    <h3 className="mt-2 text-lg font-black">{form.title || "Untitled product"}</h3>
+                    <p className="mt-1 text-sm text-brand-text-secondary">
+                      {money(form.price)} · {productFiles.length ? `${productFiles.length} product files` : form.deliveryUrl ? "External product link" : "Add delivery later"} · Button: {form.deliveryLabel || "Custom text required"}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+            <footer className="flex justify-between border-t border-brand-border px-5 py-4 sm:px-8">
+              <button onClick={() => setStep(step - 1)} className={`h-11 px-3 text-sm font-bold ${step === 1 ? "invisible" : ""}`}>
+                Back
+              </button>
+              {step < 3 ? (
+                <button disabled={(step === 1 && !valid) || (step === 2 && !form.deliveryLabel.trim())} onClick={() => setStep(step + 1)} className="btn-primary flex h-11 items-center gap-2 px-5 text-sm font-black disabled:opacity-40">
+                  Continue
+                  <ArrowRight size={16} />
+                </button>
+              ) : (
+                <button disabled={busy || !form.deliveryLabel.trim()} onClick={save} className="btn-primary flex h-11 items-center gap-2 px-5 text-sm font-black">
+                  {busy ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
+                  Save product
+                </button>
+              )}
+            </footer>
+          </motion.section>
+        </motion.div>
+      )}
+      <style>{`.seller-field input,.seller-field select,.seller-field textarea{width:100%;border:1px solid var(--brand-border,rgba(128,128,128,.28));border-radius:13px;background:var(--brand-surface,transparent);padding:12px 14px;font-size:14px;outline:none}.seller-field input:focus,.seller-field select:focus,.seller-field textarea:focus{border-color:var(--brand-accent,#1677ff)}`}</style>
+    </AnimatePresence>
+  );
+}
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="seller-field block">
+      <span className="mb-2 block text-[10px] font-black uppercase tracking-[.13em] text-brand-text-secondary">{label}</span>
+      {children}
+    </label>
+  );
+}

@@ -79,6 +79,25 @@ test('refund migration repairs and continuously revokes refunded entitlements', 
   assert.match(source, /after\s+update\s+of\s+payment_status/i);
 });
 
+test('course lessons have editable metadata and buyers always receive the current seller version', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const [api, seller, buyer, migration] = await Promise.all([
+    readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/SellerDashboard.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/Marketplace.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../supabase/migrations/20261014120000_marketplace_course_delivery_metadata_v1.sql', import.meta.url), 'utf8'),
+  ]);
+  assert.match(migration, /add column if not exists description text not null default ''/i);
+  assert.match(api, /async function updateDeliveries/);
+  assert.match(api, /action === 'update-deliveries'/);
+  assert.match(api, /resolveDeliveryItems\(supabase, order\.listing_id, order\.listing_snapshot\)/);
+  assert.match(api, /description: row\.description \|\| ''/);
+  assert.match(seller, /deliveryTitle: item\.title\.trim\(\)/);
+  assert.match(seller, /Course updated\. Every buyer now sees the latest content\./);
+  assert.match(buyer, /seller&apos;s latest version/);
+  assert.match(buyer, /delivery\.description/);
+});
+
 test('mobile marketplace and Plugsy products use compact two-column product grids', async () => {
   const { readFile } = await import('node:fs/promises');
   const [marketplace, products] = await Promise.all([
