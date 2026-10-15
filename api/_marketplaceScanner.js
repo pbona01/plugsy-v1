@@ -29,6 +29,10 @@ export function matchesMarketplaceMediaSignature(contentType, input) {
   return false;
 }
 
+export function supportsAutomaticMediaReview(contentType) {
+  return AUTOMATIC_MEDIA_TYPES.has(contentType);
+}
+
 async function virusTotalRequest(path, options = {}) {
   const response = await fetch(`${VT_BASE_URL}${path}`, {
     ...options,
@@ -50,7 +54,7 @@ async function waitForPrivateAnalysis(analysisId) {
 }
 
 export async function scanMarketplaceAsset(asset) {
-  if (AUTOMATIC_MEDIA_TYPES.has(asset.content_type)) {
+  if (supportsAutomaticMediaReview(asset.content_type)) {
     const head = await readMarketplaceFileHead(asset, 32);
     if (!matchesMarketplaceMediaSignature(asset.content_type, head)) return { state: 'rejected', provider: 'media_signature', analysisId: asset.id };
     return { state: 'clean', provider: 'media_signature', analysisId: asset.id };

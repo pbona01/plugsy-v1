@@ -4,7 +4,7 @@ import { Resend } from "resend";
 import { buildMarketplaceEmail, buildMarketplaceGuestEmail, buildMarketplaceProductUpdateEmail } from "./_marketplaceEmail.js";
 import { fetchPremblySession, findPremblySession, hasPremblyWidgetConfiguration, premblyClientConfiguration, premblySessionId, premblySessionReference, premblyWidgetOutcome } from './_marketplaceVerification.js';
 import { validateMarketplaceFile, createUploadUrl, verifyUploadedFile, createDownloadUrl } from './_marketplaceStorage.js';
-import { scanMarketplaceAsset, checkMarketplaceAssetScan } from './_marketplaceScanner.js';
+import { scanMarketplaceAsset, checkMarketplaceAssetScan, supportsAutomaticMediaReview } from './_marketplaceScanner.js';
 import { requireVerifiedClerkUser, requireVerifiedClerkAdmin } from "./_clerkAuth.js";
 import { verifyFlutterwaveReference } from "./_walletFundingWebhook.js";
 import { rejectDisallowedOrigin } from "./_httpSecurity.js";
@@ -571,7 +571,7 @@ async function publishListing(req, res) {
   const deliveryItems = nextStatus === 'published' ? await loadListingDeliveries(supabase, listingId) : [];
   if (nextStatus === 'published' && !listing.delivery_url && !listing.delivery_asset_id && !deliveryItems.length) return send(res, 400, "DELIVERY_REQUIRED", "Add a delivery link or upload a product file before publishing.");
   if (nextStatus === 'published' && listing.delivery_asset_id) {
-    let {data:asset,error}=await supabase.from('marketplace_assets').select('status,scan_reference').eq('id',listing.delivery_asset_id).eq('seller_id',actor.userId).maybeSingle();
+    let {data:asset,error}=await supabase.from('marketplace_assets').select('*').eq('id',listing.delivery_asset_id).eq('seller_id',actor.userId).maybeSingle();
     if(error) throw error;
     if (asset?.status === 'quarantined' && text(asset.scan_reference).startsWith('virustotal_private:')) {
       try {
@@ -587,6 +587,17 @@ async function publishListing(req, res) {
         }
       } catch (scanError) { console.error('[marketplace] scan status check deferred', scanError?.message || scanError); }
     }
+    if (asset?.status === 'quarantined' && supportsAutomaticMediaReview(asset.content_type)) {
+      try {
+        const scan = await scanMarketplaceAsset(asset);
+        const scanReference = `media_signature:${scan.analysisId || asset.id}`;
+        if (scan.state === 'clean' || scan.state === 'rejected') {
+          const { error: reviewError } = await supabase.from('marketplace_assets').update({ status: scan.state, scan_reference: scanReference, scanned_at: new Date().toISOString() }).eq('id', asset.id).eq('status', 'quarantined');
+          if (reviewError) throw reviewError;
+          asset = { ...asset, status: scan.state, scan_reference: scanReference };
+        }
+      } catch (scanError) { console.error('[marketplace] existing media review deferred', scanError?.message || scanError); }
+    }
     if (asset?.status === 'rejected') return send(res,422,'FILE_REJECTED','This product file did not pass the Marketplace security scan. Upload a different file.');
     if(asset?.status!=='clean') {
       const automaticScan = text(asset?.scan_reference).startsWith('virustotal_private:');
@@ -595,8 +606,22 @@ async function publishListing(req, res) {
   }
   if (nextStatus === 'published' && deliveryItems.some((item) => item.kind === 'file' && item.asset_id && item.asset_id !== listing.delivery_asset_id)) {
     const assetIds = deliveryItems.filter((item) => item.kind === 'file' && item.asset_id).map((item) => item.asset_id);
-    const { data: assets, error: assetsError } = await supabase.from('marketplace_assets').select('id,status,scan_reference').in('id', assetIds).eq('seller_id', actor.userId);
+    const { data: storedAssets, error: assetsError } = await supabase.from('marketplace_assets').select('*').in('id', assetIds).eq('seller_id', actor.userId);
     if (assetsError) throw assetsError;
+    const assets = await Promise.all((storedAssets || []).map(async (asset) => {
+      if (asset.status !== 'quarantined' || !supportsAutomaticMediaReview(asset.content_type)) return asset;
+      try {
+        const scan = await scanMarketplaceAsset(asset);
+        if (scan.state !== 'clean' && scan.state !== 'rejected') return asset;
+        const scanReference = `media_signature:${scan.analysisId || asset.id}`;
+        const { error: reviewError } = await supabase.from('marketplace_assets').update({ status: scan.state, scan_reference: scanReference, scanned_at: new Date().toISOString() }).eq('id', asset.id).eq('status', 'quarantined');
+        if (reviewError) throw reviewError;
+        return { ...asset, status: scan.state, scan_reference: scanReference };
+      } catch (scanError) {
+        console.error('[marketplace] existing course media review deferred', scanError?.message || scanError);
+        return asset;
+      }
+    }));
     const rejected = (assets || []).find((asset) => asset.status === 'rejected');
     if (rejected) return send(res, 422, 'FILE_REJECTED', 'One of the product files did not pass the Marketplace security scan. Remove it or upload a different file.');
     if ((assets || []).some((asset) => asset.status !== 'clean')) return send(res, 409, 'FILE_REVIEW_REQUIRED', 'All uploaded product files must pass Plugsy security review before any sales link can be activated.');

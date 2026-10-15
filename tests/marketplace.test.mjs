@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import handler, { allowedListingPayload, publicListing, trustScoreForSeller } from '../api/marketplace.js';
 import { buildMarketplaceEmail } from '../api/_marketplaceEmail.js';
 import { validateMarketplaceFile } from '../api/_marketplaceStorage.js';
-import { matchesMarketplaceMediaSignature } from '../api/_marketplaceScanner.js';
+import { matchesMarketplaceMediaSignature, supportsAutomaticMediaReview } from '../api/_marketplaceScanner.js';
 
 const draft = { title: 'Creator templates', summary: 'Useful templates', description: 'A complete set of practical creator templates.', category: 'templates', price: 1000, deliveryUrl: 'https://example.com/product', visibility: 'private' };
 
@@ -66,6 +66,8 @@ test('genuine images and videos can pass automatic signature review without expo
   assert.equal(matchesMarketplaceMediaSignature('video/mp4', Buffer.from('0000ftypisom')), true);
   assert.equal(matchesMarketplaceMediaSignature('video/mp4', Buffer.from('MZ executable')), false);
   assert.equal(matchesMarketplaceMediaSignature('application/zip', Buffer.from('PK')), false);
+  assert.equal(supportsAutomaticMediaReview('video/quicktime'), true);
+  assert.equal(supportsAutomaticMediaReview('application/pdf'), false);
 });
 
 test('seller product deletion is a soft archive and leaves paid buyer delivery intact', async () => {
@@ -79,6 +81,8 @@ test('seller product deletion is a soft archive and leaves paid buyer delivery i
   const buyerDelivery = api.slice(api.indexOf('async function guestDelivery'), api.indexOf('async function openDispute'));
   assert.match(workspace, /filter\(\(listing\) => listing\.status !== 'archived'\)/);
   assert.match(publish, /\['published', 'paused', 'archived'\]/);
+  assert.match(publish, /existing media review deferred/);
+  assert.match(publish, /existing course media review deferred/);
   assert.doesNotMatch(publish, /marketplace_entitlements/);
   assert.match(buyerDelivery, /resolveDeliveryItems\(supabase, order\.listing_id, order\.listing_snapshot\)/);
   assert.match(seller, /status\(p, "archived"\)/);
