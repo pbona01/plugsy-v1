@@ -40,7 +40,8 @@ export default function SellerDashboard() {
     [step, setStep] = useState(1),
     [editing, setEditing] = useState<any>(null),
     [form, setForm] = useState<any>(emptyForm);
-  const [productFiles, setProductFiles] = useState<Array<{ file: File; title: string; description: string }>>([]),
+  const [productFiles, setProductFiles] = useState<Array<{ id: string; file: File; title: string; description: string }>>([]),
+    [fileProgress, setFileProgress] = useState<Record<string, { percent: number; phase: string; error?: string }>>({}),
     [deliveryLinks, setDeliveryLinks] = useState<
       Array<{
         id?: string;
@@ -141,6 +142,7 @@ export default function SellerDashboard() {
   const start = (item?: any) => {
     setEditing(item || null);
     setProductFiles([]);
+    setFileProgress({});
     setRemovedDeliveryIds([]);
     setDeliveryLinks(
       (item?.delivery_items || []).map((delivery: any) => ({
@@ -171,8 +173,9 @@ export default function SellerDashboard() {
     setStep(1);
     setOpen(true);
   };
-  const uploadProductFile = async (listingId: string, item: { file: File; title: string; description: string }, sortOrder: number) => {
+  const uploadProductFile = async (listingId: string, item: { id: string; file: File; title: string; description: string }, sortOrder: number) => {
     const { file } = item;
+    try {
     const extension = file.name.toLowerCase().split(".").pop();
     const fallbackTypes: Record<string, string> = {
       zip: "application/zip",
@@ -190,13 +193,22 @@ export default function SellerDashboard() {
         contentType,
       }),
     });
-    const uploaded = await fetch(job.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": contentType },
-      body: file,
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", job.uploadUrl);
+      xhr.setRequestHeader("Content-Type", contentType);
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const percent = Math.min(90, Math.round((event.loaded / event.total) * 90));
+        setFileProgress((current) => ({ ...current, [item.id]: { percent, phase: "Uploading" } }));
+      };
+      xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error("The product was saved, but this file could not be uploaded."));
+      xhr.onerror = () => reject(new Error("Upload interrupted. Check your connection and try saving again."));
+      xhr.onabort = () => reject(new Error("Upload cancelled."));
+      xhr.send(file);
     });
-    if (!uploaded.ok) throw new Error("The product was saved, but its file could not be uploaded.");
-    return request("complete-upload", {
+    setFileProgress((current) => ({ ...current, [item.id]: { percent: 92, phase: "Checking file" } }));
+    const result = await request("complete-upload", {
       method: "POST",
       body: JSON.stringify({
         assetId: job.assetId,
@@ -205,6 +217,19 @@ export default function SellerDashboard() {
         sortOrder,
       }),
     });
+    setFileProgress((current) => ({ ...current, [item.id]: { percent: 100, phase: result.status === "quarantined" ? "Uploaded · security check pending" : "Uploaded" } }));
+    return result;
+    } catch (error: any) {
+      setFileProgress((current) => ({
+        ...current,
+        [item.id]: {
+          ...current[item.id],
+          phase: "Upload failed",
+          error: error?.message || "Upload failed. Check your connection and try again.",
+        },
+      }));
+      throw error;
+    }
   };
   const save = async () => {
     setBusy("save");
@@ -214,6 +239,10 @@ export default function SellerDashboard() {
         body: JSON.stringify({ ...form, listingId: editing?.id }),
       });
       const listingId = result.listing.id;
+      setFileProgress((current) => ({
+        ...current,
+        ...Object.fromEntries(productFiles.map((item) => [item.id, { percent: 0, phase: "Waiting to upload" }])),
+      }));
       const existing = deliveryLinks.filter((item) => item.id);
       if (editing && (existing.length || removedDeliveryIds.length))
         await request("update-deliveries", {
@@ -245,7 +274,8 @@ export default function SellerDashboard() {
           }),
         ),
       );
-      const fileResults = await Promise.all(productFiles.map((item, index) => uploadProductFile(listingId, item, existing.length + newLinks.length + index)));
+      const filesToUpload = productFiles.map((item, index) => ({ item, index })).filter(({ item }) => fileProgress[item.id]?.percent !== 100);
+      const fileResults = await Promise.all(filesToUpload.map(({ item, index }) => uploadProductFile(listingId, item, existing.length + newLinks.length + index)));
       toast.success(fileResults.at(-1)?.message || (editing ? "Course updated. Every buyer now sees the latest content." : "Saved as a draft. Activate its private link from Products when ready."));
       setOpen(false);
       setTab("products");
@@ -473,7 +503,7 @@ export default function SellerDashboard() {
           </div>
         </div>
       )}
-      <Wizard open={open} step={step} setStep={setStep} form={form} setForm={setForm} editing={editing} busy={busy === "save"} coverBusy={coverBusy} uploadCover={uploadCover} productFiles={productFiles} setProductFiles={setProductFiles} deliveryLinks={deliveryLinks} setDeliveryLinks={setDeliveryLinks} setRemovedDeliveryIds={setRemovedDeliveryIds} close={() => setOpen(false)} save={save} />
+      <Wizard open={open} step={step} setStep={setStep} form={form} setForm={setForm} editing={editing} busy={busy === "save"} coverBusy={coverBusy} uploadCover={uploadCover} productFiles={productFiles} setProductFiles={setProductFiles} fileProgress={fileProgress} deliveryLinks={deliveryLinks} setDeliveryLinks={setDeliveryLinks} setRemovedDeliveryIds={setRemovedDeliveryIds} close={() => setOpen(false)} save={save} />
     </main>
   );
 }
@@ -885,7 +915,7 @@ function Setup({ seller, listings }: any) {
   );
 }
 
-function Wizard({ open, step, setStep, form, setForm, editing, busy, coverBusy, uploadCover, productFiles, setProductFiles, deliveryLinks, setDeliveryLinks, setRemovedDeliveryIds, close, save }: any) {
+function Wizard({ open, step, setStep, form, setForm, editing, busy, coverBusy, uploadCover, productFiles, setProductFiles, fileProgress, deliveryLinks, setDeliveryLinks, setRemovedDeliveryIds, close, save }: any) {
   const put = (key: string, value: string) => setForm((f: any) => ({ ...f, [key]: value }));
   const valid = form.title.trim().length >= 3 && Number(form.price) >= 100;
   const presets = ["Open product", "Download files", "Start course", "View resource"];
@@ -984,29 +1014,41 @@ function Wizard({ open, step, setStep, form, setForm, editing, busy, coverBusy, 
                         type="file"
                         accept=".pdf,.zip,.png,.jpg,.jpeg,.webp,.mp4,.webm,.mov,video/mp4,video/webm,video/quicktime"
                         className="hidden"
-                        onChange={(e) =>
-                          setProductFiles(
-                            (Array.from(e.target.files || []) as File[]).map((file) => ({
-                              file,
-                              title: file.name.replace(/\.[^.]+$/, ""),
-                              description: "",
-                            })),
-                          )
-                        }
+                        onChange={(e) => {
+                          const additions = (Array.from(e.target.files || []) as File[]).map((file) => ({
+                            id: crypto.randomUUID(),
+                            file,
+                            title: file.name.replace(/\.[^.]+$/, ""),
+                            description: "",
+                          }));
+                          setProductFiles((files: any[]) => [...files, ...additions]);
+                          e.currentTarget.value = "";
+                        }}
                       />
                     </label>
                     {productFiles.length > 0 && (
                       <div className="mt-3 space-y-3">
                         {productFiles.map((item: any, index: number) => (
-                          <div key={`${item.file.name}-${item.file.size}-${index}`} className="rounded-2xl border border-brand-border bg-brand-surface p-4">
+                          <div key={item.id} className="rounded-2xl border border-brand-border bg-brand-surface p-4">
                             <div className="flex items-center justify-between gap-3">
                               <span className="truncate text-[10px] font-black uppercase tracking-wider text-brand-accent">{item.file.type.startsWith("video/") ? "Video lesson" : "Course file"}</span>
-                              <button type="button" onClick={() => setProductFiles((files: any[]) => files.filter((_: any, i: number) => i !== index))} className="rounded-lg border border-brand-border p-2" aria-label="Remove selected file">
+                              <button type="button" disabled={busy} onClick={() => setProductFiles((files: any[]) => files.filter((file: any) => file.id !== item.id))} className="rounded-lg border border-brand-border p-2 disabled:opacity-50" aria-label="Remove selected file">
                                 <X size={13} />
                               </button>
                             </div>
                             <input className="mt-3" maxLength={120} value={item.title} onChange={(e) => setProductFiles((files: any[]) => files.map((file: any, i: number) => (i === index ? { ...file, title: e.target.value } : file)))} placeholder="Lesson title" />
                             <textarea className="mt-2" rows={3} maxLength={2000} value={item.description} onChange={(e) => setProductFiles((files: any[]) => files.map((file: any, i: number) => (i === index ? { ...file, description: e.target.value } : file)))} placeholder="What will the buyer learn in this lesson?" />
+                            {fileProgress?.[item.id] && (
+                              <div className="mt-3" aria-live="polite">
+                                <div className="mb-1 flex items-center justify-between gap-3 text-xs">
+                                  <span className={fileProgress[item.id].error ? "text-red-400" : "text-brand-text-secondary"}>{fileProgress[item.id].error || fileProgress[item.id].phase}</span>
+                                  <span className="font-bold tabular-nums">{fileProgress[item.id].percent}%</span>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-brand-bg" role="progressbar" aria-label={`Upload progress for ${item.file.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={fileProgress[item.id].percent}>
+                                  <div className="h-full rounded-full bg-brand-accent transition-[width] duration-200" style={{ width: `${fileProgress[item.id].percent}%` }} />
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
