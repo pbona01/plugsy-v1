@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/clerk-react";
 import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, ArrowRight, BadgePercent, BarChart3, Box, Check, Copy, Crown, LayoutDashboard, Loader2, MessageCircle, PackagePlus, Plus, PlugZap, Search, Settings2, ShoppingBag, Store, UploadCloud, Users, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, BadgePercent, BarChart3, Box, Check, Copy, Crown, LayoutDashboard, Loader2, MessageCircle, PackagePlus, Plus, PlugZap, Search, Settings2, ShoppingBag, Store, Trash2, UploadCloud, Users, X } from "lucide-react";
 import toast from "react-hot-toast";
 import SellerPremiumPlan from "../components/marketplace/SellerPremiumPlan";
 import SellerVerification from "../components/marketplace/SellerVerification";
@@ -273,13 +273,17 @@ export default function SellerDashboard() {
     }
   };
   const status = async (item: any, next: string) => {
+    if (next === "archived") {
+      const confirmed = window.confirm(`Remove “${item.title}” from your products? It will stop new sales, but everyone who already bought it will keep access.`);
+      if (!confirmed) return;
+    }
     setBusy(item.id);
     try {
       await request("publish", {
         method: "POST",
         body: JSON.stringify({ listingId: item.id, status: next }),
       });
-      toast.success(`Product ${next}.`);
+      toast.success(next === "archived" ? "Product removed. Existing buyers still have access." : `Product ${next}.`);
       await load();
     } catch (error: any) {
       toast.error(error.message);
@@ -753,7 +757,7 @@ function ProductList({ listings, busy, create, edit, status, copyLink, publishPu
               </>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button onClick={() => edit(p)} className="h-9 rounded-xl border border-brand-border px-3 text-xs font-bold">
               Edit
             </button>
@@ -762,6 +766,10 @@ function ProductList({ listings, busy, create, edit, status, copyLink, publishPu
             </button>
             <button disabled={busy === p.id} onClick={() => status(p, p.status === "published" ? "paused" : "published")} className="btn-primary h-9 px-3 text-xs">
               {p.visibility === "private" ? (p.status === "published" ? "Pause link" : "Activate link") : p.status === "published" ? "Pause" : "Publish"}
+            </button>
+            <button disabled={busy === p.id} onClick={() => status(p, "archived")} aria-label={`Delete ${p.title}`} title="Remove from your products. Existing buyers keep access." className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-red-500/30 px-3 text-xs font-bold text-red-400 transition hover:bg-red-500/10 disabled:opacity-50">
+              <Trash2 size={14} />
+              Delete
             </button>
           </div>
         </article>

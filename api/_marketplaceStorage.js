@@ -40,6 +40,22 @@ export async function readMarketplaceFile(asset, maxBytes) {
   if (received !== length) throw new Error('FILE_SCAN_READ_MISMATCH');
   return Buffer.concat(chunks);
 }
+export async function readMarketplaceFileHead(asset, maxBytes = 32) {
+  const { bucket, client } = storage();
+  const limit = Math.max(1, Math.min(1024, Number(maxBytes) || 32));
+  const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: asset.object_key, Range: `bytes=0-${limit - 1}` }));
+  if (!result.Body) throw new Error('FILE_SIGNATURE_READ_FAILED');
+  const chunks = [];
+  let received = 0;
+  for await (const chunk of result.Body) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    received += buffer.length;
+    if (received > limit) throw new Error('FILE_SIGNATURE_READ_FAILED');
+    chunks.push(buffer);
+  }
+  if (!received) throw new Error('FILE_SIGNATURE_READ_FAILED');
+  return Buffer.concat(chunks);
+}
 export async function createDownloadUrl(asset) {
   if (asset.status !== 'clean') throw new Error('FILE_SCAN_NOT_CLEAN');
   const { bucket, client } = storage();

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import handler, { allowedListingPayload, publicListing, trustScoreForSeller } from '../api/marketplace.js';
 import { buildMarketplaceEmail } from '../api/_marketplaceEmail.js';
 import { validateMarketplaceFile } from '../api/_marketplaceStorage.js';
+import { matchesMarketplaceMediaSignature } from '../api/_marketplaceScanner.js';
 
 const draft = { title: 'Creator templates', summary: 'Useful templates', description: 'A complete set of practical creator templates.', category: 'templates', price: 1000, deliveryUrl: 'https://example.com/product', visibility: 'private' };
 
@@ -55,6 +56,33 @@ test('marketplace receipts escape product text and never include delivery secret
 test('file validation rejects executable files, mismatched extensions and oversized uploads', () => {
   for(const file of [{name:'virus.exe',contentType:'application/pdf',size:100},{name:'video.mp4',contentType:'application/pdf',size:100},{name:'huge.zip',contentType:'application/zip',size:251*1024*1024},{name:'empty.pdf',contentType:'application/pdf',size:0}]) assert.throws(()=>validateMarketplaceFile(file));
   assert.equal(validateMarketplaceFile({name:'My product.pdf',contentType:'application/pdf',size:100}),'My_product.pdf');
+});
+
+test('genuine images and videos can pass automatic signature review without exposing course files to a public scanner', () => {
+  assert.equal(matchesMarketplaceMediaSignature('image/png', Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])), true);
+  assert.equal(matchesMarketplaceMediaSignature('image/jpeg', Buffer.from([0xff,0xd8,0xff,0xe0])), true);
+  assert.equal(matchesMarketplaceMediaSignature('image/webp', Buffer.from('RIFF0000WEBP')), true);
+  assert.equal(matchesMarketplaceMediaSignature('video/webm', Buffer.from([0x1a,0x45,0xdf,0xa3])), true);
+  assert.equal(matchesMarketplaceMediaSignature('video/mp4', Buffer.from('0000ftypisom')), true);
+  assert.equal(matchesMarketplaceMediaSignature('video/mp4', Buffer.from('MZ executable')), false);
+  assert.equal(matchesMarketplaceMediaSignature('application/zip', Buffer.from('PK')), false);
+});
+
+test('seller product deletion is a soft archive and leaves paid buyer delivery intact', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const [api, seller] = await Promise.all([
+    readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/SellerDashboard.tsx', import.meta.url), 'utf8'),
+  ]);
+  const workspace = api.slice(api.indexOf('async function sellerWorkspace'), api.indexOf('async function sellerAdIntegrations'));
+  const publish = api.slice(api.indexOf('async function publishListing'), api.indexOf('async function purchase'));
+  const buyerDelivery = api.slice(api.indexOf('async function guestDelivery'), api.indexOf('async function openDispute'));
+  assert.match(workspace, /filter\(\(listing\) => listing\.status !== 'archived'\)/);
+  assert.match(publish, /\['published', 'paused', 'archived'\]/);
+  assert.doesNotMatch(publish, /marketplace_entitlements/);
+  assert.match(buyerDelivery, /resolveDeliveryItems\(supabase, order\.listing_id, order\.listing_snapshot\)/);
+  assert.match(seller, /status\(p, "archived"\)/);
+  assert.match(seller, /Existing buyers still have access/);
 });
 
 test('new sellers have no invented trust score; only completed/upheld outcomes affect it',()=>{
