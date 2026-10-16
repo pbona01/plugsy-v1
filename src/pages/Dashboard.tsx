@@ -22,7 +22,7 @@ import {
 import { clearDefaultPurchaseCode, loadSavedPurchaseCode, saveDefaultPurchaseCode } from '../lib/purchaseCodeProfile';
 import { WhatsappIcon } from '../utils/onelinkPlatforms';
 
-const CAPCUT_WHATSAPP_CAMPAIGN_END_AT = Date.parse('2026-10-16T00:00:00+01:00');
+const CAPCUT_WHATSAPP_CAMPAIGN_END_AT = Date.parse('2026-11-16T23:59:59+01:00');
 const CAPCUT_WHATSAPP_URL = 'https://wa.me/message/NJ3G74ENJ2KHD1';
 
 export default function Dashboard() {
@@ -343,7 +343,7 @@ export default function Dashboard() {
                 <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-[#18b967] bg-white motion-safe:animate-pulse" />
               </span>
               <span className="min-w-0 flex-1 text-left">
-                <span className="block text-[9px] font-black uppercase tracking-[0.2em] text-white/75">Available this week</span>
+                <span className="block text-[9px] font-black uppercase tracking-[0.2em] text-white/75">Available for a limited time</span>
                 <span className="mt-0.5 block text-[15px] font-black leading-tight">Need CapCut Pro?</span>
                 <span className="mt-1 block text-[11px] font-semibold leading-snug text-white/85">Tap here to subscribe through Plugsy on WhatsApp.</span>
               </span>

@@ -920,6 +920,11 @@ function Wizard({ open, step, setStep, form, setForm, editing, busy, coverBusy, 
   const valid = form.title.trim().length >= 3 && Number(form.price) >= 100;
   const presets = ["Open product", "Download files", "Start course", "View resource"];
   const custom = !presets.includes(form.deliveryLabel);
+  const uploadedCount = productFiles.filter((item: any) => fileProgress?.[item.id]?.percent === 100).length;
+  const uploadPercent = productFiles.length
+    ? Math.round(productFiles.reduce((total: number, item: any) => total + Number(fileProgress?.[item.id]?.percent || 0), 0) / productFiles.length)
+    : 0;
+  const activeUpload = productFiles.find((item: any) => fileProgress?.[item.id]?.percent < 100 && !fileProgress?.[item.id]?.error);
   return (
     <AnimatePresence>
       {open && (
@@ -939,6 +944,23 @@ function Wizard({ open, step, setStep, form, setForm, editing, busy, coverBusy, 
                 <span key={n} className={`h-1.5 flex-1 rounded-full ${n <= step ? "bg-brand-accent" : "bg-brand-border"}`} />
               ))}
             </div>
+            {busy && productFiles.length > 0 && (
+              <section className="mx-5 mt-4 rounded-2xl border border-brand-accent/30 bg-brand-accent/[.06] p-4 sm:mx-8" aria-live="polite">
+                <div className="flex items-center justify-between gap-3 text-xs">
+                  <strong className="font-black">Uploading product files</strong>
+                  <span className="shrink-0 font-bold tabular-nums">{uploadedCount} of {productFiles.length} complete · {uploadPercent}%</span>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-brand-bg" role="progressbar" aria-label="Overall product file upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={uploadPercent}>
+                  <div className="h-full rounded-full bg-brand-accent transition-[width] duration-200" style={{ width: `${uploadPercent}%` }} />
+                </div>
+                <p className="mt-2 truncate text-[11px] text-brand-text-secondary">
+                  {activeUpload ? `${fileProgress?.[activeUpload.id]?.phase || "Preparing secure upload"}: ${activeUpload.file.name}` : uploadedCount === productFiles.length ? "All files uploaded. Finishing product setup…" : "Preparing secure upload…"}
+                </p>
+                {productFiles.some((item: any) => fileProgress?.[item.id]?.error) && (
+                  <p className="mt-2 text-xs font-semibold text-red-400">A file failed. Check its upload status in the delivery step, then try saving again.</p>
+                )}
+              </section>
+            )}
             <div className="flex-1 overflow-y-auto px-5 py-7 sm:px-8">
               {step === 1 && (
                 <div className="space-y-5">
