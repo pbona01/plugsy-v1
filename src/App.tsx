@@ -757,7 +757,9 @@ function AppContent({
   // contains; focused flows own their own controls so nothing stacks or hides
   // the current task.
   const showTopNavigation = location.pathname === "/dashboard";
-  const bottomNavigationRoutes = new Set(["/", "/dashboard", "/products", "/marketplace", "/portfolio"]);
+  // Marketplace needs the full viewport on mobile; the fixed dashboard bar
+  // obscures product cards and checkout controls there.
+  const bottomNavigationRoutes = new Set(["/", "/dashboard", "/products", "/portfolio"]);
   const showBottomNavigation = bottomNavigationRoutes.has(location.pathname) && !isAdminPage;
   const focusedWorkspaceRoute =
     location.pathname === "/dashboard" ||
