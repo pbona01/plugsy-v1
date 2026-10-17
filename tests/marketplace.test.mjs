@@ -46,6 +46,20 @@ test('checkout and releases are disabled without explicit launch configuration',
   }
 });
 
+test('wallet and guest checkout accept clean multi-item delivery and reject missing or unreviewed delivery', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const migration = await readFile(new URL('../supabase/migrations/20261017100000_marketplace_checkout_delivery_items_v1.sql', import.meta.url), 'utf8');
+  const walletCheckout = migration.slice(migration.indexOf('create or replace function public.marketplace_create_wallet_order_v1'), migration.indexOf('create or replace function public.marketplace_create_guest_checkout_v1'));
+  const guestCheckout = migration.slice(migration.indexOf('create or replace function public.marketplace_create_guest_checkout_v1'), migration.indexOf('revoke all on function public.marketplace_create_wallet_order_v1'));
+  assert.match(migration, /marketplace_listing_deliveries/);
+  assert.match(migration, /a\.status = 'clean'/);
+  for (const checkout of [walletCheckout, guestCheckout]) {
+    assert.match(checkout, /marketplace_delivery_state_v1\(v_listing\.id, v_listing\.seller_id\)/);
+    assert.match(checkout, /v_delivery_state='pending' then raise exception 'FILE_NOT_READY'/);
+    assert.match(checkout, /v_delivery_state<>'ready' then raise exception 'DELIVERY_REQUIRED'/);
+  }
+});
+
 test('marketplace receipts escape product text and never include delivery secrets', () => {
   const email=buildMarketplaceEmail({kind:'receipt',recipient:'buyer@example.invalid',payload:{title:'<img src=x onerror=alert(1)>',reference:'ORDER',amount:1000,delivery_url:'SECRET_DELIVERY'}});
   assert.equal(email.html.includes('<img'),false);
