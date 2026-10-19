@@ -1271,7 +1271,7 @@ export default function Chat() {
                       onChange={(e) => handleInputChange(e.target.value)}
                       aria-label="Message Plugsy Support"
                       placeholder="Message Plugsy Support…"
-                      className="min-w-0 w-full flex-1 border-none bg-transparent text-sm text-brand-text placeholder:text-brand-text-secondary/65 focus:outline-none focus:ring-0 sm:text-[15px]"
+                      className="min-w-0 w-full flex-1 border-none bg-transparent text-base text-brand-text placeholder:text-brand-text-secondary/65 focus:outline-none focus:ring-0 sm:text-[15px]"
                     />
 
                     {inputText.trim() ? (
