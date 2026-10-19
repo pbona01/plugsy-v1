@@ -11,6 +11,9 @@ export default defineConfig(({mode}) => {
       react(), 
       tailwindcss(),
       VitePWA({
+        // Native builds use Capacitor's WebView cache; registering the PWA
+        // worker there conflicts with browser-only OneSignal push.
+        disable: mode === 'capacitor',
         registerType: "autoUpdate",
         includeAssets: ["logo.svg"],
         manifest: {

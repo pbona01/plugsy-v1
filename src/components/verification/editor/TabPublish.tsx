@@ -3,6 +3,7 @@ import { VPPortfolio } from '../../../types/verification';
 import { ScaleButton } from '../../PageTransition';
 import { supabase } from '../../../lib/supabase';
 import { showToast } from '../../Toast';
+import { getSiteUrl } from '../../../lib/siteUrl';
 
 export function TabPublish({ portfolio, updatePortfolio }: { portfolio: VPPortfolio, updatePortfolio: (u: any) => void }) {
   const [slugInput, setSlugInput] = useState(portfolio.slug);
@@ -29,7 +30,7 @@ export function TabPublish({ portfolio, updatePortfolio }: { portfolio: VPPortfo
   }, [slugInput, portfolio.slug, portfolio.id]);
 
   const copyLink = () => {
-    navigator.clipboard.writeText(`${window.location.origin}/vp/${portfolio.slug}`);
+    navigator.clipboard.writeText(getSiteUrl(`/vp/${portfolio.slug}`));
     showToast("Copied!", "success");
   };
 
@@ -89,7 +90,7 @@ export function TabPublish({ portfolio, updatePortfolio }: { portfolio: VPPortfo
             <p className="text-brand-text mb-6 font-medium">Your portfolio is live and visible to clients</p>
             
             <div className="bg-brand-surface border border-brand-border p-3 rounded-lg mb-6 text-[#60a5fa] font-bold text-sm select-all">
-              {window.location.origin}/vp/{portfolio.slug}
+              plugsy.ng/vp/{portfolio.slug}
             </div>
 
             <button onClick={() => updatePortfolio({status: 'draft'})} className="border border-[#EF4444] text-[#EF4444] px-6 py-3 rounded-lg font-bold hover:bg-[#EF4444]/10 transition">Unpublish</button>
@@ -108,7 +109,7 @@ export function TabPublish({ portfolio, updatePortfolio }: { portfolio: VPPortfo
             <a href={`/vp/${portfolio.slug}`} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2 bg-[#2563eb] text-white border border-brand-border px-4 py-3 rounded-lg font-bold hover:bg-[#1d4ed8] transition text-center whitespace-nowrap shadow-md">
               👁 Preview Live
             </a>
-            <a href={`https://wa.me/?text=Check out my portfolio: ${window.location.origin}/vp/${portfolio.slug}`} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2 bg-[#25D366] text-white border border-brand-border px-4 py-3 rounded-lg font-bold hover:bg-[#128C7E] transition text-center whitespace-nowrap shadow-md">
+            <a href={`https://wa.me/?text=Check out my portfolio: ${getSiteUrl(`/vp/${portfolio.slug}`)}`} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2 bg-[#25D366] text-white border border-brand-border px-4 py-3 rounded-lg font-bold hover:bg-[#128C7E] transition text-center whitespace-nowrap shadow-md">
               💬 Share on WhatsApp
             </a>
           </div>

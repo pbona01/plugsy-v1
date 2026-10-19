@@ -84,6 +84,27 @@ test('genuine images and videos can pass automatic signature review without expo
   assert.equal(supportsAutomaticMediaReview('application/pdf'), false);
 });
 
+test('payout schedule includes Monday-Friday and seller identity review preserves Marketplace Premium when expiry is blank', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const migration = await readFile(new URL('../supabase/migrations/20261019120000_marketplace_weekday_payout_and_plan_review_fix_v1.sql', import.meta.url), 'utf8');
+  const payout = migration.slice(migration.indexOf('create or replace function public.marketplace_next_payout_at_v1'), migration.indexOf('-- Repair still-held orders'));
+  const sellerReview = migration.slice(migration.indexOf('create or replace function public.marketplace_approve_seller_v1'), migration.indexOf('revoke all on function public.marketplace_next_payout_at_v1'));
+  assert.match(payout, /if v_isodow = 6 then v_day := v_day \+ 2;\s*elsif v_isodow = 7 then v_day := v_day \+ 1;/i);
+  assert.match(payout, /v_time <= time '11:00'/i);
+  assert.match(migration, /update public\.marketplace_orders[\s\S]*?funds_status = 'held'/i);
+  assert.match(migration, /update public\.marketplace_guest_orders[\s\S]*?funds_status = 'held'/i);
+  assert.match(sellerReview, /public_selling_enabled = case[\s\S]*?else public_selling_enabled/i);
+  assert.match(sellerReview, /public_plan_expires_at = coalesce\(p_plan_expires_at, public_plan_expires_at\)/i);
+});
+
+test('manual file approval only changes the uploaded asset, not seller plan entitlement', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8');
+  const fileReview = source.slice(source.indexOf("if (action === 'review-asset')"), source.indexOf("if (action === 'resolve-dispute')"));
+  assert.match(fileReview, /from\('marketplace_assets'\)\.update\(\{ status: outcome/);
+  assert.doesNotMatch(fileReview, /marketplace_approve_seller_v1|marketplace_seller_profiles|public_selling_enabled|public_plan_expires_at/);
+});
+
 test('seller product deletion is a soft archive and leaves paid buyer delivery intact', async () => {
   const { readFile } = await import('node:fs/promises');
   const [api, seller] = await Promise.all([

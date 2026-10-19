@@ -10,6 +10,7 @@ import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { SEO } from "../components/seo/SEO";
 
 import { showToast } from "../components/Toast";
+import { getSiteUrl } from "../lib/siteUrl";
 
 const MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 
@@ -260,7 +261,7 @@ export default function PortfolioDashboard() {
                       {port.status === "published" && (
                         <button 
                           onClick={() => {
-                            navigator.clipboard.writeText(`${window.location.origin}/vp/${port.slug}`);
+                            navigator.clipboard.writeText(getSiteUrl(`/vp/${port.slug}`));
                           }}
                           className="flex-[2] text-center py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm font-bold transition shadow-sm whitespace-nowrap"
                         >

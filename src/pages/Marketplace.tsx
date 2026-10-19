@@ -11,6 +11,7 @@ import SellerPremiumPlan from '../components/marketplace/SellerPremiumPlan';
 import SellerVerification from '../components/marketplace/SellerVerification';
 import { marketplaceAttempt, clearMarketplaceAttempt } from '../utils/marketplaceAttempt.js';
 import MarketplaceCookieConsent from '../components/marketplace/MarketplaceCookieConsent';
+import { getSiteOrigin } from '../lib/siteUrl';
 import { TrustScoreMeter } from '../components/marketplace/TrustScoreMeter';
 
 type Listing = {
@@ -52,7 +53,7 @@ type WorkspaceListing = {
 const categories = ["All", "Courses", "Templates", "Design", "Video", "Comics", "Social media", "Business", "Creator tools"];
 const categoryValue = (category: string) => category.toLowerCase().replace(/\s+/g, "_");
 const formatNaira = (value: number) => `₦${Number(value || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 })}`;
-const host = typeof window !== "undefined" ? window.location.origin : "https://www.plugsy.ng";
+const host = getSiteOrigin();
 
 const emptyForm = {
   title: "",

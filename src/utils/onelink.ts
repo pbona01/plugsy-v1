@@ -1,5 +1,6 @@
 import { createElement } from "react";
 import { getOneLinkPlatformIcon } from "./onelinkPlatforms";
+import { getSiteOrigin } from "../lib/siteUrl";
 
 export const getPlatformIcon = (
   platform: string,
@@ -21,18 +22,8 @@ export const getProductionOneLinkUrl = (username: string) =>
 
 export const getCanonicalOneLinkUrl = (username: string) => {
   const path = getOneLinkPath(username);
-  if (typeof window !== "undefined") {
-    const hostname = window.location.hostname.toLowerCase();
-    if (
-      hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
-      hostname === "[::1]" ||
-      hostname.endsWith(".local")
-    ) {
-      return `${window.location.origin}${path}`;
-    }
-  }
-  return getProductionOneLinkUrl(username);
+  const origin = getSiteOrigin();
+  return `${origin}${path}`;
 };
 
 export const createOneLinkItemId = (prefix: "social" | "link") => {

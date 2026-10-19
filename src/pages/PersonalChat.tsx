@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { HeroGeometric } from "../components/effects/shape-landing-hero";
+import { getSiteUrl } from "../lib/siteUrl";
 import { sendBroadcastSafely } from "../services/chatService";
 import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import plugsyLogo from "../assets/images/plugsy_icon.svg";
@@ -2232,7 +2233,7 @@ export default function PersonalChat() {
 
   const copyInviteLink = () => {
     if (!chat?.invite_code) return;
-    const fullLink = `${window.location.origin}/join/${chat.invite_code}`;
+    const fullLink = getSiteUrl(`/join/${chat.invite_code}`);
     navigator.clipboard.writeText(fullLink);
     toast.success("Invite link copied to clipboard!");
   };
@@ -3787,7 +3788,7 @@ export default function PersonalChat() {
                       </h5>
                       <div className="flex gap-2">
                         <div className="flex-grow px-3 py-2 bg-slate-50 dark:bg-black/30 border border-slate-150 dark:border-white/15 rounded-xl text-xs text-slate-500 dark:text-slate-400 font-medium truncate select-all flex items-center">
-                          {window.location.origin}/join/{chat.invite_code}
+                          {getSiteUrl(`/join/${chat.invite_code}`)}
                         </div>
                         <button
                           onClick={copyInviteLink}

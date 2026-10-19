@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { getSiteOrigin } from '../../lib/siteUrl';
 import { useAuth } from '@clerk/clerk-react';
 import toast from 'react-hot-toast';
 import { BadgePercent, CheckCircle2, Clock3, Copy, WalletCards } from 'lucide-react';
@@ -35,7 +36,7 @@ export default function ResaleWorkspace() {
   };
   const copy = async (listingId: string) => {
     setBusy(true);
-    try { const payload = await request('referral-link', { listingId }); const url = new URL(payload.referral.path, window.location.origin).toString(); await navigator.clipboard.writeText(url); toast.success('Your tracked referral link was copied.'); }
+    try { const payload = await request('referral-link', { listingId }); const url = new URL(payload.referral.path, getSiteOrigin()).toString(); await navigator.clipboard.writeText(url); toast.success('Your tracked referral link was copied.'); }
     catch (err: any) { toast.error(err.message || 'Your referral link is unavailable.'); } finally { setBusy(false); }
   };
   if (!userId) return null;

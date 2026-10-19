@@ -24,6 +24,11 @@ function getAuthConfiguration() {
   const authorizedParties = splitList(
     process.env.CLERK_AUTHORIZED_PARTIES,
   );
+  // Capacitor's bundled WebView uses these fixed local origins. Keep the
+  // production web origins configured via CLERK_AUTHORIZED_PARTIES as well.
+  for (const origin of ["https://localhost", "capacitor://localhost"]) {
+    if (!authorizedParties.includes(origin)) authorizedParties.push(origin);
+  }
   const audiences = splitList(process.env.CLERK_JWT_AUDIENCE);
 
   if (!secretKey || !issuer || authorizedParties.length === 0) {

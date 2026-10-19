@@ -145,10 +145,12 @@ test("refreshes never overlap", async () => {
   let active = 0;
   let maximum = 0;
   let runs = 0;
-  coordinator.schedule(async () => { active++; maximum = Math.max(maximum, active); runs++; await wait(5); active--; });
-  await wait(2);
+  let markFirstStarted!: () => void;
+  const firstStarted = new Promise<void>(resolve => { markFirstStarted = resolve; });
+  coordinator.schedule(async () => { active++; maximum = Math.max(maximum, active); runs++; markFirstStarted(); await wait(15); active--; });
+  await firstStarted;
   coordinator.schedule(async () => { active++; maximum = Math.max(maximum, active); runs++; active--; });
-  await wait(20);
+  await wait(40);
   assert.equal(maximum, 1);
   assert.equal(runs, 2);
   coordinator.dispose();

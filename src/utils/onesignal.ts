@@ -1,4 +1,5 @@
 import { loadPushSdk } from './pushSdkLoader.js';
+import { Capacitor } from '@capacitor/core';
 declare global {
   interface Window { OneSignal?: any; OneSignalDeferred?: any[]; Clerk?: any; }
 }
@@ -13,7 +14,7 @@ let desiredIdentity: { id: string; role: string } | null = null;
 let linkedIdentity = "";
 let currentActorToken: (() => Promise<string | null>) | null = null;
 const appId = String(import.meta.env.VITE_ONESIGNAL_APP_ID || "").trim();
-const supported = () => typeof window !== "undefined" && "serviceWorker" in navigator && "Notification" in window;
+const supported = () => !Capacitor.isNativePlatform() && typeof window !== "undefined" && "serviceWorker" in navigator && "Notification" in window;
 const pushSubscription = () => window.OneSignal?.User?.PushSubscription;
 const activeSubscription = () => {
   const current = pushSubscription();

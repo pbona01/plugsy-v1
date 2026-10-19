@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { BarChart3, Copy, Eye, Loader2, LockKeyhole, MessageCircle, RefreshCw, Save, ShieldCheck, Unplug, Users } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { cn } from "../../lib/utils";
+import { getSiteOrigin } from "../../lib/siteUrl";
 
 type Range = "7d" | "30d" | "90d";
 type Settings = { tiktokPixelId: string; tiktokTokenConnected: boolean; enabled: boolean; updatedAt: string | null };
@@ -80,7 +81,7 @@ export function TikTokAdsPanel({ getToken }: { getToken: () => Promise<string | 
   };
 
   const trackingUrl = useMemo(() => {
-    const origin = typeof window === "undefined" ? "https://www.plugsy.ng" : window.location.origin;
+    const origin = getSiteOrigin();
     const url = new URL("/products", origin);
     url.searchParams.set("portfolio_campaign", "builder");
     url.searchParams.set("utm_source", "tiktok");

@@ -1,11 +1,17 @@
 import React, {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import { ClerkProvider } from '@clerk/clerk-react';
+import { Capacitor } from '@capacitor/core';
 import { dark } from '@clerk/themes';
 import App from './App.tsx';
 import './index.css';
 import { ThemeProvider, useTheme } from './lib/ThemeContext';
 import { HelmetProvider } from 'react-helmet-async';
+import { installNativeApiFetch } from './lib/nativeApiFetch';
+
+// Capacitor's bundled pages are served from a local WebView origin. All app
+// API calls must instead reach the hosted Plugsy backend.
+installNativeApiFetch();
 
 // Vite emits this event when a preloaded hashed module is no longer available
 // after a deployment. Reloading once obtains a matching HTML shell and avoids
@@ -55,7 +61,7 @@ function ThemedClerkProvider({ children }: { children: React.ReactNode }) {
   }
   
   const isLiveKey = PUBLISHABLE_KEY.startsWith('pk_live');
-  const isProductionDomain = window.location.hostname === 'plugsy.ng' || window.location.hostname.endsWith('.plugsy.ng');
+  const isProductionDomain = Capacitor.isNativePlatform() || window.location.hostname === 'plugsy.ng' || window.location.hostname.endsWith('.plugsy.ng');
   const isAISPreview = window.location.hostname.includes('run.app') || 
                        window.location.hostname.includes('webcontainer') ||
                        window.location.hostname.includes('localhost') || 

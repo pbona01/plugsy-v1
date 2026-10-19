@@ -7,8 +7,12 @@
   "scripts": {
     "dev": "tsx src/server/server.ts",
     "build": "vite build && esbuild src/server/server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=server-build/server.cjs",
+    "build:capacitor": "vite build --mode capacitor",
     "start": "node server-build/server.cjs",
     "preview": "vite preview",
+    "cap:sync": "pnpm build:capacitor && cap sync",
+    "cap:android": "cap open android",
+    "cap:ios": "cap open ios",
     "clean": "rm -rf dist",
     "lint": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit",
     "test": "node --test tests/*.test.mjs && tsx --test tests/*.test.ts",
@@ -17,6 +21,9 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",
     "@aws-sdk/s3-request-presigner": "^3.1131.0",
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/ios": "^8.5.3",
     "@clerk/clerk-react": "^5.61.6",
     "@clerk/clerk-sdk-node": "^4.13.23",
     "@clerk/themes": "^2.4.57",
@@ -65,6 +72,7 @@
     "vite": "^6.2.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.3",
     "@eslint/js": "^10.0.1",
     "@types/canvas-confetti": "^1.9.0",
     "@types/express": "^4.17.21",

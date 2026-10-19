@@ -10,6 +10,7 @@ import { loadSavedPurchaseCode } from "../lib/purchaseCodeProfile";
 import { TrustScoreMeter } from "../components/marketplace/TrustScoreMeter";
 import MarketplaceCookieConsent from "../components/marketplace/MarketplaceCookieConsent";
 import { marketplaceMarketingConsent, trackMarketplaceCheckout, trackMarketplaceProductView, trackMarketplacePurchase } from "../utils/marketplaceAds";
+import { getSiteOrigin } from "../lib/siteUrl";
 
 type Product = {
   id: string; title: string; summary: string; description: string; category: string; price: number; currency: string;
@@ -184,7 +185,7 @@ export default function MarketplaceProductPage() {
         if (product.resalePolicy === "approval_required" && payload?.code === "REFERRER_NOT_APPROVED") { setApprovalOpen(true); return; }
         throw new Error(payload?.error || "Your referral link is not available yet.");
       }
-      const url = new URL(payload.referral.path, window.location.origin).toString();
+      const url = new URL(payload.referral.path, getSiteOrigin()).toString();
       if (navigator.share) await navigator.share({ title: product.title, text: `Buy ${product.title} on Plugsy`, url });
       else { await navigator.clipboard.writeText(url); toast.success("Your tracked referral link was copied."); }
     } catch (error: any) { if (error?.name !== "AbortError") toast.error(error.message || "Your referral link is not available yet."); }
