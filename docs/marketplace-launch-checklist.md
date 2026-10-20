@@ -45,6 +45,10 @@ Keep `MARKETPLACE_PAYMENTS_ENABLED` absent or `false` until these launch gates p
 
 Server-only storage variables: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_MARKETPLACE_BUCKET`. Use bucket-scoped credentials, keep the bucket private and allow only Plugsy's actual origins in bucket CORS. Do not put secrets in chat or client `VITE_` variables.
 
+## Automatic product-file review
+
+Set `VIRUSTOTAL_API_KEY` as a Production-only Vercel environment variable from a VirusTotal plan that permits **private file scanning**. Never use the public upload endpoint for seller files: it can make material available to third parties. With the server-only key present, Plugsy scans PDFs, EPUBs and ZIPs automatically after upload and keeps checking pending results in the seller's browser. Only unsafe, oversized, unavailable, or inconclusive scans go to Admin → Marketplace → File review. The existing scheduled `process-emails` task is the fallback for scans that finish after the seller leaves.
+
 Schedule authenticated POST calls to `release-due` and `process-emails` on `/api/marketplace`, using `CRON_SECRET`. Email processing uses existing `RESEND_API_KEY` and sends from `hello@plugsy.ng`. No schedule has been deployed here.
 
 Storage implementation follows the [official Cloudflare R2 S3 SDK guidance](https://developers.cloudflare.com/r2/examples/aws/aws-sdk-js-v3/).

@@ -1447,6 +1447,23 @@ async function fileMutation(req,res,action) {
   }
   if(!/^[0-9a-f-]{36}$/i.test(text(body.assetId))) return send(res,400,'ASSET_INVALID','Choose a valid upload.');
   const {data:asset,error}=await supabase.from('marketplace_assets').select('*').eq('id',body.assetId).eq('seller_id',actor.userId).maybeSingle(); if(error) throw error;
+  if (action === 'check-upload-review') {
+    if (!asset) return send(res,404,'ASSET_NOT_FOUND','That uploaded file was not found.');
+    if (asset.status !== 'quarantined') return res.status(200).json({ success:true, status:asset.status, automatic:false, message:asset.status === 'clean' ? 'This file has passed security review.' : 'This file did not pass security review.' });
+    if (!text(asset.scan_reference).startsWith('virustotal_private:')) return res.status(200).json({ success:true, status:'quarantined', automatic:false, message:'This file is in the Marketplace review queue.' });
+    let scan;
+    try { scan = await checkMarketplaceAssetScan(asset.scan_reference); }
+    catch (scanError) { console.error('[marketplace] upload review check deferred', scanError?.message || scanError); return res.status(200).json({ success:true, status:'quarantined', automatic:true, message:'Security scan is still running. We will keep checking automatically.' }); }
+    if (scan.state === 'pending') return res.status(200).json({ success:true, status:'quarantined', automatic:true, message:'Security scan is still running. We will keep checking automatically.' });
+    if (scan.state === 'manual') {
+      await supabase.from('marketplace_assets').update({ scan_reference:`manual_review:${scan.reason || 'scanner_check'}` }).eq('id',asset.id).eq('status','quarantined');
+      return res.status(200).json({ success:true, status:'quarantined', automatic:false, message:'This file needs an admin security review.' });
+    }
+    const { error: updateError } = await supabase.from('marketplace_assets').update({ status:scan.state, scan_reference:`virustotal_private:${scan.analysisId}`, scanned_at:new Date().toISOString() }).eq('id',asset.id).eq('status','quarantined');
+    if (updateError) throw updateError;
+    if (scan.state === 'clean') return res.status(200).json({ success:true, status:'clean', automatic:true, message:'Uploaded and approved by the Marketplace security scan. You can publish this product now.' });
+    return res.status(200).json({ success:true, status:'rejected', automatic:true, message:'This file did not pass the security scan and cannot be sold.' });
+  }
   if(!asset||!['uploading','quarantined'].includes(asset.status)) return send(res,409,'UPLOAD_UNAVAILABLE','This upload is not awaiting confirmation.');
   let actualSize; try{actualSize=await verifyUploadedFile(asset);}catch{ return send(res,409,'UPLOAD_MISMATCH','Upload is missing or does not match the expected file.'); }
   const result=await supabase.rpc('marketplace_complete_asset_v1',{p_actor_id:actor.userId,p_asset_id:asset.id,p_size:actualSize}); if(result.error) throw result.error;
@@ -1467,14 +1484,14 @@ async function fileMutation(req,res,action) {
       await queueProductUpdateNotifications(supabase, asset.listing_id, listingInfo?.title || 'Your purchased product');
       await flushProductUpdateEmails(supabase);
     } catch (notificationError) { console.error('[marketplace] file update notifications pending', notificationError?.message || notificationError); }
-    return res.status(200).json({success:true,status:'clean',message:'Uploaded and approved by the Marketplace security scan. You can publish this product now.'});
+    return res.status(200).json({success:true,status:'clean',automatic:true,message:'Uploaded and approved by the Marketplace security scan. You can publish this product now.'});
   }
   if (scan.state === 'pending') {
     await supabase.from('marketplace_assets').update({ scan_reference: `virustotal_private:${scan.analysisId}` }).eq('id', asset.id).eq('status', 'quarantined');
-    return res.status(200).json({success:true,status:'quarantined',message:'Uploaded securely. The automatic security scan is still running; publish once it has completed.'});
+    return res.status(200).json({success:true,status:'quarantined',automatic:true,message:'Uploaded securely. The automatic security scan is still running; Plugsy will keep checking it automatically.'});
   }
   const manualMessage = scan.reason === 'file_too_large' ? 'Uploaded securely. This file is too large for automatic scanning and is awaiting Marketplace security review.' : scan.reason === 'scanner_access_denied' ? 'Uploaded securely, but the automatic scanner could not access your VirusTotal private-scanning plan. This file is awaiting Marketplace security review.' : scan.reason === 'scan_result_incomplete' ? 'Uploaded securely. The scanner returned an incomplete result, so this file is awaiting Marketplace security review.' : 'Uploaded securely. It is awaiting a Marketplace security review before buyers can download it.';
-  return res.status(200).json({success:true,status:'quarantined',message:manualMessage});
+  return res.status(200).json({success:true,status:'quarantined',automatic:false,message:manualMessage});
 }
 
 async function addDeliveryLink(req, res) {
@@ -1580,7 +1597,7 @@ export default async function handler(req, res) {
     if (req.method === "GET" && action === "resale-workspace") return await resaleWorkspace(req,res);
     if (req.method === "POST" && ['validate-referral','referral-link'].includes(action)) return await marketplaceReferral(req,res,action);
     if (req.method === "POST" && ['request-resale','decide-resale'].includes(action)) return await resaleMutation(req,res,action);
-    if (req.method === "POST" && ['prepare-upload','complete-upload'].includes(action)) return await fileMutation(req,res,action);
+    if (req.method === "POST" && ['prepare-upload','complete-upload','check-upload-review'].includes(action)) return await fileMutation(req,res,action);
     if (req.method === "POST" && action === 'add-delivery-link') return await addDeliveryLink(req, res);
     if (req.method === "PATCH" && action === 'update-deliveries') return await updateDeliveries(req, res);
     if (req.method === "POST" && ['resolve-dispute','review-seller','review-asset'].includes(action)) return await adminMutation(req, res, action);

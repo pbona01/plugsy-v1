@@ -70,6 +70,7 @@ test('marketplace receipts escape product text and never include delivery secret
 test('file validation rejects executable files, mismatched extensions and oversized uploads', () => {
   for(const file of [{name:'virus.exe',contentType:'application/pdf',size:100},{name:'video.mp4',contentType:'application/pdf',size:100},{name:'huge.zip',contentType:'application/zip',size:251*1024*1024},{name:'empty.pdf',contentType:'application/pdf',size:0}]) assert.throws(()=>validateMarketplaceFile(file));
   assert.equal(validateMarketplaceFile({name:'My product.pdf',contentType:'application/pdf',size:100}),'My_product.pdf');
+  assert.equal(validateMarketplaceFile({name:'My book.epub',contentType:'application/epub+zip',size:100}),'My_book.epub');
 });
 
 test('genuine images and videos can pass automatic signature review without exposing course files to a public scanner', () => {
@@ -82,6 +83,19 @@ test('genuine images and videos can pass automatic signature review without expo
   assert.equal(matchesMarketplaceMediaSignature('application/zip', Buffer.from('PK')), false);
   assert.equal(supportsAutomaticMediaReview('video/quicktime'), true);
   assert.equal(supportsAutomaticMediaReview('application/pdf'), false);
+});
+
+test('document scans continue automatically after upload while only unavailable checks go to manual review', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8');
+  const dashboard = await readFile(new URL('../src/pages/SellerDashboard.tsx', import.meta.url), 'utf8');
+  assert.match(source, /action === 'check-upload-review'/);
+  assert.match(source, /checkMarketplaceAssetScan\(asset\.scan_reference\)/);
+  assert.match(source, /automatic:true/);
+  assert.match(source, /manual_review:/);
+  assert.match(source, /\['prepare-upload','complete-upload','check-upload-review'\]/);
+  assert.match(dashboard, /request\("check-upload-review"/);
+  assert.match(dashboard, /Security scan in progress/);
 });
 
 test('payout schedule includes Monday-Friday and seller identity review preserves Marketplace Premium when expiry is blank', async () => {

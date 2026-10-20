@@ -50,8 +50,9 @@ type WorkspaceListing = {
   resale_commission_percent: number | null;
 };
 
-const categories = ["All", "Courses", "Templates", "Design", "Video", "Comics", "Social media", "Business", "Creator tools"];
+const categories = ["All", "Courses", "eBooks", "Templates", "Design", "Video", "Comics", "Social media", "Business", "Creator tools"];
 const categoryValue = (category: string) => category.toLowerCase().replace(/\s+/g, "_");
+const categoryLabel = (category: string) => category.toLowerCase() === "ebooks" ? "eBooks" : category.replace(/[_-]/g, " ");
 const formatNaira = (value: number) => `₦${Number(value || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 })}`;
 const host = getSiteOrigin();
 

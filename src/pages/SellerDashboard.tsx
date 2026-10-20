@@ -24,7 +24,7 @@ const emptyForm = {
   resalePolicy: "not_allowed",
   resaleCommissionPercent: "",
 };
-const categories = ["templates", "courses", "design", "video", "comics", "social_media", "business", "creator_tools"];
+const categories = ["templates", "courses", "ebooks", "design", "video", "comics", "social_media", "business", "creator_tools"];
 
 export default function SellerDashboard() {
   const { getToken } = useAuth();
@@ -178,6 +178,7 @@ export default function SellerDashboard() {
     try {
     const extension = file.name.toLowerCase().split(".").pop();
     const fallbackTypes: Record<string, string> = {
+      epub: "application/epub+zip",
       zip: "application/zip",
       mp4: "video/mp4",
       webm: "video/webm",
@@ -217,8 +218,18 @@ export default function SellerDashboard() {
         sortOrder,
       }),
     });
-    setFileProgress((current) => ({ ...current, [item.id]: { percent: 100, phase: result.status === "quarantined" ? "Uploaded · security check pending" : "Uploaded" } }));
-    return result;
+    let finalResult = result;
+    if (result.status === "quarantined" && result.automatic) {
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        setFileProgress((current) => ({ ...current, [item.id]: { percent: 94 + Math.min(attempt, 5), phase: "Security scan in progress" } }));
+        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+        finalResult = await request("check-upload-review", { method: "POST", body: JSON.stringify({ assetId: job.assetId }) });
+        if (finalResult.status !== "quarantined") break;
+      }
+    }
+    if (finalResult.status === "rejected") throw new Error(finalResult.message || "This file did not pass the security scan.");
+    setFileProgress((current) => ({ ...current, [item.id]: { percent: 100, phase: finalResult.status === "quarantined" ? (finalResult.automatic ? "Uploaded · scan continues automatically" : "Uploaded · awaiting admin security review") : "Uploaded · approved" } }));
+    return finalResult;
     } catch (error: any) {
       setFileProgress((current) => ({
         ...current,
@@ -972,7 +983,7 @@ function Wizard({ open, step, setStep, form, setForm, editing, busy, coverBusy, 
                       <select value={form.category} onChange={(e) => put("category", e.target.value)}>
                         {categories.map((x) => (
                           <option key={x} value={x}>
-                            {x.replace(/_/g, " ")}
+                            {x === "ebooks" ? "eBooks" : x.replace(/_/g, " ")}
                           </option>
                         ))}
                       </select>
@@ -1028,13 +1039,13 @@ function Wizard({ open, step, setStep, form, setForm, editing, busy, coverBusy, 
                     <label className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-dashed border-brand-border bg-brand-surface p-5">
                       <span>
                         <strong className="block text-sm">{productFiles.length ? `${productFiles.length} file${productFiles.length === 1 ? "" : "s"} selected` : "Choose product files"}</strong>
-                        <span className="mt-1 block text-xs text-brand-text-secondary">PDF, ZIP, images, MP4, WebM or MOV · up to 250 MB each. Files are security-scanned before activation.</span>
+                        <span className="mt-1 block text-xs text-brand-text-secondary">PDF, EPUB, ZIP, images, MP4, WebM or MOV · up to 250 MB each. Files are security-scanned before activation.</span>
                       </span>
                       <span className="rounded-xl bg-brand-accent/10 px-3 py-2 text-xs font-black text-brand-accent">Browse</span>
                       <input
                         multiple
                         type="file"
-                        accept=".pdf,.zip,.png,.jpg,.jpeg,.webp,.mp4,.webm,.mov,video/mp4,video/webm,video/quicktime"
+                        accept=".pdf,.epub,.zip,.png,.jpg,.jpeg,.webp,.mp4,.webm,.mov,application/epub+zip,video/mp4,video/webm,video/quicktime"
                         className="hidden"
                         onChange={(e) => {
                           const additions = (Array.from(e.target.files || []) as File[]).map((file) => ({
