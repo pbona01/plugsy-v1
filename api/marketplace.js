@@ -1553,9 +1553,9 @@ async function adminMutation(req, res, action) {
     if (!/^[0-9a-f-]{36}$/i.test(text(body.disputeId)) || !['buyer','seller'].includes(body.outcome) || text(body.note).length < 10 || text(body.note).length > 3000) return send(res, 400, 'RESOLUTION_INVALID', 'Choose an outcome and explain the decision.');
     result = await supabase.rpc('marketplace_resolve_dispute_v1', { p_admin_id: actor.userId, p_dispute_id: body.disputeId, p_outcome: body.outcome, p_note: text(body.note) });
   } else {
-    const expires = body.planExpiresAt ? new Date(body.planExpiresAt) : null;
-    if (!/^user_[A-Za-z0-9]+$/.test(text(body.sellerId)) || typeof body.verified !== 'boolean' || (body.verified && text(body.reference).length < 10) || (expires && (!Number.isFinite(expires.getTime()) || expires.getTime() <= Date.now()))) return send(res, 400, 'SELLER_REVIEW_INVALID', 'Provide a seller, genuine review reference and valid access expiry.');
-    result = await supabase.rpc('marketplace_approve_seller_v1', { p_admin_id: actor.userId, p_seller_id: text(body.sellerId), p_verified: body.verified, p_reference: text(body.reference), p_plan_expires_at: expires?.toISOString() || null });
+    if (!/^user_[A-Za-z0-9]+$/.test(text(body.sellerId)) || typeof body.verified !== 'boolean' || (body.verified && text(body.reference).length < 10)) return send(res, 400, 'SELLER_REVIEW_INVALID', 'Provide a seller and genuine review reference.');
+    // Identity review is deliberately isolated from paid Premium entitlements.
+    result = await supabase.rpc('marketplace_approve_seller_v1', { p_admin_id: actor.userId, p_seller_id: text(body.sellerId), p_verified: body.verified, p_reference: text(body.reference), p_plan_expires_at: null });
   }
   if (result.error) return send(res, 409, 'ADMIN_ACTION_FAILED', 'The action was not completed. Check the review details and order status.');
   return res.status(200).json({ success: true, result: result.data });

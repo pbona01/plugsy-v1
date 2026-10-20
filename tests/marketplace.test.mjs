@@ -105,6 +105,23 @@ test('manual file approval only changes the uploaded asset, not seller plan enti
   assert.doesNotMatch(fileReview, /marketplace_approve_seller_v1|marketplace_seller_profiles|public_selling_enabled|public_plan_expires_at/);
 });
 
+test('seller identity review cannot mutate Marketplace Premium even if an old client sends an expiry', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const [migration, api, adminPage] = await Promise.all([
+    readFile(new URL('../supabase/migrations/20261020130000_decouple_marketplace_review_from_premium_v1.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/AdminMarketplace.tsx', import.meta.url), 'utf8'),
+  ]);
+  const reviewFunction = migration.slice(migration.indexOf('create or replace function public.marketplace_approve_seller_v1'), migration.indexOf('revoke all on function public.marketplace_approve_seller_v1'));
+  const reviewUpdate = reviewFunction.slice(reviewFunction.indexOf('update public.marketplace_seller_profiles'), reviewFunction.indexOf('where user_id = p_seller_id'));
+  const adminMutation = api.slice(api.indexOf("if (action === 'resolve-dispute')"), api.indexOf('if (result.error)', api.indexOf("if (action === 'resolve-dispute')")));
+  assert.doesNotMatch(reviewUpdate, /public_selling_enabled|public_plan_expires_at/);
+  assert.match(reviewFunction, /premium_entitlement_modified', false/);
+  assert.match(adminMutation, /p_plan_expires_at: null/);
+  assert.match(adminPage, /This review changes identity status only/);
+  assert.doesNotMatch(adminPage, /type="datetime-local"/);
+});
+
 test('seller product deletion is a soft archive and leaves paid buyer delivery intact', async () => {
   const { readFile } = await import('node:fs/promises');
   const [api, seller] = await Promise.all([
