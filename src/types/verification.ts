@@ -1,6 +1,7 @@
 export type ColorTheme = 
   "classic" | "obsidian" | "ivory" | "slate" | "sand" |
-  "forest" | "navy" | "cream" | "ash" | "noir" | "gradient" | "glow" | "geometric" | "indigo_glow" | "teal_glow"
+  "forest" | "navy" | "cream" | "ash" | "noir" | "gradient" | "glow" | "geometric" | "indigo_glow" | "teal_glow" |
+  "noir_editorial" | "electric_blue" | "emerald_glow"
 
 export type FontPairing = "refined_editorial" | "bold_futuristic" | "elegant_minimal" | "raw_high_impact" | "warm_literary" | "A" | "B" | "C" | "D"
 

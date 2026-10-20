@@ -1,17 +1,20 @@
 import { VPPortfolioItem, ReactionConfig } from "../types/verification";
 
 export const THEMES: Record<string, { name: string, bg: string, text: string, accent: string, cardBg: string, borderColor: string }> = {
-  modern: { name: "Default", bg: "var(--brand-bg)", text: "var(--brand-text)", accent: "var(--brand-accent)", cardBg: "var(--brand-card)", borderColor: "var(--brand-border)" },
+  modern: { name: "Default", bg: "#09090b", text: "#fafafa", accent: "#3b82f6", cardBg: "#18181b", borderColor: "#27272a" },
   obsidian: { name: "Grid", bg: "#09090b", text: "#fafafa", accent: "#3b82f6", cardBg: "#18181b", borderColor: "#27272a" },
-  minimal: { name: "Minimal", bg: "#ffffff", text: "#171717", accent: "#000000", cardBg: "#f5f5f5", borderColor: "#e5e5e5" },
+  minimal: { name: "Minimal", bg: "#0b0b0f", text: "#f8fafc", accent: "#f8fafc", cardBg: "#15151b", borderColor: "#292932" },
   slate: { name: "Aurora", bg: "#0f172a", text: "#f8fafc", accent: "#38bdf8", cardBg: "#1e293b", borderColor: "#334155" },
   dracula: { name: "Waves", bg: "#282a36", text: "#f8f8f2", accent: "#bd93f9", cardBg: "#44475a", borderColor: "#6272a4" },
   nebula: { name: "Sparkles", bg: "#17102e", text: "#f4f0ff", accent: "#8b5cf6", cardBg: "#231842", borderColor: "#3f277a" },
   gradient: { name: "Gradients", bg: "#0c051a", text: "#fbfaff", accent: "#a259ff", cardBg: "#160e29", borderColor: "#301d54" },
   glow: { name: "Ambient Glow", bg: "#022c22", text: "#e8fdf5", accent: "#10b981", cardBg: "#043c31", borderColor: "#0b584a" },
   geometric: { name: "Elegant Shapes", bg: "#030303", text: "#f5f5f7", accent: "#a78bfa", cardBg: "#0c0a0f", borderColor: "#241e2e" },
-  indigo_glow: { name: "Indigo Orbit", bg: "#ffffff", text: "#0f172a", accent: "#6366f1", cardBg: "#f8fafc", borderColor: "#e2e8f0" },
-  teal_glow: { name: "Teal Glow", bg: "#ffffff", text: "#0f172a", accent: "#14b8a6", cardBg: "#f8fafc", borderColor: "#e2e8f0" }
+  indigo_glow: { name: "Indigo Orbit", bg: "#0b1024", text: "#eef2ff", accent: "#818cf8", cardBg: "#151b36", borderColor: "#2c3560" },
+  teal_glow: { name: "Teal Glow", bg: "#061b1b", text: "#e6fffb", accent: "#2dd4bf", cardBg: "#0d2b2a", borderColor: "#1e4946" },
+  noir_editorial: { name: "Noir Editorial", bg: "#101014", text: "#f7f2e9", accent: "#d6b878", cardBg: "#1b1a1c", borderColor: "#39343a" },
+  electric_blue: { name: "Electric Blue", bg: "#070d1b", text: "#eef5ff", accent: "#4da3ff", cardBg: "#111d32", borderColor: "#263e61" },
+  emerald_glow: { name: "Emerald Glow", bg: "#061410", text: "#eafff4", accent: "#4ade9a", cardBg: "#10231c", borderColor: "#254938" }
 };
 
 export const FONT_PAIRINGS = {

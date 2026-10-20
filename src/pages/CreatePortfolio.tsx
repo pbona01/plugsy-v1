@@ -7,7 +7,7 @@ import {
   Video, Palette, Camera, Code2, 
   Layout, PenTool, TrendingUp, 
   Bot, ShieldCheck, Box, Loader2, ArrowLeft, CheckCircle2, ChevronDown, Play,
-  Wallet, CreditCard
+  Wallet, CreditCard, Sparkles
 } from "lucide-react";
 import { PortfolioOnboarding } from "../components/verification/PortfolioOnboarding";
 import { usePortfolioAccess } from "../lib/PortfolioContext";
@@ -259,7 +259,8 @@ export function CreatePortfolio() {
 
     try {
       const token = await getToken();
-      const key = getStableIdempotencyKey(`portfolio:${selectedCategories.join(",")}`);
+      const purchaseKey = `portfolio:${selectedPairId === "custom" ? "custom:" : ""}${selectedCategories.join(",")}`;
+      const key = getStableIdempotencyKey(purchaseKey);
       const res = await fetch("/api/portfolio?action=purchase", {
         method: "POST",
         headers: {
@@ -269,6 +270,7 @@ export function CreatePortfolio() {
         },
         body: JSON.stringify({
           categories: selectedCategories,
+          customPortfolio: selectedPairId === "custom",
           purchaseCode: purchaseCodeOwnerId ? purchaseCode.toUpperCase() : undefined,
         })
       });
@@ -277,7 +279,7 @@ export function CreatePortfolio() {
       if (!res.ok || !data.success || !data.entitlement?.id) {
         throw new Error(data.error || "Portfolio purchase failed");
       }
-      clearStableIdempotencyKey(`portfolio:${selectedCategories.join(",")}`);
+      clearStableIdempotencyKey(purchaseKey);
       showToast("Portfolio purchase successful!");
       navigate(`/portfolio/${data.entitlement.id}/edit`);
     } catch (e: any) {
@@ -300,7 +302,10 @@ export function CreatePortfolio() {
     );
   }
 
-  const selectedConfig = selectedCategories.length > 0 ? getCategoryConfig(JSON.stringify(selectedCategories)) : null;
+  const categorySelection = selectedCategories.length > 0 ? getCategoryConfig(JSON.stringify(selectedCategories)) : null;
+  const selectedConfig = selectedPairId === "custom" && categorySelection
+    ? { ...categorySelection, name: `Custom Portfolio · ${selectedCategories.map((category) => CATEGORY_CONFIG[category]?.name || category).join(", ")}`, price: 3500 }
+    : categorySelection;
 
   return (
     <motion.div 
@@ -357,6 +362,39 @@ export function CreatePortfolio() {
                 transition={{ duration: 0.3 }}
                 className="w-full grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
               >
+                <motion.div
+                  key="custom-portfolio"
+                  layout
+                  className={`relative p-6 transition-all flex flex-col items-start gap-4 border rounded-2xl shadow-md ${isSelectionConfirmed ? 'opacity-50 grayscale' : ''}`}
+                  style={{ backgroundColor: selectedPairId === "custom" ? "rgba(239, 68, 68, 0.05)" : "var(--brand-card)", borderColor: selectedPairId === "custom" ? "#EF4444" : "var(--brand-border)", color: "var(--brand-text)" }}
+                >
+                  <div className="flex w-full items-start gap-3">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border bg-brand-surface text-[#EF4444]" style={{ borderColor: "var(--brand-border)" }}><Sparkles className="h-6 w-6" /></div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-bold text-lg">Custom Portfolio</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-brand-text-secondary">Build your own profile by combining up to four skills.</p>
+                    </div>
+                    <span className="shrink-0 text-sm font-black text-[#EF4444]">₦3,500</span>
+                  </div>
+                  <div className="w-full">
+                    <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-brand-text-secondary">
+                      <span>Choose your skills</span><span>{selectedPairId === "custom" ? selectedCategories.length : 0}/4</span>
+                    </div>
+                    <div className="grid max-h-56 grid-cols-2 gap-2 overflow-y-auto pr-1">
+                      {Object.entries(CATEGORY_CONFIG).filter(([key]) => key !== "three_d_design").map(([key, config]) => {
+                        const checked = selectedPairId === "custom" && selectedCategories.includes(key);
+                        const disabled = selectedPairId === "custom" && !checked && selectedCategories.length >= 4;
+                        return <button key={key} type="button" disabled={disabled || isSelectionConfirmed} onClick={() => {
+                          const current = selectedPairId === "custom" ? selectedCategories : [];
+                          const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
+                          setSelectedPairId(next.length ? "custom" : null);
+                          setSelectedCategories(next);
+                        }} className={`rounded-xl border px-3 py-2 text-left text-[11px] font-semibold transition ${checked ? "border-[#EF4444] bg-red-500/10 text-[#EF4444]" : "border-brand-border bg-brand-surface text-brand-text-secondary hover:text-brand-text"} disabled:cursor-not-allowed disabled:opacity-40`} aria-pressed={checked}>{config.name}</button>;
+                      })}
+                    </div>
+                    {selectedPairId === "custom" && <p className="mt-2 text-[10px] text-brand-text-secondary">{selectedCategories.length ? "Your chosen skills will appear on your portfolio." : "Select at least one skill to continue."}</p>}
+                  </div>
+                </motion.div>
                 {PAIRED_CATEGORIES.map((pair) => {
                   const isSelected = selectedPairId === pair.id;
                   const activeOptionIdx = isSelected 

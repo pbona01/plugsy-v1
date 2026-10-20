@@ -1510,8 +1510,9 @@ export function PublicPortfolio({
       `}</style>
       <div
         id="vp-root"
+        className="dark"
         data-theme={portfolio.color_theme || "classic"}
-        style={styleParams}
+        style={{ ...styleParams, colorScheme: "dark" }}
       >
         <div
           className="w-full text-left selection:bg-[var(--vp-accent)]/20 min-h-screen flex flex-col justify-between"

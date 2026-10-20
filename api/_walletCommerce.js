@@ -693,10 +693,12 @@ export async function handlePortfolioWalletPurchase(req, res) {
   const categories = Array.isArray(context.body.categories)
     ? [...new Set(context.body.categories.map(text).filter(Boolean))]
     : [];
+  const customPortfolio = context.body.customPortfolio === true;
 
   if (
     categories.length === 0 ||
-    categories.length > 3 ||
+    categories.length > (customPortfolio ? 4 : 3) ||
+    (!customPortfolio && categories.includes("custom_portfolio")) ||
     categories.some((category) => !/^[a-z0-9_]{3,64}$/.test(category))
   ) {
     return send(
@@ -727,7 +729,7 @@ export async function handlePortfolioWalletPurchase(req, res) {
   const result = await callRpc(
     supabase,
     res,
-    "purchase_portfolio_wallet_v2",
+    customPortfolio ? "purchase_custom_portfolio_wallet_v1" : "purchase_portfolio_wallet_v2",
     {
       p_actor_user_id: context.actor.userId,
       p_actor_email: context.actor.email,
