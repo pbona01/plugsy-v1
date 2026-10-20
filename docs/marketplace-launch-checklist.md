@@ -47,7 +47,9 @@ Server-only storage variables: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_A
 
 ## Automatic product-file review
 
-Set `VIRUSTOTAL_API_KEY` as a Production-only Vercel environment variable from a VirusTotal plan that permits **private file scanning**. Never use the public upload endpoint for seller files: it can make material available to third parties. With the server-only key present, Plugsy scans PDFs, EPUBs and ZIPs automatically after upload and keeps checking pending results in the seller's browser. Only unsafe, oversized, unavailable, or inconclusive scans go to Admin → Marketplace → File review. The existing scheduled `process-emails` task is the fallback for scans that finish after the seller leaves.
+Set `CLOUDMERSIVE_VIRUS_SCAN_API_KEY` as a Production-only Vercel environment variable. This is Plugsy's automatic antivirus gate: it scans PDFs, EPUBs and ZIPs immediately after upload and returns a clean/rejected result. Only unsafe, oversized, unavailable, or inconclusive scans go to Admin → Marketplace → File review. The existing scheduled `process-emails` task is the fallback for scans that finish after the seller leaves.
+
+`VIRUSTOTAL_API_KEY` is optional and is used only for privacy-preserving analysis of files that cannot be auto-approved. Do not use VirusTotal's public upload API for seller files; it can share uploaded material outside Plugsy's organization.
 
 Schedule authenticated POST calls to `release-due` and `process-emails` on `/api/marketplace`, using `CRON_SECRET`. Email processing uses existing `RESEND_API_KEY` and sends from `hello@plugsy.ng`. No schedule has been deployed here.
 

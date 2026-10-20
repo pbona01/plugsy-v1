@@ -98,6 +98,16 @@ test('document scans continue automatically after upload while only unavailable 
   assert.match(dashboard, /Security scan in progress/);
 });
 
+test('automatic approval uses the antivirus provider while private VirusTotal analysis remains a safe fallback', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const scanner = await readFile(new URL('../api/_marketplaceScanner.js', import.meta.url), 'utf8');
+  assert.match(scanner, /CLOUDMERSIVE_VIRUS_SCAN_API_KEY/);
+  assert.match(scanner, /virus\/scan\/file\/advanced/);
+  assert.match(scanner, /CleanResult/);
+  assert.match(scanner, /private\/analyses/);
+  assert.match(scanner, /private_analysis_requires_review/);
+});
+
 test('payout schedule includes Monday-Friday and seller identity review preserves Marketplace Premium when expiry is blank', async () => {
   const { readFile } = await import('node:fs/promises');
   const migration = await readFile(new URL('../supabase/migrations/20261019120000_marketplace_weekday_payout_and_plan_review_fix_v1.sql', import.meta.url), 'utf8');

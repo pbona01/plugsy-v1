@@ -1475,7 +1475,7 @@ async function fileMutation(req,res,action) {
   let scan = { state: 'manual', reason: 'scanner_unavailable' };
   try { scan = await scanMarketplaceAsset({ ...asset, actual_size: actualSize }); } catch (scanError) { const code=text(scanError?.message); console.error('[marketplace] private file scan pending manual review', code || scanError); scan={ state:'manual', reason:code==='VIRUSTOTAL_401'||code==='VIRUSTOTAL_403'?'scanner_access_denied':'scanner_unavailable' }; }
   if (scan.state === 'clean' || scan.state === 'rejected') {
-    const scanReference = scan.provider === 'media_signature' ? `media_signature:${scan.analysisId}` : `virustotal_private:${scan.analysisId}`;
+    const scanReference = scan.provider === 'media_signature' ? `media_signature:${scan.analysisId}` : scan.provider === 'cloudmersive' ? `cloudmersive:${scan.analysisId}` : `virustotal_private:${scan.analysisId}`;
     const { error: scanUpdateError } = await supabase.from('marketplace_assets').update({ status: scan.state, scan_reference: scanReference, scanned_at: new Date().toISOString() }).eq('id', asset.id).eq('status', 'quarantined');
     if (scanUpdateError) throw scanUpdateError;
     if (scan.state === 'rejected') return send(res, 422, 'FILE_REJECTED', 'This file did not pass the security scan and cannot be sold.');

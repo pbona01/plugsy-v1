@@ -8,6 +8,7 @@ const VT_BASE_URL = 'https://www.virustotal.com/api/v3';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const privateApiKey = () => String(process.env.VIRUSTOTAL_API_KEY || '').trim();
+const cloudmersiveApiKey = () => String(process.env.CLOUDMERSIVE_VIRUS_SCAN_API_KEY || '').trim();
 const scanStats = (attributes = {}) => attributes.stats || attributes.last_analysis_stats || {};
 const hasFinalStats = (attributes = {}) => {
   const stats = scanStats(attributes);
@@ -43,9 +44,30 @@ async function virusTotalRequest(path, options = {}) {
   return payload;
 }
 
+async function cloudmersiveScan(asset) {
+  if (!cloudmersiveApiKey()) return null;
+  if (Number(asset.actual_size || asset.expected_size || 0) > MAX_AUTOMATIC_SCAN_BYTES) return { state: 'manual', reason: 'file_too_large' };
+  const bytes = await readMarketplaceFile(asset, MAX_AUTOMATIC_SCAN_BYTES);
+  const form = new FormData();
+  form.append('inputFile', new Blob([bytes], { type: asset.content_type }), asset.original_name);
+  const response = await fetch('https://api.cloudmersive.com/virus/scan/file/advanced', {
+    method: 'POST',
+    headers: {
+      Apikey: cloudmersiveApiKey(),
+      allowExecutables: 'false', allowInvalidFiles: 'false', allowScripts: 'false',
+      allowPasswordProtectedFiles: 'false', allowMacros: 'false', allowXmlExternalEntities: 'false',
+      allowHtml: 'false', allowUnsafeArchives: 'false', allowOleEmbeddedObject: 'false', allowUnwantedAction: 'false',
+    },
+    body: form,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || typeof payload?.CleanResult !== 'boolean') throw new Error(`CLOUDMERSIVE_${response.status}`);
+  return { state: payload.CleanResult ? 'clean' : 'rejected', provider: 'cloudmersive', analysisId: asset.id };
+}
+
 async function waitForPrivateAnalysis(analysisId) {
   for (let attempt = 0; attempt < 12; attempt += 1) {
-    const payload = await virusTotalRequest(`/analyses/${encodeURIComponent(analysisId)}`);
+    const payload = await virusTotalRequest(`/private/analyses/${encodeURIComponent(analysisId)}`);
     const attributes = payload?.data?.attributes || {};
     if (attributes.status === 'completed') return { analysisId, attributes };
     await wait(1500);
@@ -57,8 +79,10 @@ export async function scanMarketplaceAsset(asset) {
   if (supportsAutomaticMediaReview(asset.content_type)) {
     const head = await readMarketplaceFileHead(asset, 32);
     if (!matchesMarketplaceMediaSignature(asset.content_type, head)) return { state: 'rejected', provider: 'media_signature', analysisId: asset.id };
-    return { state: 'clean', provider: 'media_signature', analysisId: asset.id };
   }
+  const antivirusResult = await cloudmersiveScan(asset);
+  if (antivirusResult) return antivirusResult;
+  if (supportsAutomaticMediaReview(asset.content_type)) return { state: 'clean', provider: 'media_signature', analysisId: asset.id };
   if (!privateApiKey()) return { state: 'manual', reason: 'scanner_not_configured' };
   if (Number(asset.actual_size || asset.expected_size || 0) > MAX_AUTOMATIC_SCAN_BYTES) return { state: 'manual', reason: 'file_too_large' };
 
@@ -72,8 +96,8 @@ export async function scanMarketplaceAsset(asset) {
   if (!completed.attributes) return { state: 'pending', analysisId };
   if (!hasFinalStats(completed.attributes)) return { state: 'manual', reason: 'scan_result_incomplete', analysisId };
   return dangerous(completed.attributes)
-    ? { state: 'rejected', analysisId }
-    : { state: 'clean', analysisId };
+    ? { state: 'rejected', provider: 'virustotal_private', analysisId }
+    : { state: 'manual', reason: 'private_analysis_requires_review', analysisId };
 }
 
 export async function checkMarketplaceAssetScan(scanReference) {
@@ -81,9 +105,9 @@ export async function checkMarketplaceAssetScan(scanReference) {
   if (!String(scanReference || '').startsWith('virustotal_private:')) return { state: 'manual', reason: 'scan_reference_invalid' };
   const analysisId = String(scanReference).slice('virustotal_private:'.length);
   if (!analysisId) return { state: 'manual' };
-  const payload = await virusTotalRequest(`/analyses/${encodeURIComponent(analysisId)}`);
+  const payload = await virusTotalRequest(`/private/analyses/${encodeURIComponent(analysisId)}`);
   const attributes = payload?.data?.attributes || {};
   if (attributes.status !== 'completed') return { state: 'pending', analysisId };
   if (!hasFinalStats(attributes)) return { state: 'manual', reason: 'scan_result_incomplete', analysisId };
-  return dangerous(attributes) ? { state: 'rejected', analysisId } : { state: 'clean', analysisId };
+  return dangerous(attributes) ? { state: 'rejected', provider: 'virustotal_private', analysisId } : { state: 'manual', reason: 'private_analysis_requires_review', analysisId };
 }
