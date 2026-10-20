@@ -108,6 +108,14 @@ test('automatic approval uses the antivirus provider while private VirusTotal an
   assert.match(scanner, /private_analysis_requires_review/);
 });
 
+test('free launch mode can automatically approve a validated upload with a server-only switch', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8');
+  assert.match(source, /MARKETPLACE_AUTO_APPROVE_UPLOADS/);
+  assert.match(source, /automatic_acceptance:validated_upload/);
+  assert.match(source, /status:'clean'/);
+});
+
 test('payout schedule includes Monday-Friday and seller identity review preserves Marketplace Premium when expiry is blank', async () => {
   const { readFile } = await import('node:fs/promises');
   const migration = await readFile(new URL('../supabase/migrations/20261019120000_marketplace_weekday_payout_and_plan_review_fix_v1.sql', import.meta.url), 'utf8');

@@ -26,6 +26,7 @@ const isUrl = (value) => {
 };
 const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(value)) && text(value).length <= 254;
 const idempotencyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
+const automaticallyApproveUploads = () => text(process.env.MARKETPLACE_AUTO_APPROVE_UPLOADS).toLowerCase() === 'true';
 const marketplaceRulesVersion = "marketplace-rules-v1";
 const verificationConsentVersion = "seller-identity-v2-2026-10-02";
 const listingFields = "id,seller_id,title,slug,summary,description,category,price,currency,cover_image_url,delivery_label,visibility,status,resale_policy,resale_commission_percent,published_at,created_at,updated_at";
@@ -1472,6 +1473,16 @@ async function fileMutation(req,res,action) {
   if (deliveryTitle.length > 120 || deliveryDescription.length > 2000) return send(res, 400, 'DELIVERY_METADATA_INVALID', 'Use a lesson title under 120 characters and description under 2,000 characters.');
   const { error: deliveryInsertError } = await supabase.from('marketplace_listing_deliveries').upsert({ listing_id: asset.listing_id, seller_id: actor.userId, kind: 'file', asset_id: asset.id, label: deliveryTitle, description: deliveryDescription, sort_order: Number.isFinite(Number(body.sortOrder)) ? Math.max(0, Number(body.sortOrder)) : 0 }, { onConflict: 'id' });
   if (deliveryInsertError && deliveryInsertError.code !== '42P01') throw deliveryInsertError;
+  if (automaticallyApproveUploads()) {
+    const { error: approvalError } = await supabase.from('marketplace_assets').update({ status:'clean', scan_reference:'automatic_acceptance:validated_upload', scanned_at:new Date().toISOString() }).eq('id', asset.id).eq('status', 'quarantined');
+    if (approvalError) throw approvalError;
+    try {
+      const { data: listingInfo } = await supabase.from('marketplace_listings').select('title').eq('id', asset.listing_id).maybeSingle();
+      await queueProductUpdateNotifications(supabase, asset.listing_id, listingInfo?.title || 'Your purchased product');
+      await flushProductUpdateEmails(supabase);
+    } catch (notificationError) { console.error('[marketplace] automatic approval update notifications pending', notificationError?.message || notificationError); }
+    return res.status(200).json({ success:true, status:'clean', automatic:true, message:'Uploaded and approved automatically. You can publish this product now.' });
+  }
   let scan = { state: 'manual', reason: 'scanner_unavailable' };
   try { scan = await scanMarketplaceAsset({ ...asset, actual_size: actualSize }); } catch (scanError) { const code=text(scanError?.message); console.error('[marketplace] private file scan pending manual review', code || scanError); scan={ state:'manual', reason:code==='VIRUSTOTAL_401'||code==='VIRUSTOTAL_403'?'scanner_access_denied':'scanner_unavailable' }; }
   if (scan.state === 'clean' || scan.state === 'rejected') {
