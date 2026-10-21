@@ -140,6 +140,8 @@ export function CreatePortfolio() {
   const [loading, setLoading] = useState<string | null>(null);
   const paymentInFlightRef = useRef(false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [customSkillNames, setCustomSkillNames] = useState<string[]>([]);
+  const [customSkillDraft, setCustomSkillDraft] = useState("");
   const [selectedPairId, setSelectedPairId] = useState<string | null>(null);
   const [selectedOptionIndex, setSelectedOptionIndex] = useState<number>(2);
   const [isDropdownOpen, setIsDropdownOpen] = useState<string | null>(null);
@@ -271,6 +273,7 @@ export function CreatePortfolio() {
         body: JSON.stringify({
           categories: selectedCategories,
           customPortfolio: selectedPairId === "custom",
+          customSkillNames: selectedPairId === "custom" ? customSkillNames : undefined,
           purchaseCode: purchaseCodeOwnerId ? purchaseCode.toUpperCase() : undefined,
         })
       });
@@ -303,9 +306,29 @@ export function CreatePortfolio() {
   }
 
   const categorySelection = selectedCategories.length > 0 ? getCategoryConfig(JSON.stringify(selectedCategories)) : null;
-  const selectedConfig = selectedPairId === "custom" && categorySelection
-    ? { ...categorySelection, name: `Custom Portfolio · ${selectedCategories.map((category) => CATEGORY_CONFIG[category]?.name || category).join(", ")}`, price: 3500 }
+  const selectedConfig = selectedPairId === "custom"
+    ? { ...(categorySelection || { name: "Custom Portfolio" }), name: `Custom Portfolio · ${[...selectedCategories.map((category) => CATEGORY_CONFIG[category]?.name || category), ...customSkillNames].join(", ")}`, price: 3500 }
     : categorySelection;
+
+  const addCustomSkill = () => {
+    const skill = customSkillDraft.trim().replace(/\s+/g, " ");
+    if (!skill) return;
+    if (skill.length > 40) {
+      showToast("A custom skill can be up to 40 characters.", "error");
+      return;
+    }
+    if (customSkillNames.some((name) => name.toLocaleLowerCase() === skill.toLocaleLowerCase())) {
+      showToast("That skill has already been added.", "error");
+      return;
+    }
+    if (customSkillNames.length >= 12) {
+      showToast("You can add up to 12 typed skills here.", "error");
+      return;
+    }
+    setSelectedPairId("custom");
+    setCustomSkillNames((names) => [...names, skill]);
+    setCustomSkillDraft("");
+  };
 
   return (
     <motion.div 
@@ -372,13 +395,13 @@ export function CreatePortfolio() {
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border bg-brand-surface text-[#EF4444]" style={{ borderColor: "var(--brand-border)" }}><Sparkles className="h-6 w-6" /></div>
                     <div className="min-w-0 flex-1">
                       <h3 className="font-bold text-lg">Custom Portfolio</h3>
-                      <p className="mt-1 text-xs leading-relaxed text-brand-text-secondary">Build your own profile by combining up to four skills.</p>
+                      <p className="mt-1 text-xs leading-relaxed text-brand-text-secondary">Choose up to four listed skills, then add your own specialties too.</p>
                     </div>
                     <span className="shrink-0 text-sm font-black text-[#EF4444]">₦3,500</span>
                   </div>
                   <div className="w-full">
                     <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-brand-text-secondary">
-                      <span>Choose your skills</span><span>{selectedPairId === "custom" ? selectedCategories.length : 0}/4</span>
+                      <span>Listed skills</span><span>{selectedPairId === "custom" ? selectedCategories.length : 0}/4</span>
                     </div>
                     <div className="grid max-h-56 grid-cols-2 gap-2 overflow-y-auto pr-1">
                       {Object.entries(CATEGORY_CONFIG).filter(([key]) => key !== "three_d_design").map(([key, config]) => {
@@ -392,7 +415,15 @@ export function CreatePortfolio() {
                         }} className={`rounded-xl border px-3 py-2 text-left text-[11px] font-semibold transition ${checked ? "border-[#EF4444] bg-red-500/10 text-[#EF4444]" : "border-brand-border bg-brand-surface text-brand-text-secondary hover:text-brand-text"} disabled:cursor-not-allowed disabled:opacity-40`} aria-pressed={checked}>{config.name}</button>;
                       })}
                     </div>
-                    {selectedPairId === "custom" && <p className="mt-2 text-[10px] text-brand-text-secondary">{selectedCategories.length ? "Your chosen skills will appear on your portfolio." : "Select at least one skill to continue."}</p>}
+                    <div className="mt-3 rounded-xl border border-dashed border-brand-border bg-brand-surface/40 p-3">
+                      <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-brand-text-secondary"><span>Add your own skill</span><span>{customSkillNames.length}/12</span></div>
+                      <div className="flex gap-2">
+                        <input value={customSkillDraft} onChange={(event) => setCustomSkillDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addCustomSkill(); } }} maxLength={40} placeholder="e.g. Drone cinematography" className="min-w-0 flex-1 rounded-lg border border-brand-border bg-brand-card px-3 py-2 text-xs text-brand-text outline-none focus:border-[#EF4444]" />
+                        <button type="button" onClick={addCustomSkill} disabled={isSelectionConfirmed || !customSkillDraft.trim()} className="rounded-lg bg-[#EF4444] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#dc2626] disabled:cursor-not-allowed disabled:opacity-40">Add</button>
+                      </div>
+                      {customSkillNames.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{customSkillNames.map((skill) => <button key={skill} type="button" onClick={() => setCustomSkillNames((names) => names.filter((name) => name !== skill))} className="rounded-full border border-[#EF4444]/40 bg-red-500/10 px-2 py-1 text-[10px] font-semibold text-[#EF4444] transition hover:bg-red-500/20" title="Remove skill">{skill} ×</button>)}</div>}
+                    </div>
+                    {selectedPairId === "custom" && <p className="mt-2 text-[10px] text-brand-text-secondary">{selectedCategories.length ? "Your skills become editable sections after purchase, so you can change them whenever you need." : "Choose at least one listed skill, then add any specialties in your own words."}</p>}
                   </div>
                 </motion.div>
                 {PAIRED_CATEGORIES.map((pair) => {

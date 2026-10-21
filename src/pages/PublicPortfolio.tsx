@@ -1642,6 +1642,27 @@ export function PublicPortfolio({
               <DemoComponent />
             </div>
           )}
+          {portfolio.color_theme === "rose_studio" && (
+            <div className={cn(bgPosClass, "inset-0 z-0 pointer-events-none w-full h-full overflow-hidden")}>
+              <div className="absolute -top-1/4 -left-1/4 h-[70vw] w-[70vw] rounded-full bg-rose-500/20 blur-[130px] animate-pulse" />
+              <div className="absolute -bottom-1/4 -right-1/4 h-[65vw] w-[65vw] rounded-full bg-fuchsia-500/15 blur-[120px] animate-[pulse_7s_ease-in-out_infinite]" />
+              <div className="absolute inset-0 opacity-[0.12]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.18) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.18) 1px, transparent 1px)", backgroundSize: "44px 44px" }} />
+            </div>
+          )}
+          {portfolio.color_theme === "solar_flare" && (
+            <div className={cn(bgPosClass, "inset-0 z-0 pointer-events-none w-full h-full overflow-hidden")}>
+              <div className="absolute left-1/2 top-[-45vw] h-[95vw] w-[95vw] -translate-x-1/2 rounded-full border border-amber-300/20 shadow-[0_0_160px_40px_rgba(251,191,36,.16)]" />
+              <div className="absolute left-1/2 top-[-36vw] h-[78vw] w-[78vw] -translate-x-1/2 rounded-full border border-orange-400/15 animate-[spin_55s_linear_infinite]" style={{ borderStyle: "dashed" }} />
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(251,191,36,.2),transparent_42%)]" />
+            </div>
+          )}
+          {portfolio.color_theme === "midnight_chrome" && (
+            <div className={cn(bgPosClass, "inset-0 z-0 pointer-events-none w-full h-full overflow-hidden")}>
+              <div className="absolute inset-x-0 top-0 h-[55%] bg-[linear-gradient(118deg,transparent_8%,rgba(165,180,252,.16)_35%,transparent_58%)] animate-[pulse_5s_ease-in-out_infinite]" />
+              <div className="absolute -right-24 top-20 h-80 w-80 rounded-full border border-indigo-200/15 shadow-[inset_0_0_70px_rgba(165,180,252,.12),0_0_90px_rgba(99,102,241,.1)]" />
+              <div className="absolute inset-0 opacity-30" style={{ backgroundImage: "repeating-linear-gradient(90deg, transparent 0, transparent 39px, rgba(165,180,252,.06) 40px)" }} />
+            </div>
+          )}
 
           {/* PROFILE HEADER BLOCK */}
           <section className="w-full relative z-10 pt-24 pb-12 px-6 md:px-12 flex flex-col items-center sm:items-start max-w-5xl mx-auto">

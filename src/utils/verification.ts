@@ -14,7 +14,10 @@ export const THEMES: Record<string, { name: string, bg: string, text: string, ac
   teal_glow: { name: "Teal Glow", bg: "#061b1b", text: "#e6fffb", accent: "#2dd4bf", cardBg: "#0d2b2a", borderColor: "#1e4946" },
   noir_editorial: { name: "Noir Editorial", bg: "#101014", text: "#f7f2e9", accent: "#d6b878", cardBg: "#1b1a1c", borderColor: "#39343a" },
   electric_blue: { name: "Electric Blue", bg: "#070d1b", text: "#eef5ff", accent: "#4da3ff", cardBg: "#111d32", borderColor: "#263e61" },
-  emerald_glow: { name: "Emerald Glow", bg: "#061410", text: "#eafff4", accent: "#4ade9a", cardBg: "#10231c", borderColor: "#254938" }
+  emerald_glow: { name: "Emerald Glow", bg: "#061410", text: "#eafff4", accent: "#4ade9a", cardBg: "#10231c", borderColor: "#254938" },
+  rose_studio: { name: "Rose Studio", bg: "#1b0b18", text: "#fff1f7", accent: "#fb7185", cardBg: "#2a1024", borderColor: "#582240" },
+  solar_flare: { name: "Solar Flare", bg: "#160d04", text: "#fff7e6", accent: "#fbbf24", cardBg: "#291707", borderColor: "#5b3510" },
+  midnight_chrome: { name: "Midnight Chrome", bg: "#080c14", text: "#f0f6ff", accent: "#a5b4fc", cardBg: "#121927", borderColor: "#334155" }
 };
 
 export const FONT_PAIRINGS = {

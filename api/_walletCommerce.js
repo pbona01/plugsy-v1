@@ -30,6 +30,20 @@ const portfolioCategoryLabel = (value) =>
   text(value)
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (character) => character.toUpperCase()) || "Portfolio";
+const normalizeCustomPortfolioSkills = (value) => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value
+    .map((skill) => text(skill).replace(/\s+/g, " "))
+    .filter((skill) => skill.length >= 2 && skill.length <= 40 && !/[<>\p{Cc}]/u.test(skill))
+    .filter((skill) => {
+      const key = skill.toLocaleLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 12);
+};
 
 const notifyTelegram = async (message) => {
   const token = text(process.env.TELEGRAM_BOT_TOKEN || process.env.VITE_TELEGRAM_ADMIN_TELEGRAM_BOT_TOKEN);
@@ -694,6 +708,9 @@ export async function handlePortfolioWalletPurchase(req, res) {
     ? [...new Set(context.body.categories.map(text).filter(Boolean))]
     : [];
   const customPortfolio = context.body.customPortfolio === true;
+  const customSkillNames = customPortfolio
+    ? normalizeCustomPortfolioSkills(context.body.customSkillNames)
+    : [];
 
   if (
     categories.length === 0 ||
@@ -782,11 +799,12 @@ export async function handlePortfolioWalletPurchase(req, res) {
     return send(res, 503, "PORTFOLIO_CATEGORIES_LOAD_FAILED", "The portfolio categories could not be prepared.")
   }
   const existingNames = new Set((existingCategories || []).map((category) => lower(category.name)))
-  const missingCategories = categories
-    .filter((category) => !existingNames.has(lower(portfolioCategoryLabel(category))))
+  const portfolioSectionNames = [...categories.map(portfolioCategoryLabel), ...customSkillNames];
+  const missingCategories = portfolioSectionNames
+    .filter((category) => !existingNames.has(lower(category)))
     .map((category, index) => ({
       portfolio_id: result.entitlement.id,
-      name: portfolioCategoryLabel(category),
+      name: category,
       description: null,
       order_index: (existingCategories || []).length + index,
     }))
@@ -808,7 +826,7 @@ export async function handlePortfolioWalletPurchase(req, res) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id: chatId,
-          text: `🛒 NEW PORTFOLIO PURCHASE\n👤 ${context.actor.fullName || "User"}\n📧 ${context.actor.email}\n📦 ${categories.map(portfolioCategoryLabel).join(", ")}\n🔑 Ref: ${result.reference}`,
+          text: `🛒 NEW PORTFOLIO PURCHASE\n👤 ${context.actor.fullName || "User"}\n📧 ${context.actor.email}\n📦 ${portfolioSectionNames.join(", ")}\n🔑 Ref: ${result.reference}`,
         }),
       })
     }

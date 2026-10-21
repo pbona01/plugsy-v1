@@ -13,6 +13,7 @@ export function TabIdentity({ portfolio, updatePortfolio }: { portfolio: VPPortf
 
   const config = getCategoryConfig(portfolio.category);
   const hasVideoSupport = config?.videoEmbedEnabled || (config?.maxVideos && config.maxVideos > 0);
+  const newThemeKeys = new Set(['rose_studio', 'solar_flare', 'midnight_chrome']);
 
   const bioOptions = [
     { id: 'text', icon: '📝', label: 'Text' },
@@ -315,19 +316,19 @@ export function TabIdentity({ portfolio, updatePortfolio }: { portfolio: VPPortf
         <h3 className="text-brand-text text-sm font-semibold mb-4 border-b border-brand-border pb-2">APPEARANCE</h3>
         
         <label className="block text-brand-text-secondary text-[12px] uppercase tracking-wider mb-2 font-bold">Public Theme</label>
-        <div className="grid grid-cols-5 gap-3 mb-6">
+        <div className="grid grid-cols-4 gap-3 mb-6">
            {Object.keys(THEMES).map(themeKey => {
              const t = THEMES[themeKey];
              const isSelected = portfolio.color_theme === themeKey;
              return (
-               <button 
+              <button 
                  key={themeKey}
                  onClick={() => updatePortfolio({color_theme: themeKey})}
-                 className={`w-10 h-10 rounded-full flex items-center justify-center transition transform hover:scale-110 relative group ${isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-[#0a0a0a]' : ''}`}
+                className={`h-12 rounded-xl flex items-center justify-center transition transform hover:scale-[1.04] relative group border ${isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-[#0a0a0a]' : 'border-brand-border'} ${newThemeKeys.has(themeKey) ? 'col-span-2' : ''}`}
                  style={{ backgroundColor: t.bg }}
                  title={themeKey}
                >
-                 <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.accent }}></div>
+                 <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.accent }}></div>{newThemeKeys.has(themeKey) && <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white animate-pulse">New</span>}</div>
                  <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-brand-text text-brand-surface text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition whitespace-nowrap pointer-events-none z-10 border border-[#333] capitalize">
                    {t.name || themeKey}
                  </div>
