@@ -64,10 +64,9 @@ import { AuroraBackground } from "../components/effects/aurora-background";
 import { Waves } from "../components/effects/wave-background";
 import { BackgroundGradientAnimation } from "../components/effects/background-gradient-animation";
 import { BackgroundComponents } from "../components/effects/background-components";
-import { HeroGeometric } from "../components/effects/shape-landing-hero";
+import { PortfolioHaloField } from "../components/effects/shape-landing-hero";
 import { GradientBackgrounds } from "../components/effects/gradient-backgrounds";
 import { BackgroundPaths } from "../components/effects/background-paths";
-import DemoComponent from "../components/effects/demo";
 import { cn } from "../lib/utils";
 import { motion } from "motion/react";
 import { EditableText } from "../components/ui/editable-text";
@@ -1613,14 +1612,7 @@ export function PublicPortfolio({
                 "inset-0 z-0 pointer-events-none w-full h-full bg-transparent",
               )}
             >
-              <HeroGeometric
-                containerClassName="!h-full !w-full !absolute pointer-events-none"
-                badge=""
-                title1=""
-                title2=""
-              >
-                <div className="hidden" />
-              </HeroGeometric>
+              <PortfolioHaloField className="!min-h-0 !h-full !w-full !absolute pointer-events-none" />
             </div>
           )}
           {portfolio.color_theme === "indigo_glow" && (
@@ -1640,7 +1632,7 @@ export function PublicPortfolio({
                 "inset-0 z-0 pointer-events-none w-full h-full bg-transparent",
               )}
             >
-              <DemoComponent />
+              <PortfolioHaloField variant="teal" className="!min-h-0 !h-full !w-full !absolute pointer-events-none" />
             </div>
           )}
           {portfolio.color_theme === "rose_studio" && (

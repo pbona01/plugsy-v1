@@ -17,7 +17,7 @@ import {
   CircleDot, Megaphone, Search, Share2, ArrowDown
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { HeroGeometric } from "../components/effects/shape-landing-hero";
+import { PortfolioHaloField } from "../components/effects/shape-landing-hero";
 import { getSiteUrl } from "../lib/siteUrl";
 import { sendBroadcastSafely } from "../services/chatService";
 import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
@@ -2558,10 +2558,7 @@ export default function PersonalChat() {
       <div className="flex flex-col flex-grow h-full overflow-hidden bg-slate-50 dark:bg-[#08080a] relative">
         {/* Floating Geometric Shapes Background */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
-          <HeroGeometric
-            containerClassName="!min-h-0 !h-full !w-full !absolute inset-0 !bg-transparent pointer-events-none"
-            hideContent={true}
-          />
+          <PortfolioHaloField className="!min-h-0 !h-full !w-full !absolute inset-0 pointer-events-none" />
         </div>
 
         {/* Subtle, dynamic geometric SVG background patterns & liquid-glass overlay */}
