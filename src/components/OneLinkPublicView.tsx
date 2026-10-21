@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronRight, ExternalLink, MessageSquare } from "lucide-react";
+import { ChevronRight, ExternalLink, MessageSquare, ShoppingBag } from "lucide-react";
 import { OneLinkProfile } from "../types";
 import {
   getOneLinkTheme,
@@ -83,6 +83,10 @@ export default function OneLinkPublicView({
       (project): project is typeof project & { url: string } =>
         Boolean(project.url),
     );
+  const products = profile.settings.products
+    .filter((product) => product.enabled)
+    .map((product) => ({ ...product, url: normalizeExternalUrl(product.url) }))
+    .filter((product): product is typeof product & { url: string } => Boolean(product.url));
   const displayName =
     profile.displayName || profile.username || "Plugsy Creator";
   const initial = displayName.slice(0, 1).toUpperCase() || "P";
@@ -274,6 +278,24 @@ export default function OneLinkPublicView({
                 </a>
               ))}
             </nav>
+          )}
+
+          {products.length > 0 && (
+            <section aria-label="Products" className="mt-7 w-full text-left">
+              <div className="mb-3 flex items-center gap-2 px-1">
+                <ShoppingBag aria-hidden="true" size={16} className={visual.accentForeground} />
+                <h2 className={cn("text-xs font-black uppercase tracking-[0.18em]", visual.cardForeground)}>Products</h2>
+              </div>
+              <div className="space-y-3">
+                {products.map((product) => (
+                  <a key={product.id} href={product.url} target="_blank" rel="noopener noreferrer" className={cn("group flex min-h-14 w-full items-center gap-3 rounded-2xl border p-3 transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-current", visual.buttonSurface, visual.buttonForeground, visual.border)}>
+                    <span aria-hidden="true" className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border", visual.accentSurface, visual.accentForeground, visual.border)}><ShoppingBag size={17} /></span>
+                    <span className="min-w-0 flex-1"><span className={cn("block break-words text-sm font-bold", visual.buttonForeground)}>{product.title}</span>{product.description && <span className={cn("mt-1 block break-words text-xs leading-5", visual.secondaryForeground)}>{product.description}</span>}</span>
+                    <ChevronRight aria-hidden="true" size={18} className={cn("shrink-0 opacity-70 transition group-hover:opacity-100", visual.iconForeground)} />
+                  </a>
+                ))}
+              </div>
+            </section>
           )}
 
           {socials.length > 0 && (

@@ -293,14 +293,16 @@ export function EditPortfolio() {
         />
       </div>
 
-      {/* Floating 'How to Setup' Button */}
-      <button
-        onClick={() => setIsTutorialOpen(true)}
-        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-brand-accent hover:bg-brand-accent/90 text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-full shadow-lg shadow-brand-accent/30 transition-all hover:scale-105 cursor-pointer border border-white/10"
-      >
-        <Play size={14} fill="currentColor" />
-        <span>How to Setup</span>
-      </button>
+      {/* Keep the client preview clean: editor help only appears in Build mode. */}
+      {isEditMode && (
+        <button
+          onClick={() => setIsTutorialOpen(true)}
+          className="fixed bottom-6 right-6 z-50 hidden items-center gap-2 bg-brand-accent hover:bg-brand-accent/90 text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-full shadow-lg shadow-brand-accent/30 transition-all hover:scale-105 cursor-pointer border border-white/10 md:flex"
+        >
+          <Play size={14} fill="currentColor" />
+          <span>How to Setup</span>
+        </button>
+      )}
 
       {/* Video Tutorial Overlay */}
       <AnimatePresence>

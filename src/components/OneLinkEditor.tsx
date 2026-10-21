@@ -45,6 +45,7 @@ import {
   OneLinkMutationAction,
   OneLinkOwnerState,
   OneLinkProfile,
+  OneLinkProduct,
   OneLinkProject,
   OneLinkSettings,
   OneLinkSocial,
@@ -694,6 +695,15 @@ export default function OneLinkEditor({
         }
         return next;
       }),
+    }));
+  };
+
+  const updateProduct = (id: string, patch: Partial<OneLinkProduct>) => {
+    updateSettings((settings) => ({
+      ...settings,
+      products: settings.products.map((product) =>
+        product.id === id ? { ...product, ...patch } : product,
+      ),
     }));
   };
 
@@ -1398,6 +1408,15 @@ export default function OneLinkEditor({
                     ))}
                   </div>
                 )}
+              </div>
+
+              <div className="space-y-4 border-t border-white/10 pt-7">
+                <div className="flex items-start justify-between gap-3">
+                  <SectionHeading title="Products" description="Premium only · you choose every product shown" />
+                  <button type="button" disabled={draft.settings.products.length >= ONE_LINK_LIMITS.products} onClick={() => updateSettings((settings) => ({ ...settings, products: [...settings.products, { id: createOneLinkItemId("product"), title: "", description: "", url: "", enabled: true }] }))} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-black transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"><Plus aria-hidden="true" size={14} />Add</button>
+                </div>
+                <p className="text-xs leading-5 text-white/50">Nothing is added automatically. Paste a marketplace URL or a private product link that you intentionally want visitors to open.</p>
+                {draft.settings.products.length === 0 ? <EmptyState text="Add only the products you want visible on this One Link." /> : <div className="space-y-3">{draft.settings.products.map((product, index) => <div key={product.id} className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><div className="flex items-center justify-between gap-3"><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={product.enabled} onChange={(event) => updateProduct(product.id, { enabled: event.target.checked })} className="h-4 w-4 accent-red-500" />Enabled</label><ItemActions index={index} length={draft.settings.products.length} onMove={(direction) => updateSettings((settings) => ({ ...settings, products: moveItem(settings.products, index, direction) }))} onDelete={() => updateSettings((settings) => ({ ...settings, products: settings.products.filter((entry) => entry.id !== product.id) }))} /></div><input value={product.title} onChange={(event) => updateProduct(product.id, { title: event.target.value })} maxLength={ONE_LINK_LIMITS.featuredTitle} aria-label="Product title" placeholder="Product name" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none focus:border-white/30" /><textarea value={product.description} onChange={(event) => updateProduct(product.id, { description: event.target.value })} maxLength={ONE_LINK_LIMITS.featuredDescription} aria-label="Product description" placeholder="Short description (optional)" rows={2} className="w-full resize-none rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none focus:border-white/30" /><input type="url" value={product.url} onChange={(event) => updateProduct(product.id, { url: event.target.value })} maxLength={ONE_LINK_LIMITS.url} aria-label="Product link" placeholder="https://plugsy.ng/..." className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none focus:border-white/30" /></div>)}</div>}
               </div>
             </div>
           )}

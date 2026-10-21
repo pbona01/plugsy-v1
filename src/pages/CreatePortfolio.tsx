@@ -309,6 +309,13 @@ export function CreatePortfolio() {
   const selectedConfig = selectedPairId === "custom"
     ? { ...(categorySelection || { name: "Custom Portfolio" }), name: `Custom Portfolio · ${[...selectedCategories.map((category) => CATEGORY_CONFIG[category]?.name || category), ...customSkillNames].join(", ")}`, price: 3500 }
     : categorySelection;
+  // The database is the authority at checkout. This mirrors the same server
+  // discounts so medal holders see the amount they will actually be charged.
+  const medalTier = activeMedal?.tier || profile?.medal_tier || "";
+  const medalDiscount = typeof activeMedal?.discount === "number"
+    ? activeMedal.discount
+    : medalTier === "Gold" ? 0.5 : medalTier === "Silver" ? 0.3 : medalTier === "Bronze" ? 0.15 : 0;
+  const applyMedalDiscount = (price: number) => Math.round(price * (1 - medalDiscount));
 
   const addCustomSkill = () => {
     const skill = customSkillDraft.trim().replace(/\s+/g, " ");
@@ -397,7 +404,7 @@ export function CreatePortfolio() {
                       <h3 className="font-bold text-lg">Custom Portfolio</h3>
                       <p className="mt-1 text-xs leading-relaxed text-brand-text-secondary">Choose up to four listed skills, then add your own specialties too.</p>
                     </div>
-                    <span className="shrink-0 text-sm font-black text-[#EF4444]">₦3,500</span>
+                    <span className="shrink-0 text-right"><span className="block text-sm font-black text-[#EF4444]">₦{applyMedalDiscount(3500).toLocaleString()}</span>{medalDiscount > 0 && <><span className="text-[10px] text-brand-text-secondary line-through">₦3,500</span><span className="ml-1 text-[10px] font-bold text-emerald-500">{Math.round(medalDiscount * 100)}% medal off</span></>}</span>
                   </div>
                   <div className="w-full">
                     <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-brand-text-secondary">
@@ -517,8 +524,8 @@ export function CreatePortfolio() {
                           {/* Price */}
                           <div className="flex items-baseline gap-1">
                             <span className="text-xs font-medium" style={{ color: "var(--brand-text-secondary)" }}>Price:</span>
-                            <span className="text-[#EF4444] font-black text-lg">₦{(activeMedal ? Math.round(config.price * (1 - activeMedal.discount)) : config.price).toLocaleString()}</span>
-                            {activeMedal && (
+                            <span className="text-[#EF4444] font-black text-lg">₦{applyMedalDiscount(config.price).toLocaleString()}</span>
+                            {medalDiscount > 0 && (
                               <span className="text-[10px] line-through opacity-40 ml-1">₦{config.price.toLocaleString()}</span>
                             )}
                           </div>
@@ -695,7 +702,7 @@ export function CreatePortfolio() {
                             transition={{ type: "spring", stiffness: 300, damping: 25 }}
                             style={{ display: "inline-block", color: "var(--brand-text)" }}
                           >
-                            {(activeMedal && selectedConfig ? Math.round(selectedConfig.price * (1 - activeMedal.discount)) : (selectedConfig?.price || 0)).toLocaleString()}
+                            {(selectedConfig ? applyMedalDiscount(selectedConfig.price) : 0).toLocaleString()}
                           </motion.span>
                         </AnimatePresence>
                       </div>
@@ -747,9 +754,9 @@ export function CreatePortfolio() {
 
                   {(() => {
                     const walletBalance = profile?.balance || 0;
-                    const price = activeMedal && selectedConfig 
-                      ? Math.round(selectedConfig.price * (1 - activeMedal.discount)) 
-                      : (selectedConfig?.price || 0);
+                    const price = selectedConfig
+                      ? applyMedalDiscount(selectedConfig.price)
+                      : 0;
                     const canAfford = walletBalance >= price;
 
                     return (

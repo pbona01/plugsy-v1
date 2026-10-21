@@ -43,6 +43,7 @@ import {
   ChevronDown,
   Dribbble,
   Globe,
+  ShoppingBag,
 } from "lucide-react";
 
 const TikTokIcon = ({ size = 18, color = "currentColor" }) => (
@@ -1876,6 +1877,22 @@ export function PublicPortfolio({
               {renderSocialLinks()}
             </div>
           </section>
+
+          {Array.isArray(portfolio.public_products) && portfolio.public_products.some((product) => product.enabled && /^https?:\/\//i.test(product.url || "")) && (
+            <section className="w-full max-w-5xl mx-auto px-6 md:px-12 pb-8 relative z-10" aria-label="Products">
+              <div className="rounded-2xl border border-white/10 bg-black/10 p-5 backdrop-blur-sm md:p-7">
+                <div className="mb-5 flex items-center gap-2"><ShoppingBag size={18} style={{ color: "var(--vp-accent)" }} /><h2 className="text-xl font-bold" style={{ fontFamily: "var(--vp-heading-font)" }}>Products</h2></div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {portfolio.public_products.filter((product) => product.enabled && /^https?:\/\//i.test(product.url || "")).map((product) => (
+                    <a key={product.id} href={product.url} target="_blank" rel="noopener noreferrer" className="group flex min-h-20 items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-4 transition hover:-translate-y-0.5 hover:bg-white/[0.08]">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/5" style={{ color: "var(--vp-accent)" }}><ShoppingBag size={18} /></span>
+                      <span className="min-w-0 flex-1"><span className="block break-words text-sm font-bold">{product.title || "Product"}</span>{product.description && <span className="mt-1 block break-words text-xs opacity-65">{product.description}</span>}</span><ExternalLink size={16} className="shrink-0 opacity-60 group-hover:opacity-100" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* BIO SECTION */}
           {(hasBioContent || isEditMode) && (

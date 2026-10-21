@@ -15,6 +15,10 @@ test("custom portfolio is first, supports typed skills, and has a ₦3,500 base 
   assert.match(page, /customSkillNames/);
   assert.match(page, /selectedCategories\.length >= 4/);
   assert.match(page, /price: 3500/);
+  assert.match(page, /medalTier === "Gold" \? 0\.5/);
+  assert.match(page, /medalTier === "Silver" \? 0\.3/);
+  assert.match(page, /medalTier === "Bronze" \? 0\.15/);
+  assert.match(page, /applyMedalDiscount\(3500\)/);
 });
 
 test("custom portfolio price, category limit, and debit are enforced by the server RPC", () => {

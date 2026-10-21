@@ -5,9 +5,15 @@ import { supabase } from '../../../lib/supabase';
 import { showToast } from '../../Toast';
 import { getSiteUrl } from '../../../lib/siteUrl';
 
+type PublicProduct = NonNullable<VPPortfolio['public_products']>[number];
+const cleanProducts = (value: VPPortfolio['public_products']) => Array.isArray(value) ? value : [];
+
 export function TabPublish({ portfolio, updatePortfolio }: { portfolio: VPPortfolio, updatePortfolio: (u: any) => void }) {
   const [slugInput, setSlugInput] = useState(portfolio.slug);
   const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null);
+  const premiumAccess = portfolio.is_paid || portfolio.admin_granted === true;
+  const publicProducts = cleanProducts(portfolio.public_products);
+  const updatePublicProducts = (products: PublicProduct[]) => updatePortfolio({ public_products: products });
 
   useEffect(() => {
     if (slugInput === portfolio.slug) {
@@ -70,6 +76,21 @@ export function TabPublish({ portfolio, updatePortfolio }: { portfolio: VPPortfo
             Save Slug
           </ScaleButton>
         )}
+      </div>
+
+      {/* PUBLIC PROFILE INTEGRATIONS */}
+      <div className="rounded-xl border border-brand-border bg-gray-50 p-5 dark:bg-[#111]">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-brand-text text-sm font-semibold">PUBLIC PROFILE INTEGRATIONS</h3>
+            <p className="mt-1 text-xs leading-5 text-brand-text-secondary">These are never enabled automatically. Premium owners choose exactly what appears on their public portfolio.</p>
+          </div>
+          {!premiumAccess && <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-500">Premium only</span>}
+        </div>
+        <div className={`mt-4 rounded-lg border p-4 ${premiumAccess ? 'border-brand-border bg-brand-surface' : 'border-brand-border/60 opacity-60'}`}>
+          <div className="flex items-center justify-between gap-3"><div><strong className="block text-sm text-brand-text">Products</strong><p className="mt-1 text-xs leading-5 text-brand-text-secondary">Add only product links you deliberately want visitors to see. For a private product, paste your private link yourself.</p></div><button type="button" disabled={!premiumAccess || publicProducts.length >= 12} onClick={() => updatePublicProducts([...publicProducts, { id: crypto.randomUUID(), title: '', description: '', url: '', enabled: true }])} className="shrink-0 rounded-lg bg-[#2563eb] px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">Add product</button></div>
+          <div className="mt-4 space-y-3">{publicProducts.length === 0 ? <p className="rounded-lg border border-dashed border-brand-border p-3 text-xs text-brand-text-secondary">No products are visible on this portfolio.</p> : publicProducts.map((product, index) => <div key={product.id} className="space-y-2 rounded-lg border border-brand-border p-3"><div className="flex items-center justify-between"><label className="flex items-center gap-2 text-xs font-bold text-brand-text"><input type="checkbox" disabled={!premiumAccess} checked={product.enabled} onChange={(event) => updatePublicProducts(publicProducts.map((entry, itemIndex) => itemIndex === index ? { ...entry, enabled: event.target.checked } : entry))} className="h-4 w-4 accent-[#2563eb]" />Visible</label><button type="button" disabled={!premiumAccess} onClick={() => updatePublicProducts(publicProducts.filter((_, itemIndex) => itemIndex !== index))} className="text-xs font-bold text-red-500 disabled:opacity-40">Remove</button></div><input value={product.title} disabled={!premiumAccess} onChange={(event) => updatePublicProducts(publicProducts.map((entry, itemIndex) => itemIndex === index ? { ...entry, title: event.target.value } : entry))} maxLength={80} placeholder="Product name" className="w-full rounded-md border border-brand-border bg-brand-bg p-2 text-sm text-brand-text outline-none" /><input value={product.url} disabled={!premiumAccess} onChange={(event) => updatePublicProducts(publicProducts.map((entry, itemIndex) => itemIndex === index ? { ...entry, url: event.target.value } : entry))} maxLength={2048} placeholder="Product link" className="w-full rounded-md border border-brand-border bg-brand-bg p-2 text-sm text-brand-text outline-none" /><textarea value={product.description || ''} disabled={!premiumAccess} onChange={(event) => updatePublicProducts(publicProducts.map((entry, itemIndex) => itemIndex === index ? { ...entry, description: event.target.value } : entry))} maxLength={280} rows={2} placeholder="Short description (optional)" className="w-full resize-none rounded-md border border-brand-border bg-brand-bg p-2 text-sm text-brand-text outline-none" /></div>)}</div>
+        </div>
       </div>
 
       {/* PUBLISH SECTION */}

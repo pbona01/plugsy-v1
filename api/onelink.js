@@ -235,8 +235,19 @@ function toPublicResponse(profile) {
       // Keep the editable follower total in the public payload.  It is safe
       // public profile metadata and must not be lost during publication.
       followerCount: settings.followerCount,
+      products: settings.products.filter((entry) => entry.enabled),
     },
   };
+}
+
+async function hasPremiumPublicFeatures(supabase, userId) {
+  const { data, error } = await supabase
+    .from("marketplace_seller_profiles")
+    .select("public_selling_enabled,public_plan_expires_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error || !data) return false;
+  return data.public_selling_enabled === true && Date.parse(data.public_plan_expires_at || "") > Date.now();
 }
 
 function getCloudinaryConfig() {
@@ -689,6 +700,10 @@ export async function handleDraftMutation(
         ? true
         : currentOwner.settings.published,
   };
+  const premiumFeatureRequested = payload.settings.products.length > 0;
+  if (premiumFeatureRequested && !(await hasPremiumPublicFeatures(supabase, actor.userId))) {
+    return sendError(res, 403, "ONELINK_PREMIUM_REQUIRED", "Marketplace Premium is required before adding products or a medal to your One Link.");
+  }
   let updateQuery = supabase
     .from("profiles")
     .update({

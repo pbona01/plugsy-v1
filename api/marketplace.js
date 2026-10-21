@@ -373,6 +373,76 @@ async function listingComments(req, res) {
   return res.status(201).json({ success: true, comment: { id: data.id, body: data.body, createdAt: data.created_at, author: { id: actor.userId, name: actor.name || "Plugsy member", username: null, avatar: null } } });
 }
 
+const reviewPayload = (body) => {
+  const rating = Number(body?.rating);
+  const review = text(body?.body);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5 || review.length < 2 || review.length > 1200) return null;
+  return { rating, body: review };
+};
+
+async function productReviews(req, res) {
+  const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
+  const listingId = text(req.query?.listingId || url.searchParams.get("listingId"));
+  if (!/^[0-9a-f-]{36}$/i.test(listingId)) return send(res, 400, "REVIEW_LISTING_INVALID", "Choose a valid product.");
+  const supabase = getClient();
+  const { data, error } = await supabase.from("marketplace_product_reviews")
+    .select("id,buyer_id,rating,body,seller_response,created_at")
+    .eq("listing_id", listingId).eq("status", "published").order("created_at", { ascending: false }).limit(50);
+  if (error && !["42P01", "PGRST205"].includes(error.code)) throw error;
+  const rows = data || [];
+  const buyerIds = [...new Set(rows.map((review) => text(review.buyer_id)).filter(Boolean))];
+  const { data: profiles, error: profileError } = buyerIds.length
+    ? await supabase.from("profile_directory_v1").select("clerk_id,username,full_name,profile_pic_url,image_url").in("clerk_id", buyerIds)
+    : { data: [], error: null };
+  if (profileError) throw profileError;
+  const profileById = new Map((profiles || []).map((profile) => [profile.clerk_id, profile]));
+  const reviews = rows.map((review) => {
+    const buyer = profileById.get(review.buyer_id);
+    return { id: review.id, rating: review.rating, body: review.body, sellerResponse: review.seller_response || null, createdAt: review.created_at, buyer: { name: buyer?.full_name || buyer?.username || "Verified buyer", avatar: buyer?.profile_pic_url || buyer?.image_url || null } };
+  });
+  const average = reviews.length ? reviews.reduce((sum, review) => sum + Number(review.rating), 0) / reviews.length : null;
+  return res.status(200).json({ success: true, reviews, summary: { count: reviews.length, average } });
+}
+
+async function submitProductReview(req, res, guest = false) {
+  const body = readBody(req);
+  const payload = reviewPayload(body);
+  if (!payload) return send(res, 400, "REVIEW_INVALID", "Choose a rating and write a review between 2 and 1,200 characters.");
+  const supabase = getClient();
+  let reviewRow;
+  if (guest) {
+    const deliveryToken = text(body.deliveryToken);
+    if (!/^[a-f0-9]{32}$/i.test(deliveryToken)) return send(res, 404, "REVIEW_PURCHASE_NOT_FOUND", "This review link is unavailable.");
+    const { data: purchase, error } = await supabase.from("marketplace_guest_orders").select("id,listing_id,seller_id").eq("delivery_token", deliveryToken).eq("payment_status", "paid").maybeSingle();
+    if (error) throw error;
+    if (!purchase) return send(res, 403, "REVIEW_PURCHASE_REQUIRED", "Only confirmed buyers can review this product.");
+    reviewRow = { listing_id: purchase.listing_id, seller_id: purchase.seller_id, guest_order_id: purchase.id, ...payload };
+  } else {
+    const actor = await requireActor(req, res);
+    if (!actor) return;
+    const orderId = text(body.orderId);
+    if (!/^[0-9a-f-]{36}$/i.test(orderId)) return send(res, 400, "REVIEW_ORDER_INVALID", "Choose a valid purchase.");
+    const { data: purchase, error } = await supabase.from("marketplace_orders").select("id,listing_id,seller_id,buyer_id").eq("id", orderId).eq("buyer_id", actor.userId).eq("payment_status", "paid").maybeSingle();
+    if (error) throw error;
+    if (!purchase) return send(res, 403, "REVIEW_PURCHASE_REQUIRED", "Only confirmed buyers can review this product.");
+    const { data: entitlement, error: entitlementError } = await supabase.from("marketplace_entitlements").select("id").eq("order_id", purchase.id).eq("buyer_id", actor.userId).eq("access_status", "active").maybeSingle();
+    if (entitlementError) throw entitlementError;
+    if (!entitlement) return send(res, 403, "REVIEW_PURCHASE_REQUIRED", "Refunded or revoked purchases cannot be reviewed.");
+    reviewRow = { listing_id: purchase.listing_id, seller_id: purchase.seller_id, order_id: purchase.id, buyer_id: actor.userId, ...payload };
+  }
+  const { data, error } = await supabase.from("marketplace_product_reviews")
+    .upsert({ ...reviewRow, status: "published", updated_at: new Date().toISOString() }, { onConflict: guest ? "guest_order_id" : "order_id" })
+    .select("id,rating,body,seller_response,created_at").single();
+  if (error) throw error;
+  // Guest purchasers do not have a Plugsy profile, while audit_events requires
+  // a real profile actor. Their verified review is still stored against the
+  // paid guest order; only account-buyer reviews are added to the audit log.
+  if (!guest) {
+    await supabase.from("marketplace_audit_events").insert({ actor_id: reviewRow.buyer_id, action: "product_review_submitted", entity_id: data.id, details: { listing_id: reviewRow.listing_id, rating: payload.rating, guest: false } });
+  }
+  return res.status(200).json({ success: true, review: data });
+}
+
 async function browse(req, res) {
   const supabase = getClient();
   const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
@@ -893,7 +963,7 @@ async function guestDelivery(req, res) {
   if (!order) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This delivery link is unavailable.");
   const deliveries = await resolveDeliveryItems(supabase, order.listing_id, order.listing_snapshot);
   if (!deliveries.length) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This product delivery is temporarily unavailable.");
-  return res.status(200).json({ success: true, deliveries, deliveryUrl: deliveries[0].deliveryUrl, deliveryLabel: deliveries[0].label });
+  return res.status(200).json({ success: true, title: order.listing_snapshot?.title || "Digital product", deliveries, deliveryUrl: deliveries[0].deliveryUrl, deliveryLabel: deliveries[0].label });
 }
 
 async function library(req, res) {
@@ -1603,6 +1673,9 @@ export default async function handler(req, res) {
     if (req.method === "GET" && action === "creator") return await creatorProfile(req, res);
     if (req.method === "GET" && action === "following") return await followingFeed(req, res);
     if ((req.method === "GET" || req.method === "POST") && action === "comments") return await listingComments(req, res);
+    if (req.method === "GET" && action === "reviews") return await productReviews(req, res);
+    if (req.method === "POST" && action === "submit-review") return await submitProductReview(req, res);
+    if (req.method === "POST" && action === "submit-guest-review") return await submitProductReview(req, res, true);
     if (req.method === "GET" && action === "admin-workspace") return await adminWorkspace(req, res);
     if (req.method === "GET" && action === "admin-dispute-details") return await adminDisputeDetails(req, res);
     if (req.method === "GET" && action === "resale-workspace") return await resaleWorkspace(req,res);

@@ -210,6 +210,14 @@ export interface OneLinkProject {
   invalid?: boolean;
 }
 
+export interface OneLinkProduct {
+  id: string;
+  title: string;
+  description: string;
+  url: string;
+  enabled: boolean;
+}
+
 export interface OneLinkSettings {
   schemaVersion: number;
   theme: 'dark-twilight' | 'cosmic-slate' | 'neon-sunset' | 'cyberpunk' | 'minimalist-light';
@@ -220,6 +228,7 @@ export interface OneLinkSettings {
   seoDescription: string;
   messageEnabled: boolean;
   followerCount: number;
+  products: OneLinkProduct[];
 }
 
 export interface OneLinkProfile {

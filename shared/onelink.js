@@ -9,6 +9,7 @@ export const ONE_LINK_LIMITS = Object.freeze({
   featuredLinks: 25,
   featuredTitle: 80,
   featuredDescription: 280,
+  products: 12,
   seoTitle: 70,
   seoDescription: 160,
   url: 2048,
@@ -59,6 +60,7 @@ const KNOWN_ONE_LINK_KEYS = new Set([
   "seoDescription",
   "messageEnabled",
   "followerCount",
+  "products",
 ]);
 
 const isPlainObject = (value) =>
@@ -327,6 +329,23 @@ export function normalizeOneLinkSettings(
     })
     .filter(Boolean);
 
+  const products = (Array.isArray(source.products) ? source.products : [])
+    .slice(0, ONE_LINK_LIMITS.products)
+    .map((entry, index) => {
+      if (!isPlainObject(entry)) return null;
+      const title = boundedString(entry.title, ONE_LINK_LIMITS.featuredTitle);
+      const url = normalizeExternalUrl(entry.url);
+      if (!title || !url) return null;
+      return {
+        id: normalizeItemId(entry.id, "product", index, `${title}:${url}:${index}`),
+        title,
+        description: boundedString(entry.description, ONE_LINK_LIMITS.featuredDescription),
+        url,
+        enabled: typeof entry.enabled === "boolean" ? entry.enabled : true,
+      };
+    })
+    .filter(Boolean);
+
   return {
     schemaVersion: ONE_LINK_SCHEMA_VERSION,
     theme,
@@ -352,6 +371,7 @@ export function normalizeOneLinkSettings(
       Number.isSafeInteger(source.followerCount) && source.followerCount >= 0
         ? source.followerCount
         : 0,
+    products,
   };
 }
 
@@ -596,6 +616,10 @@ export function validateOneLinkSavePayload(payload) {
       `Use no more than ${ONE_LINK_LIMITS.featuredLinks} featured links.`,
     );
   }
+  const sourceProducts = source.products === undefined ? [] : source.products;
+  if (!Array.isArray(sourceProducts) || sourceProducts.length > ONE_LINK_LIMITS.products) {
+    throw new OneLinkValidationError("ONELINK_PRODUCT_LIMIT", `Use no more than ${ONE_LINK_LIMITS.products} products.`);
+  }
 
   const seenIds = new Set();
   const seenUrls = new Set();
@@ -726,6 +750,20 @@ export function validateOneLinkSavePayload(payload) {
     };
   });
 
+  const products = sourceProducts.map((entry) => {
+    if (!isPlainObject(entry)) throw new OneLinkValidationError("ONELINK_PRODUCT_INVALID", "A product is invalid.");
+    assertObjectKeys(entry, new Set(["id", "title", "description", "url", "enabled"]), "ONELINK_PRODUCT_FIELDS_INVALID");
+    const id = validateId(entry.id, "Product");
+    if (seenIds.has(id)) throw new OneLinkValidationError("ONELINK_ITEM_ID_DUPLICATE", "One Link item IDs must be unique.");
+    seenIds.add(id);
+    const title = validateText(entry.title, "Product title", ONE_LINK_LIMITS.featuredTitle, { required: true });
+    const description = validateText(entry.description, "Product description", ONE_LINK_LIMITS.featuredDescription);
+    const url = normalizeExternalUrl(entry.url);
+    if (!url || typeof entry.enabled !== "boolean") throw new OneLinkValidationError("ONELINK_PRODUCT_INVALID", "Products need a valid link and visibility setting.");
+    rememberUrl(url);
+    return { id, title, description, url, enabled: entry.enabled };
+  });
+
   if (
     typeof source.published !== "boolean" ||
     typeof source.messageEnabled !== "boolean"
@@ -768,6 +806,7 @@ export function validateOneLinkSavePayload(payload) {
       ),
       messageEnabled: source.messageEnabled,
       followerCount: source.followerCount,
+      products,
     },
   };
 }

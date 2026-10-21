@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import handler, { allowedListingPayload, publicListing, trustScoreForSeller } from '../api/marketplace.js';
-import { buildMarketplaceEmail } from '../api/_marketplaceEmail.js';
+import { buildMarketplaceEmail, buildMarketplaceGuestEmail } from '../api/_marketplaceEmail.js';
 import { validateMarketplaceFile } from '../api/_marketplaceStorage.js';
 import { matchesMarketplaceMediaSignature, supportsAutomaticMediaReview } from '../api/_marketplaceScanner.js';
 
@@ -65,6 +65,36 @@ test('marketplace receipts escape product text and never include delivery secret
   assert.equal(email.html.includes('<img'),false);
   assert.ok(email.html.includes('&lt;img'));
   assert.equal(JSON.stringify(email).includes('SECRET_DELIVERY'),false);
+});
+
+test('guest receipt provides the private delivery and verified-review route without exposing another buyer', () => {
+  const email = buildMarketplaceGuestEmail({ recipient: 'guest@example.invalid', title: '<Book>', amount: 1000, reference: 'ORDER', deliveryToken: 'a'.repeat(32) });
+  assert.match(email.html, /guest-delivery\/a{32}/);
+  assert.match(email.text, /verified review/i);
+  assert.equal(email.html.includes('<Book>'), false);
+});
+
+test('product reviews are limited to paid purchases, with one review per order and no public table access', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const [migration, api, guestPage, productPage, library] = await Promise.all([
+    readFile(new URL('../supabase/migrations/20261021100000_marketplace_verified_product_reviews_v1.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/MarketplaceGuestDelivery.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/MarketplaceProductPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/Marketplace.tsx', import.meta.url), 'utf8'),
+  ]);
+  assert.match(migration, /order_id uuid unique/i);
+  assert.match(migration, /guest_order_id uuid unique/i);
+  assert.match(migration, /enable row level security/i);
+  assert.match(migration, /revoke all on public\.marketplace_product_reviews from public, anon, authenticated/i);
+  assert.match(api, /action === "submit-review"/);
+  assert.match(api, /action === "submit-guest-review"/);
+  assert.match(api, /access_status", "active"/);
+  assert.match(api, /delivery_token/);
+  assert.match(guestPage, /Payment confirmed · Receipt emailed/);
+  assert.match(guestPage, /ProductReviewPanel/);
+  assert.match(library, /Review this product/);
+  assert.match(productPage, /Verified buyer reviews/);
 });
 
 test('file validation rejects executable files, mismatched extensions and oversized uploads', () => {
