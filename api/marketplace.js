@@ -26,7 +26,10 @@ const isUrl = (value) => {
 };
 const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(value)) && text(value).length <= 254;
 const idempotencyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
-const automaticallyApproveUploads = () => text(process.env.MARKETPLACE_AUTO_APPROVE_UPLOADS).toLowerCase() === 'true';
+// Launch mode is deliberately frictionless: a completed, validated upload is
+// ready to sell immediately. Set this variable to "false" only if Plugsy
+// deliberately returns to manual/third-party file review in future.
+const automaticallyApproveUploads = () => text(process.env.MARKETPLACE_AUTO_APPROVE_UPLOADS).toLowerCase() !== 'false';
 const marketplaceRulesVersion = "marketplace-rules-v1";
 const verificationConsentVersion = "seller-identity-v2-2026-10-02";
 const listingFields = "id,seller_id,title,slug,summary,description,category,price,currency,cover_image_url,delivery_label,visibility,status,resale_policy,resale_commission_percent,published_at,created_at,updated_at";
@@ -641,6 +644,24 @@ async function publishListing(req, res) {
   if (nextStatus === 'published' && text(listing.description).length < 20) return send(res, 400, "PRODUCT_DESCRIPTION_REQUIRED", "Add a clear product description of at least 20 characters before publishing.");
   const deliveryItems = nextStatus === 'published' ? await loadListingDeliveries(supabase, listingId) : [];
   if (nextStatus === 'published' && !listing.delivery_url && !listing.delivery_asset_id && !deliveryItems.length) return send(res, 400, "DELIVERY_REQUIRED", "Add a delivery link or upload a product file before publishing.");
+  // Repair uploads that completed before automatic acceptance was enabled.
+  // Only completed/quarantined files are promoted; an upload still in progress
+  // never becomes downloadable through this path.
+  if (nextStatus === 'published' && automaticallyApproveUploads()) {
+    const assetIds = [...new Set([
+      listing.delivery_asset_id,
+      ...deliveryItems.filter((item) => item.kind === 'file').map((item) => item.asset_id),
+    ].filter(Boolean))];
+    if (assetIds.length) {
+      const { error: acceptanceError } = await supabase
+        .from('marketplace_assets')
+        .update({ status: 'clean', scan_reference: 'automatic_acceptance:validated_upload', scanned_at: new Date().toISOString() })
+        .in('id', assetIds)
+        .eq('seller_id', actor.userId)
+        .eq('status', 'quarantined');
+      if (acceptanceError) throw acceptanceError;
+    }
+  }
   if (nextStatus === 'published' && listing.delivery_asset_id) {
     let {data:asset,error}=await supabase.from('marketplace_assets').select('*').eq('id',listing.delivery_asset_id).eq('seller_id',actor.userId).maybeSingle();
     if(error) throw error;
@@ -1520,6 +1541,11 @@ async function fileMutation(req,res,action) {
   const {data:asset,error}=await supabase.from('marketplace_assets').select('*').eq('id',body.assetId).eq('seller_id',actor.userId).maybeSingle(); if(error) throw error;
   if (action === 'check-upload-review') {
     if (!asset) return send(res,404,'ASSET_NOT_FOUND','That uploaded file was not found.');
+    if (asset.status === 'quarantined' && automaticallyApproveUploads()) {
+      const { error: approvalError } = await supabase.from('marketplace_assets').update({ status:'clean', scan_reference:'automatic_acceptance:validated_upload', scanned_at:new Date().toISOString() }).eq('id', asset.id).eq('status', 'quarantined');
+      if (approvalError) throw approvalError;
+      return res.status(200).json({ success:true, status:'clean', automatic:true, message:'Uploaded and ready. You can publish this product now.' });
+    }
     if (asset.status !== 'quarantined') return res.status(200).json({ success:true, status:asset.status, automatic:false, message:asset.status === 'clean' ? 'This file has passed security review.' : 'This file did not pass security review.' });
     if (!text(asset.scan_reference).startsWith('virustotal_private:')) return res.status(200).json({ success:true, status:'quarantined', automatic:false, message:'This file is in the Marketplace review queue.' });
     let scan;

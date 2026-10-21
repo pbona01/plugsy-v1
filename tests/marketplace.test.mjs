@@ -138,11 +138,13 @@ test('automatic approval uses the antivirus provider while private VirusTotal an
   assert.match(scanner, /private_analysis_requires_review/);
 });
 
-test('free launch mode can automatically approve a validated upload with a server-only switch', async () => {
+test('launch mode automatically approves validated uploads and repairs legacy completed uploads', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8');
   assert.match(source, /MARKETPLACE_AUTO_APPROVE_UPLOADS/);
+  assert.match(source, /!== 'false'/);
   assert.match(source, /automatic_acceptance:validated_upload/);
+  assert.match(source, /Repair uploads that completed before automatic acceptance was enabled/);
   assert.match(source, /status:'clean'/);
 });
 

@@ -228,7 +228,7 @@ export default function SellerDashboard() {
       }
     }
     if (finalResult.status === "rejected") throw new Error(finalResult.message || "This file did not pass the security scan.");
-    setFileProgress((current) => ({ ...current, [item.id]: { percent: 100, phase: finalResult.status === "quarantined" ? (finalResult.automatic ? "Uploaded · scan continues automatically" : "Uploaded · awaiting admin security review") : "Uploaded · approved" } }));
+    setFileProgress((current) => ({ ...current, [item.id]: { percent: 100, phase: finalResult.status === "quarantined" ? "Uploaded · finalising" : "Uploaded · ready" } }));
     return finalResult;
     } catch (error: any) {
       setFileProgress((current) => ({
