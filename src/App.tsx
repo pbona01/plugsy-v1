@@ -83,6 +83,9 @@ const MarketplacePolicy = lazyWithDeploymentRecovery(() => import("./pages/Marke
 const AccountDeletion = lazyWithDeploymentRecovery(() => import("./pages/AccountDeletion"));
 const TermsOfService = lazyWithDeploymentRecovery(() => import("./pages/TermsOfService").then((module) => ({ default: module.TermsOfService })));
 const PrivacyPolicy = lazyWithDeploymentRecovery(() => import("./pages/PrivacyPolicy").then((module) => ({ default: module.PrivacyPolicy })));
+const BackgroundGradientAnimationDemo = lazyWithDeploymentRecovery(() => import("./components/effects/background-gradient-animation-demo").then((module) => ({ default: module.BackgroundGradientAnimationDemo })));
+const BackgroundComponentsDemo = lazyWithDeploymentRecovery(() => import("./components/effects/background-components-demo"));
+const DemoHeroGeometric = lazyWithDeploymentRecovery(() => import("./components/effects/shape-landing-hero-demo"));
 import Navbar from "./components/layout/Navbar";
 import DashboardBackButton from "./components/layout/DashboardBackButton";
 import Footer from "./components/layout/Footer";
@@ -533,6 +536,9 @@ function AppContent({
           />
           <Route path="/payment/callback" element={<PaymentCallback />} />
           <Route path="/portfolio/callback" element={<PortfolioCallback />} />
+          <Route path="/demo/gradient" element={<BackgroundGradientAnimationDemo />} />
+          <Route path="/demo/glow" element={<BackgroundComponentsDemo />} />
+          <Route path="/demo/shape" element={<DemoHeroGeometric />} />
           <Route 
             path="/vp/:slug" 
             element={

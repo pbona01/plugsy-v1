@@ -47,3 +47,15 @@ test("public portfolio rendering opts into a dark theme independent of the site 
   assert.match(themes, /midnight_chrome: \{ name: "Midnight Chrome"/);
   assert.doesNotMatch(themes, /bg: "#fff(?:fff)?"/i);
 });
+
+test("portfolio style previews keep their visual components without vendor demo copy", () => {
+  const page = read("src/pages/PublicPortfolio.tsx");
+  const geometric = read("src/components/effects/shape-landing-hero.tsx");
+  const preview = read("src/components/effects/shape-landing-hero-demo.tsx");
+
+  assert.match(page, /color_theme === "geometric"[\s\S]{0,500}HeroGeometric/);
+  assert.match(page, /color_theme === "teal_glow"[\s\S]{0,500}HeroGeometric[\s\S]{0,200}hideContent/);
+  for (const source of [page, geometric, preview]) {
+    assert.doesNotMatch(source, /kokonut|elevate your digital vision|crafting exceptional/i);
+  }
+});
