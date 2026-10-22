@@ -376,3 +376,27 @@
 body.dashboard-modal-open .mobile-global-nav {
   display: none !important;
 }
+
+/* Seller-uploaded file names can be much longer than a phone screen. */
+[aria-label="Product deliveries"] a,
+.marketplace-delivery-card {
+  min-width: 0;
+}
+
+[aria-label="Product deliveries"] a > span,
+.marketplace-delivery-card > span {
+  min-width: 0;
+  flex: 1 1 0%;
+}
+
+[aria-label="Product deliveries"] a > span > strong,
+.marketplace-delivery-card > span > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[aria-label="Product deliveries"] a > span > span,
+.marketplace-delivery-card > span > span {
+  overflow-wrap: anywhere;
+}
