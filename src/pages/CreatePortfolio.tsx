@@ -7,7 +7,7 @@ import {
   Video, Palette, Camera, Code2, 
   Layout, PenTool, TrendingUp, 
   Bot, ShieldCheck, Box, Loader2, ArrowLeft, CheckCircle2, ChevronDown, Play,
-  Wallet, CreditCard, Sparkles
+  Wallet, CreditCard, PanelsTopLeft
 } from "lucide-react";
 import { PortfolioOnboarding } from "../components/verification/PortfolioOnboarding";
 import { usePortfolioAccess } from "../lib/PortfolioContext";
@@ -241,8 +241,10 @@ export function CreatePortfolio() {
   };
   
   const initiatePayment = async () => {
+    const isCustomPortfolio = selectedPairId === "custom";
+    const portfolioSkills = isCustomPortfolio ? customSkillNames : selectedCategories;
     if (
-      selectedCategories.length === 0 ||
+      portfolioSkills.length === 0 ||
       !user ||
       paymentInFlightRef.current
     ) {
@@ -261,7 +263,7 @@ export function CreatePortfolio() {
 
     try {
       const token = await getToken();
-      const purchaseKey = `portfolio:${selectedPairId === "custom" ? "custom:" : ""}${selectedCategories.join(",")}`;
+      const purchaseKey = `portfolio:${isCustomPortfolio ? "custom:" : ""}${portfolioSkills.join(",")}`;
       const key = getStableIdempotencyKey(purchaseKey);
       const res = await fetch("/api/portfolio?action=purchase", {
         method: "POST",
@@ -271,9 +273,9 @@ export function CreatePortfolio() {
           "Idempotency-Key": key,
         },
         body: JSON.stringify({
-          categories: selectedCategories,
-          customPortfolio: selectedPairId === "custom",
-          customSkillNames: selectedPairId === "custom" ? customSkillNames : undefined,
+          categories: portfolioSkills,
+          customPortfolio: isCustomPortfolio,
+          customSkillNames: isCustomPortfolio ? customSkillNames : undefined,
           purchaseCode: purchaseCodeOwnerId ? purchaseCode.toUpperCase() : undefined,
         })
       });
@@ -307,7 +309,7 @@ export function CreatePortfolio() {
 
   const categorySelection = selectedCategories.length > 0 ? getCategoryConfig(JSON.stringify(selectedCategories)) : null;
   const selectedConfig = selectedPairId === "custom"
-    ? { ...(categorySelection || { name: "Custom Portfolio" }), name: `Custom Portfolio · ${[...selectedCategories.map((category) => CATEGORY_CONFIG[category]?.name || category), ...customSkillNames].join(", ")}`, price: 3500 }
+    ? { name: `Custom Portfolio · ${customSkillNames.join(", ")}`, price: 3500 }
     : categorySelection;
   // The database is the authority at checkout. This mirrors the same server
   // discounts so medal holders see the amount they will actually be charged.
@@ -328,8 +330,8 @@ export function CreatePortfolio() {
       showToast("That skill has already been added.", "error");
       return;
     }
-    if (customSkillNames.length >= 12) {
-      showToast("You can add up to 12 typed skills here.", "error");
+    if (customSkillNames.length >= 4) {
+      showToast("A custom portfolio can have up to four skills.", "error");
       return;
     }
     setSelectedPairId("custom");
@@ -399,38 +401,23 @@ export function CreatePortfolio() {
                   style={{ backgroundColor: selectedPairId === "custom" ? "rgba(239, 68, 68, 0.05)" : "var(--brand-card)", borderColor: selectedPairId === "custom" ? "#EF4444" : "var(--brand-border)", color: "var(--brand-text)" }}
                 >
                   <div className="flex w-full items-start gap-3">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border bg-brand-surface text-[#EF4444]" style={{ borderColor: "var(--brand-border)" }}><Sparkles className="h-6 w-6" /></div>
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border bg-brand-surface text-[#EF4444]" style={{ borderColor: "var(--brand-border)" }}><PanelsTopLeft className="h-6 w-6" /></div>
                     <div className="min-w-0 flex-1">
                       <h3 className="font-bold text-lg">Custom Portfolio</h3>
-                      <p className="mt-1 text-xs leading-relaxed text-brand-text-secondary">Choose up to four listed skills, then add your own specialties too.</p>
+                      <p className="mt-1 text-xs leading-relaxed text-brand-text-secondary">Add up to four skills in your own words. They become your portfolio sections.</p>
                     </div>
                     <span className="shrink-0 text-right"><span className="block text-sm font-black text-[#EF4444]">₦{applyMedalDiscount(3500).toLocaleString()}</span>{medalDiscount > 0 && <><span className="text-[10px] text-brand-text-secondary line-through">₦3,500</span><span className="ml-1 text-[10px] font-bold text-emerald-500">{Math.round(medalDiscount * 100)}% medal off</span></>}</span>
                   </div>
                   <div className="w-full">
-                    <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-brand-text-secondary">
-                      <span>Listed skills</span><span>{selectedPairId === "custom" ? selectedCategories.length : 0}/4</span>
-                    </div>
-                    <div className="grid max-h-56 grid-cols-2 gap-2 overflow-y-auto pr-1">
-                      {Object.entries(CATEGORY_CONFIG).filter(([key]) => key !== "three_d_design").map(([key, config]) => {
-                        const checked = selectedPairId === "custom" && selectedCategories.includes(key);
-                        const disabled = selectedPairId === "custom" && !checked && selectedCategories.length >= 4;
-                        return <button key={key} type="button" disabled={disabled || isSelectionConfirmed} onClick={() => {
-                          const current = selectedPairId === "custom" ? selectedCategories : [];
-                          const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
-                          setSelectedPairId(next.length ? "custom" : null);
-                          setSelectedCategories(next);
-                        }} className={`rounded-xl border px-3 py-2 text-left text-[11px] font-semibold transition ${checked ? "border-[#EF4444] bg-red-500/10 text-[#EF4444]" : "border-brand-border bg-brand-surface text-brand-text-secondary hover:text-brand-text"} disabled:cursor-not-allowed disabled:opacity-40`} aria-pressed={checked}>{config.name}</button>;
-                      })}
-                    </div>
-                    <div className="mt-3 rounded-xl border border-dashed border-brand-border bg-brand-surface/40 p-3">
-                      <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-brand-text-secondary"><span>Add your own skill</span><span>{customSkillNames.length}/12</span></div>
+                    <div className="rounded-xl border border-dashed border-brand-border bg-brand-surface/40 p-3">
+                      <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-brand-text-secondary"><span>Your skills</span><span>{customSkillNames.length}/4</span></div>
                       <div className="flex gap-2">
                         <input value={customSkillDraft} onChange={(event) => setCustomSkillDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addCustomSkill(); } }} maxLength={40} placeholder="e.g. Drone cinematography" className="min-w-0 flex-1 rounded-lg border border-brand-border bg-brand-card px-3 py-2 text-xs text-brand-text outline-none focus:border-[#EF4444]" />
-                        <button type="button" onClick={addCustomSkill} disabled={isSelectionConfirmed || !customSkillDraft.trim()} className="rounded-lg bg-[#EF4444] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#dc2626] disabled:cursor-not-allowed disabled:opacity-40">Add</button>
+                        <button type="button" onClick={addCustomSkill} disabled={isSelectionConfirmed || !customSkillDraft.trim() || customSkillNames.length >= 4} className="rounded-lg bg-[#EF4444] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#dc2626] disabled:cursor-not-allowed disabled:opacity-40">Add</button>
                       </div>
-                      {customSkillNames.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{customSkillNames.map((skill) => <button key={skill} type="button" onClick={() => setCustomSkillNames((names) => names.filter((name) => name !== skill))} className="rounded-full border border-[#EF4444]/40 bg-red-500/10 px-2 py-1 text-[10px] font-semibold text-[#EF4444] transition hover:bg-red-500/20" title="Remove skill">{skill} ×</button>)}</div>}
+                      {customSkillNames.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{customSkillNames.map((skill) => <button key={skill} type="button" onClick={() => setCustomSkillNames((names) => { const next = names.filter((name) => name !== skill); if (!next.length) setSelectedPairId(null); return next; })} className="rounded-full border border-[#EF4444]/40 bg-red-500/10 px-2 py-1 text-[10px] font-semibold text-[#EF4444] transition hover:bg-red-500/20" title="Remove skill">{skill} ×</button>)}</div>}
                     </div>
-                    {selectedPairId === "custom" && <p className="mt-2 text-[10px] text-brand-text-secondary">{selectedCategories.length ? "Your skills become editable sections after purchase, so you can change them whenever you need." : "Choose at least one listed skill, then add any specialties in your own words."}</p>}
+                    {selectedPairId === "custom" && <p className="mt-2 text-[10px] text-brand-text-secondary">{customSkillNames.length ? "These skills become editable sections after purchase, so you can change them whenever you need." : "Add at least one skill to continue."}</p>}
                   </div>
                 </motion.div>
                 {PAIRED_CATEGORIES.map((pair) => {
@@ -906,7 +893,7 @@ export function CreatePortfolio() {
 
       {/* CONFIRMATION DRAWER */}
       <AnimatePresence>
-        {selectedCategories.length > 0 && !isSelectionConfirmed && (
+        {(selectedPairId === "custom" ? customSkillNames.length > 0 : selectedCategories.length > 0) && !isSelectionConfirmed && (
           <motion.div 
             initial={{ y: 150, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -918,7 +905,7 @@ export function CreatePortfolio() {
               <div className="flex-1 text-center sm:text-left">
                 <h3 className="font-bold text-xl mb-1 tracking-tight" style={{ color: "var(--brand-text)" }}>Confirm Selection</h3>
                 <p className="text-sm font-medium" style={{ color: "var(--brand-text-secondary)" }}>
-                  {selectedCategories.length} {selectedCategories.length === 1 ? 'discipline' : 'disciplines'} selected for ₦{selectedConfig?.price.toLocaleString()}
+                  {selectedPairId === "custom" ? customSkillNames.length : selectedCategories.length} {((selectedPairId === "custom" ? customSkillNames.length : selectedCategories.length) === 1) ? 'skill' : 'skills'} selected for ₦{selectedConfig?.price.toLocaleString()}
                 </p>
               </div>
               <LiquidGlass

@@ -74,10 +74,11 @@ test('guest receipt provides the private delivery and verified-review route with
   assert.equal(email.html.includes('<Book>'), false);
 });
 
-test('product reviews are limited to paid purchases, with one review per order and no public table access', async () => {
+test('product reviews are limited to paid purchases, persist once per buyer and product, and never expose the table directly', async () => {
   const { readFile } = await import('node:fs/promises');
-  const [migration, api, guestPage, productPage, library] = await Promise.all([
+  const [migration, onePerBuyerMigration, api, guestPage, productPage, library] = await Promise.all([
     readFile(new URL('../supabase/migrations/20261021100000_marketplace_verified_product_reviews_v1.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../supabase/migrations/20261022090000_marketplace_one_review_per_buyer_product_v1.sql', import.meta.url), 'utf8'),
     readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/pages/MarketplaceGuestDelivery.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/pages/MarketplaceProductPage.tsx', import.meta.url), 'utf8'),
@@ -85,6 +86,8 @@ test('product reviews are limited to paid purchases, with one review per order a
   ]);
   assert.match(migration, /order_id uuid unique/i);
   assert.match(migration, /guest_order_id uuid unique/i);
+  assert.match(onePerBuyerMigration, /reviewer_key text/i);
+  assert.match(onePerBuyerMigration, /marketplace_product_reviews_one_reviewer_per_listing_v1_idx/i);
   assert.match(migration, /enable row level security/i);
   assert.match(migration, /revoke all on public\.marketplace_product_reviews from public, anon, authenticated/i);
   assert.match(api, /action === "submit-review"/);
@@ -93,6 +96,7 @@ test('product reviews are limited to paid purchases, with one review per order a
   assert.match(api, /delivery_token/);
   assert.match(guestPage, /Payment confirmed · Receipt emailed/);
   assert.match(guestPage, /ProductReviewPanel/);
+  assert.match(library, /BuyerReview/);
   assert.match(library, /Review this product/);
   assert.match(productPage, /Verified buyer reviews/);
 });

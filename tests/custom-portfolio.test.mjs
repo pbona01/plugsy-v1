@@ -11,9 +11,11 @@ test("custom portfolio is first, supports typed skills, and has a ₦3,500 base 
 
   assert.notEqual(customCard, -1);
   assert.ok(customCard < pairedCards, "custom offer should be first in the selector");
-  assert.match(page, /Add your own skill/);
+  assert.match(page, /Your skills/);
   assert.match(page, /customSkillNames/);
-  assert.match(page, /selectedCategories\.length >= 4/);
+  assert.match(page, /customSkillNames\.length >= 4/);
+  assert.match(page, /PanelsTopLeft/);
+  assert.doesNotMatch(page, /Listed skills/);
   assert.match(page, /price: 3500/);
   assert.match(page, /medalTier === "Gold" \? 0\.5/);
   assert.match(page, /medalTier === "Silver" \? 0\.3/);
@@ -24,9 +26,11 @@ test("custom portfolio is first, supports typed skills, and has a ₦3,500 base 
 test("custom portfolio price, category limit, and debit are enforced by the server RPC", () => {
   const api = read("api/_walletCommerce.js");
   const migration = read("supabase/migrations/20261020110000_custom_portfolio_package_v1.sql");
+  const manualSkillsMigration = read("supabase/migrations/20261022103000_custom_portfolio_manual_skills_v1.sql");
 
   assert.match(api, /normalizeCustomPortfolioSkills/);
   assert.match(api, /customSkillNames/);
+  assert.match(api, /categories\.length > \(customPortfolio \? 4 : 3\)/);
   assert.match(api, /customPortfolio \? "purchase_custom_portfolio_wallet_v1"/);
   assert.match(migration, /values \('custom_portfolio', 'Custom Portfolio', 3500, true\)/);
   assert.match(migration, /'custom_portfolio' = any\(p_categories\)/);
@@ -34,6 +38,8 @@ test("custom portfolio price, category limit, and debit are enforced by the serv
   assert.match(migration, /update public\.profiles set balance = v_balance_after/);
   assert.match(migration, /wallet_operation_idempotency_v2/);
   assert.match(migration, /grant execute on function public\.purchase_custom_portfolio_wallet_v1[\s\S]*to service_role/);
+  assert.match(manualSkillsMigration, /array_length\(p_categories, 1\), 0\) not between 1 and 4/);
+  assert.match(manualSkillsMigration, /char_length\(pg_catalog\.btrim\(skill\)\) not between 2 and 40/);
 });
 
 test("public portfolio rendering opts into a dark theme independent of the site theme", () => {

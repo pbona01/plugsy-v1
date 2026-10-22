@@ -41,8 +41,7 @@ const normalizeCustomPortfolioSkills = (value) => {
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    })
-    .slice(0, 12);
+    });
 };
 
 const notifyTelegram = async (message) => {
@@ -704,19 +703,20 @@ export async function handlePortfolioWalletPurchase(req, res) {
   const key = requireIdempotency(req, res, context.body);
   if (!key) return;
 
-  const categories = Array.isArray(context.body.categories)
+  const requestedCategories = Array.isArray(context.body.categories)
     ? [...new Set(context.body.categories.map(text).filter(Boolean))]
     : [];
   const customPortfolio = context.body.customPortfolio === true;
   const customSkillNames = customPortfolio
     ? normalizeCustomPortfolioSkills(context.body.customSkillNames)
     : [];
+  const categories = customPortfolio ? customSkillNames : requestedCategories;
 
   if (
     categories.length === 0 ||
     categories.length > (customPortfolio ? 4 : 3) ||
     (!customPortfolio && categories.includes("custom_portfolio")) ||
-    categories.some((category) => !/^[a-z0-9_]{3,64}$/.test(category))
+    (!customPortfolio && categories.some((category) => !/^[a-z0-9_]{3,64}$/.test(category)))
   ) {
     return send(
       res,
@@ -799,7 +799,9 @@ export async function handlePortfolioWalletPurchase(req, res) {
     return send(res, 503, "PORTFOLIO_CATEGORIES_LOAD_FAILED", "The portfolio categories could not be prepared.")
   }
   const existingNames = new Set((existingCategories || []).map((category) => lower(category.name)))
-  const portfolioSectionNames = [...categories.map(portfolioCategoryLabel), ...customSkillNames];
+  const portfolioSectionNames = customPortfolio
+    ? customSkillNames
+    : categories.map(portfolioCategoryLabel);
   const missingCategories = portfolioSectionNames
     .filter((category) => !existingNames.has(lower(category)))
     .map((category, index) => ({

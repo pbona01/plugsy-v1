@@ -413,13 +413,15 @@ async function submitProductReview(req, res, guest = false) {
   if (!payload) return send(res, 400, "REVIEW_INVALID", "Choose a rating and write a review between 2 and 1,200 characters.");
   const supabase = getClient();
   let reviewRow;
+  let existingReviewQuery;
   if (guest) {
     const deliveryToken = text(body.deliveryToken);
     if (!/^[a-f0-9]{32}$/i.test(deliveryToken)) return send(res, 404, "REVIEW_PURCHASE_NOT_FOUND", "This review link is unavailable.");
     const { data: purchase, error } = await supabase.from("marketplace_guest_orders").select("id,listing_id,seller_id").eq("delivery_token", deliveryToken).eq("payment_status", "paid").maybeSingle();
     if (error) throw error;
     if (!purchase) return send(res, 403, "REVIEW_PURCHASE_REQUIRED", "Only confirmed buyers can review this product.");
-    reviewRow = { listing_id: purchase.listing_id, seller_id: purchase.seller_id, guest_order_id: purchase.id, ...payload };
+    reviewRow = { listing_id: purchase.listing_id, seller_id: purchase.seller_id, guest_order_id: purchase.id, reviewer_key: `guest:${purchase.id}`, ...payload };
+    existingReviewQuery = supabase.from("marketplace_product_reviews").select("id,rating,body,seller_response,created_at").eq("guest_order_id", purchase.id).maybeSingle();
   } else {
     const actor = await requireActor(req, res);
     if (!actor) return;
@@ -431,10 +433,14 @@ async function submitProductReview(req, res, guest = false) {
     const { data: entitlement, error: entitlementError } = await supabase.from("marketplace_entitlements").select("id").eq("order_id", purchase.id).eq("buyer_id", actor.userId).eq("access_status", "active").maybeSingle();
     if (entitlementError) throw entitlementError;
     if (!entitlement) return send(res, 403, "REVIEW_PURCHASE_REQUIRED", "Refunded or revoked purchases cannot be reviewed.");
-    reviewRow = { listing_id: purchase.listing_id, seller_id: purchase.seller_id, order_id: purchase.id, buyer_id: actor.userId, ...payload };
+    reviewRow = { listing_id: purchase.listing_id, seller_id: purchase.seller_id, order_id: purchase.id, buyer_id: actor.userId, reviewer_key: `account:${actor.userId}`, ...payload };
+    existingReviewQuery = supabase.from("marketplace_product_reviews").select("id,rating,body,seller_response,created_at").eq("listing_id", purchase.listing_id).eq("buyer_id", actor.userId).maybeSingle();
   }
+  const { data: existingReview, error: existingReviewError } = await existingReviewQuery;
+  if (existingReviewError && !["42P01", "PGRST205"].includes(existingReviewError.code)) throw existingReviewError;
+  if (existingReview) return res.status(200).json({ success: true, alreadyReviewed: true, review: existingReview });
   const { data, error } = await supabase.from("marketplace_product_reviews")
-    .upsert({ ...reviewRow, status: "published", updated_at: new Date().toISOString() }, { onConflict: guest ? "guest_order_id" : "order_id" })
+    .insert({ ...reviewRow, status: "published", updated_at: new Date().toISOString() })
     .select("id,rating,body,seller_response,created_at").single();
   if (error) throw error;
   // Guest purchasers do not have a Plugsy profile, while audit_events requires
@@ -979,12 +985,14 @@ async function guestDelivery(req, res) {
   const token = text(req.query?.token || url.searchParams.get("token"));
   if (!/^[a-f0-9]{32}$/i.test(token)) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This delivery link is unavailable.");
   const supabase = getClient();
-  const { data: order, error } = await supabase.from("marketplace_guest_orders").select("listing_id,listing_snapshot").eq("delivery_token", token).eq("payment_status", "paid").maybeSingle();
+  const { data: order, error } = await supabase.from("marketplace_guest_orders").select("id,listing_id,listing_snapshot").eq("delivery_token", token).eq("payment_status", "paid").maybeSingle();
   if (error) throw error;
   if (!order) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This delivery link is unavailable.");
   const deliveries = await resolveDeliveryItems(supabase, order.listing_id, order.listing_snapshot);
   if (!deliveries.length) return send(res, 404, "GUEST_DELIVERY_NOT_FOUND", "This product delivery is temporarily unavailable.");
-  return res.status(200).json({ success: true, title: order.listing_snapshot?.title || "Digital product", deliveries, deliveryUrl: deliveries[0].deliveryUrl, deliveryLabel: deliveries[0].label });
+  const { data: review, error: reviewError } = await supabase.from("marketplace_product_reviews").select("id,rating,body,seller_response,created_at").eq("guest_order_id", order.id).maybeSingle();
+  if (reviewError && !["42P01", "PGRST205"].includes(reviewError.code)) throw reviewError;
+  return res.status(200).json({ success: true, title: order.listing_snapshot?.title || "Digital product", deliveries, deliveryUrl: deliveries[0].deliveryUrl, deliveryLabel: deliveries[0].label, review: review || null });
 }
 
 async function library(req, res) {
@@ -998,7 +1006,13 @@ async function library(req, res) {
     .eq("order.payment_status", "paid")
     .order("granted_at", { ascending: false });
   if (error) throw error;
-  return res.status(200).json({ success: true, entitlements: data || [] });
+  const listingIds = [...new Set((data || []).map((entry) => entry.listing?.id).filter(Boolean))];
+  const { data: reviews, error: reviewError } = listingIds.length
+    ? await supabase.from("marketplace_product_reviews").select("id,listing_id,rating,body,seller_response,created_at").eq("buyer_id", actor.userId).eq("status", "published").in("listing_id", listingIds)
+    : { data: [], error: null };
+  if (reviewError && !["42P01", "PGRST205"].includes(reviewError.code)) throw reviewError;
+  const reviewByListing = new Map((reviews || []).map((review) => [review.listing_id, review]));
+  return res.status(200).json({ success: true, entitlements: (data || []).map((entry) => ({ ...entry, review: reviewByListing.get(entry.listing?.id) || null })) });
 }
 
 async function delivery(req, res) {
