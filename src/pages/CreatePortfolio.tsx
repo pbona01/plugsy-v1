@@ -244,7 +244,7 @@ export function CreatePortfolio() {
     const isCustomPortfolio = selectedPairId === "custom";
     const portfolioSkills = isCustomPortfolio ? customSkillNames : selectedCategories;
     if (
-      portfolioSkills.length === 0 ||
+      (!isCustomPortfolio && portfolioSkills.length === 0) ||
       !user ||
       paymentInFlightRef.current
     ) {
@@ -263,7 +263,7 @@ export function CreatePortfolio() {
 
     try {
       const token = await getToken();
-      const purchaseKey = `portfolio:${isCustomPortfolio ? "custom:" : ""}${portfolioSkills.join(",")}`;
+      const purchaseKey = `portfolio:${isCustomPortfolio ? "custom:" : ""}${portfolioSkills.join(",") || "setup-later"}`;
       const key = getStableIdempotencyKey(purchaseKey);
       const res = await fetch("/api/portfolio?action=purchase", {
         method: "POST",
@@ -309,7 +309,7 @@ export function CreatePortfolio() {
 
   const categorySelection = selectedCategories.length > 0 ? getCategoryConfig(JSON.stringify(selectedCategories)) : null;
   const selectedConfig = selectedPairId === "custom"
-    ? { name: `Custom Portfolio · ${customSkillNames.join(", ")}`, price: 3500 }
+    ? { name: customSkillNames.length ? `Custom Portfolio · ${customSkillNames.join(", ")}` : "Custom Portfolio · Set up later", price: 3500 }
     : categorySelection;
   // The database is the authority at checkout. This mirrors the same server
   // discounts so medal holders see the amount they will actually be charged.
@@ -417,8 +417,16 @@ export function CreatePortfolio() {
                       </div>
                       {customSkillNames.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{customSkillNames.map((skill) => <button key={skill} type="button" onClick={() => setCustomSkillNames((names) => { const next = names.filter((name) => name !== skill); if (!next.length) setSelectedPairId(null); return next; })} className="rounded-full border border-[#EF4444]/40 bg-red-500/10 px-2 py-1 text-[10px] font-semibold text-[#EF4444] transition hover:bg-red-500/20" title="Remove skill">{skill} ×</button>)}</div>}
                     </div>
-                    {selectedPairId === "custom" && <p className="mt-2 text-[10px] text-brand-text-secondary">{customSkillNames.length ? "These skills become editable sections after purchase, so you can change them whenever you need." : "Add at least one skill to continue."}</p>}
+                    {selectedPairId === "custom" && <p className="mt-2 text-[10px] text-brand-text-secondary">{customSkillNames.length ? "These skills become editable sections after purchase, so you can change them whenever you need." : "You can continue without skills and add or edit them from your portfolio builder after payment."}</p>}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPairId(selectedPairId === "custom" ? null : "custom")}
+                    disabled={isSelectionConfirmed}
+                    className={`w-full rounded-xl border px-4 py-2.5 text-xs font-bold transition ${selectedPairId === "custom" ? "border-[#EF4444] bg-[#EF4444] text-white" : "border-brand-border bg-brand-surface text-brand-text-secondary hover:border-[#EF4444]/60 hover:text-brand-text"}`}
+                  >
+                    {selectedPairId === "custom" ? "Selected" : "Choose Custom Portfolio"}
+                  </button>
                 </motion.div>
                 {PAIRED_CATEGORIES.map((pair) => {
                   const isSelected = selectedPairId === pair.id;
@@ -893,7 +901,7 @@ export function CreatePortfolio() {
 
       {/* CONFIRMATION DRAWER */}
       <AnimatePresence>
-        {(selectedPairId === "custom" ? customSkillNames.length > 0 : selectedCategories.length > 0) && !isSelectionConfirmed && (
+        {(selectedPairId === "custom" || selectedCategories.length > 0) && !isSelectionConfirmed && (
           <motion.div 
             initial={{ y: 150, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -905,7 +913,9 @@ export function CreatePortfolio() {
               <div className="flex-1 text-center sm:text-left">
                 <h3 className="font-bold text-xl mb-1 tracking-tight" style={{ color: "var(--brand-text)" }}>Confirm Selection</h3>
                 <p className="text-sm font-medium" style={{ color: "var(--brand-text-secondary)" }}>
-                  {selectedPairId === "custom" ? customSkillNames.length : selectedCategories.length} {((selectedPairId === "custom" ? customSkillNames.length : selectedCategories.length) === 1) ? 'skill' : 'skills'} selected for ₦{selectedConfig?.price.toLocaleString()}
+                  {selectedPairId === "custom" && customSkillNames.length === 0
+                    ? `No skills yet — set them up after payment · ₦${selectedConfig?.price.toLocaleString()}`
+                    : `${selectedPairId === "custom" ? customSkillNames.length : selectedCategories.length} ${((selectedPairId === "custom" ? customSkillNames.length : selectedCategories.length) === 1) ? 'skill' : 'skills'} selected for ₦${selectedConfig?.price.toLocaleString()}`}
                 </p>
               </div>
               <LiquidGlass

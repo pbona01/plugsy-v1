@@ -713,7 +713,7 @@ export async function handlePortfolioWalletPurchase(req, res) {
   const categories = customPortfolio ? customSkillNames : requestedCategories;
 
   if (
-    categories.length === 0 ||
+    (!customPortfolio && categories.length === 0) ||
     categories.length > (customPortfolio ? 4 : 3) ||
     (!customPortfolio && categories.includes("custom_portfolio")) ||
     (!customPortfolio && categories.some((category) => !/^[a-z0-9_]{3,64}$/.test(category)))
