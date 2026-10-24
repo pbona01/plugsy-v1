@@ -4,14 +4,24 @@ import { ArrowRight, CheckCircle2, Loader2, Star, UserPlus } from "lucide-react"
 import toast from "react-hot-toast";
 import { ProductReviewPanel } from "../components/marketplace/ProductReviewPanel";
 
-type DeliveryItem = { id: string; deliveryUrl: string; label: string; description?: string; kind: "file" | "link"; contentType?: string };
+type DeliveryItem = { id: string; deliveryUrl: string; label: string; description?: string; kind: "file" | "link"; contentType?: string; sizeBytes?: number | null };
 type DeliveryPayload = { title?: string; deliveries: DeliveryItem[]; review?: { rating: number; body: string; seller_response?: string | null } | null };
+
+const formatFileSize = (sizeBytes?: number | null) => {
+  const bytes = Number(sizeBytes || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return null;
+  const units = ["B", "KB", "MB", "GB"];
+  const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const amount = bytes / 1024 ** unit;
+  return `${amount >= 10 || unit === 0 ? Math.round(amount) : amount.toFixed(1)} ${units[unit]}`;
+};
 
 function DeliveryCard({ item, index }: { item: DeliveryItem; index: number }) {
   const label = item.label || `Product item ${index + 1}`;
   const action = item.kind === "file" ? (item.contentType?.startsWith("video/") ? "Watch video" : "Download file") : "Open lesson";
+  const fileSize = item.kind === "file" ? formatFileSize(item.sizeBytes) : null;
   return <a href={item.deliveryUrl} target="_blank" rel="noreferrer" className="marketplace-delivery-card flex items-center justify-between gap-4 rounded-2xl border border-brand-border bg-brand-bg p-4 transition hover:border-brand-accent">
-    <span className="min-w-0"><strong className="block text-sm" title={label}>{label}</strong>{item.description && <span className="mt-1 block whitespace-pre-wrap text-xs leading-5 text-brand-text-secondary">{item.description}</span>}<span className="mt-2 block text-[10px] font-black uppercase tracking-wider text-brand-accent">{action}</span></span>
+    <span className="min-w-0"><strong className="block text-sm" title={label}>{label}</strong>{item.description && <span className="mt-1 block whitespace-pre-wrap text-xs leading-5 text-brand-text-secondary">{item.description}</span>}{fileSize && <span className="mt-1 block text-xs font-semibold text-brand-text-secondary">File size: {fileSize}</span>}<span className="mt-2 block text-[10px] font-black uppercase tracking-wider text-brand-accent">{action}</span></span>
     <ArrowRight className="shrink-0 text-brand-accent" size={17} />
   </a>;
 }

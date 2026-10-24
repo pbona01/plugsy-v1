@@ -971,11 +971,11 @@ async function resolveDeliveryItems(supabase, listingId, snapshot) {
   const deliveries = [];
   for (const row of source) {
     if (row.kind === 'link') { if (isUrl(row.delivery_url)) deliveries.push({ id: row.id || row.delivery_url, label: row.label, description: row.description || '', kind: 'link', deliveryUrl: row.delivery_url }); continue; }
-    const { data: asset, error } = await supabase.from('marketplace_assets').select('id,object_key,status,original_name,content_type').eq('id', row.asset_id).maybeSingle();
+    const { data: asset, error } = await supabase.from('marketplace_assets').select('id,object_key,status,original_name,content_type,actual_size,expected_size').eq('id', row.asset_id).maybeSingle();
     if (error) throw error;
     if (!asset) continue;
     if (asset.status !== 'clean') continue;
-    deliveries.push({ id: row.id || asset.id, label: row.label || asset.original_name, description: row.description || '', kind: 'file', contentType: asset.content_type || '', deliveryUrl: await createDownloadUrl(asset), originalName: asset.original_name });
+    deliveries.push({ id: row.id || asset.id, label: row.label || asset.original_name, description: row.description || '', kind: 'file', contentType: asset.content_type || '', sizeBytes: Number(asset.actual_size || asset.expected_size || 0) || null, deliveryUrl: await createDownloadUrl(asset), originalName: asset.original_name });
   }
   return deliveries;
 }

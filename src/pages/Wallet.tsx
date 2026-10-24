@@ -52,6 +52,19 @@ const getWithdrawalFee = (amount: number): number => {
   return 5000;
 };
 
+// Credits may come from a normal top-up or an authorised account adjustment.
+// Keep this in one place so transaction history never renders a credit as money leaving the wallet.
+const isCreditTransaction = (type: unknown): boolean =>
+  ['fund', 'p2p_receive', 'commission', 'marketplace_sale', 'admin_credit'].includes(String(type || '').toLowerCase());
+
+const transactionLabel = (transaction: any): string => {
+  if (transaction?.description) return transaction.description;
+  if (transaction?.type === 'fund') return 'Wallet Top-up';
+  if (transaction?.type === 'admin_credit') return 'Wallet Credit';
+  if (transaction?.type === 'funding_conversion') return 'Moved to Withdrawable Balance';
+  return transaction?.type || 'Wallet transaction';
+};
+
 interface WalletProps {
   showHistoryOnly?: boolean;
 }
@@ -869,7 +882,7 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
     
     if (filterType === 'all') return matchesSearch;
     if (filterType === 'credit') {
-      return matchesSearch && (tx.type === 'fund' || tx.type === 'p2p_receive');
+      return matchesSearch && isCreditTransaction(tx.type);
     }
     if (filterType === 'debit') {
       return matchesSearch && (tx.type === 'withdraw' || tx.type === 'p2p_send' || tx.type === 'purchase');
@@ -937,28 +950,28 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           ) : (
             <div className="divide-y divide-brand-border">
               {filteredTransactions.map((tx) => {
-                const isCredit = tx.type === 'fund' || tx.type === 'p2p_receive' || tx.type === 'commission' || tx.type === 'marketplace_sale';
+                const isCredit = isCreditTransaction(tx.type);
                 return (
                   <div key={tx.id} className="p-4 sm:p-5 flex items-center justify-between hover:bg-brand-background transition-colors">
                     <div className="flex items-center gap-3.5">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                        tx.type === 'fund' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
+                        (tx.type === 'fund' || tx.type === 'admin_credit') ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
                         tx.type === 'p2p_receive' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
                         tx.type === 'funding_conversion' ? 'bg-violet-500/10 text-violet-500 border border-violet-500/20' :
                         tx.type === 'withdraw' ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
                         tx.type === 'p2p_send' ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20' :
                         'bg-brand-text/5 text-brand-text-secondary border border-brand-border'
                       }`}>
-                        {tx.type === 'fund' && <ArrowDownLeft size={18} />}
+                        {(tx.type === 'fund' || tx.type === 'admin_credit') && <ArrowDownLeft size={18} />}
                         {tx.type === 'p2p_receive' && <ArrowDownLeft size={18} className="rotate-[90deg]" />}
                         {tx.type === 'funding_conversion' && <ArrowUpRight size={18} />}
                         {tx.type === 'withdraw' && <ArrowUpRight size={18} />}
                         {tx.type === 'p2p_send' && <ArrowUpRight size={18} className="rotate-[-45deg]" />}
-                        {tx.type !== 'fund' && tx.type !== 'p2p_receive' && tx.type !== 'funding_conversion' && tx.type !== 'withdraw' && tx.type !== 'p2p_send' && <ShoppingCart size={18} />}
+                        {tx.type !== 'fund' && tx.type !== 'admin_credit' && tx.type !== 'p2p_receive' && tx.type !== 'funding_conversion' && tx.type !== 'withdraw' && tx.type !== 'p2p_send' && <ShoppingCart size={18} />}
                       </div>
                       <div>
                         <p className="font-bold text-sm sm:text-base text-brand-text-primary capitalize">
-                          {tx.description || (tx.type === 'fund' ? 'Wallet Top-up' : tx.type === 'funding_conversion' ? 'Moved to Withdrawable Balance' : tx.type)}
+                          {transactionLabel(tx)}
                         </p>
                         <p className="text-[10px] font-mono text-brand-text-secondary mt-1 flex items-center gap-1.5 uppercase">
                           <span>{getRelativeTime(tx.created_at)}</span>
@@ -1305,28 +1318,28 @@ export const Wallet = ({ showHistoryOnly = false }: WalletProps) => {
           ) : (
             <div className="divide-y divide-brand-border">
               {transactions.slice(0, 20).map((tx) => {
-                const isCredit = tx.type === 'fund' || tx.type === 'p2p_receive' || tx.type === 'commission' || tx.type === 'marketplace_sale';
+                const isCredit = isCreditTransaction(tx.type);
                 return (
                   <div key={tx.id} className="p-4 sm:p-5 flex items-center justify-between hover:bg-brand-background/40 transition-colors">
                     <div className="flex items-center gap-3.5">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                        tx.type === 'fund' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
+                        (tx.type === 'fund' || tx.type === 'admin_credit') ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
                         tx.type === 'p2p_receive' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
                         tx.type === 'funding_conversion' ? 'bg-violet-500/10 text-violet-500 border border-violet-500/20' :
                         tx.type === 'withdraw' ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
                         tx.type === 'p2p_send' ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20' :
                         'bg-brand-text/5 text-brand-text-secondary border border-brand-border'
                       }`}>
-                        {tx.type === 'fund' && <ArrowDownLeft size={18} />}
+                        {(tx.type === 'fund' || tx.type === 'admin_credit') && <ArrowDownLeft size={18} />}
                         {tx.type === 'p2p_receive' && <ArrowDownLeft size={18} className="rotate-[90deg]" />}
                         {tx.type === 'funding_conversion' && <ArrowUpRight size={18} />}
                         {tx.type === 'withdraw' && <ArrowUpRight size={18} />}
                         {tx.type === 'p2p_send' && <ArrowUpRight size={18} className="rotate-[-45deg]" />}
-                        {tx.type !== 'fund' && tx.type !== 'p2p_receive' && tx.type !== 'funding_conversion' && tx.type !== 'withdraw' && tx.type !== 'p2p_send' && <ShoppingCart size={18} />}
+                        {tx.type !== 'fund' && tx.type !== 'admin_credit' && tx.type !== 'p2p_receive' && tx.type !== 'funding_conversion' && tx.type !== 'withdraw' && tx.type !== 'p2p_send' && <ShoppingCart size={18} />}
                       </div>
                       <div>
                         <p className="font-bold text-sm text-brand-text-primary capitalize">
-                          {tx.description || (tx.type === 'fund' ? 'Wallet Top-up' : tx.type === 'funding_conversion' ? 'Moved to Withdrawable Balance' : tx.type)}
+                          {transactionLabel(tx)}
                         </p>
                         <p className="text-[10px] text-brand-text-secondary mt-0.5">
                           {getRelativeTime(tx.created_at)}

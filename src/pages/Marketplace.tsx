@@ -130,6 +130,15 @@ const emptyForm = {
   resaleCommissionPercent: "",
 };
 
+const formatDeliveryFileSize = (sizeBytes?: number | null) => {
+  const bytes = Number(sizeBytes || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return null;
+  const units = ["B", "KB", "MB", "GB"];
+  const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const amount = bytes / 1024 ** unit;
+  return `${amount >= 10 || unit === 0 ? Math.round(amount) : amount.toFixed(1)} ${units[unit]}`;
+};
+
 export default function Marketplace() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -1477,6 +1486,11 @@ export default function Marketplace() {
                       {delivery.description && (
                         <span className="mt-1 block whitespace-pre-wrap text-xs leading-5 text-brand-text-secondary">
                           {delivery.description}
+                        </span>
+                      )}
+                      {delivery.kind === "file" && formatDeliveryFileSize(delivery.sizeBytes) && (
+                        <span className="mt-1 block text-xs font-semibold text-brand-text-secondary">
+                          File size: {formatDeliveryFileSize(delivery.sizeBytes)}
                         </span>
                       )}
                       <span className="mt-2 block text-[10px] uppercase tracking-wider text-brand-accent">

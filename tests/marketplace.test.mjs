@@ -250,6 +250,21 @@ test('course lessons have editable metadata and buyers always receive the curren
   assert.match(buyer, /delivery\.description/);
 });
 
+test('buyer delivery cards display the stored file size before downloading', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const [api, library, guestDelivery] = await Promise.all([
+    readFile(new URL('../api/marketplace.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/Marketplace.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/MarketplaceGuestDelivery.tsx', import.meta.url), 'utf8'),
+  ]);
+  assert.match(api, /actual_size,expected_size/);
+  assert.match(api, /sizeBytes:/);
+  assert.match(library, /formatDeliveryFileSize/);
+  assert.match(library, /File size:/);
+  assert.match(guestDelivery, /formatFileSize/);
+  assert.match(guestDelivery, /File size:/);
+});
+
 test('mobile marketplace and Plugsy products use compact two-column product grids', async () => {
   const { readFile } = await import('node:fs/promises');
   const [marketplace, products] = await Promise.all([
