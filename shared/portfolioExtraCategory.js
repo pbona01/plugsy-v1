@@ -58,6 +58,17 @@ export const getPurchasedCategoryValues = ({
   .map((value) => normalizeExtraCategoryName(value))
   .filter(Boolean);
 
+// The package identifier is stored in category when skills are set up later.
+// It is never a profession and must not be shown as a public skill badge.
+export const getPortfolioSkillValues = ({ category, categories } = {}) => {
+  const selected = asCategoryList(categories);
+  const fallback = selected.length ? selected : asCategoryList(category);
+  return fallback
+    .filter((value) => typeof value === "string")
+    .map((value) => normalizeExtraCategoryName(value))
+    .filter((value) => value && categoryIdentity(value) !== "customportfolio");
+};
+
 export const validateExtraCategoryName = (
   value,
   purchasedCategories = [],

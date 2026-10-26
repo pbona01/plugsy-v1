@@ -3,6 +3,7 @@ import {
   normalizeOneLinkOwnerProfile,
   normalizeOneLinkUsername,
 } from "../shared/onelink.js";
+import { getPortfolioSkillValues } from "../shared/portfolioExtraCategory.js";
 
 const DEFAULT_IMAGE = "https://i.postimg.cc/4dHFwnzr/IMG-1987.png";
 const DEFAULT_TITLE = "Plugsy | smart, low cost & for all.";
@@ -200,7 +201,7 @@ async function portfolioPreview(req, res, slug, dependencies = {}) {
   }
 
   const displayName = text(portfolio.full_name || portfolio.username) || "Portfolio";
-  const category = text(portfolio.category);
+  const category = getPortfolioSkillValues(portfolio)[0] || "";
   const title = truncate(`${displayName} | Portfolio`, 90);
   const description = truncate(
     portfolio.tagline ||

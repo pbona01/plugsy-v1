@@ -82,6 +82,7 @@ import {
   EXTRA_CATEGORY_MAX_LENGTH,
   EXTRA_CATEGORY_MIN_LENGTH,
   ExtraCategoryValidationError,
+  getPortfolioSkillValues,
   getPurchasedCategoryValues,
   normalizeExtraCategoryName,
   validateExtraCategoryName,
@@ -1696,35 +1697,19 @@ export function PublicPortfolio({
                   />
                 </h1>
                 <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
-                  {(() => {
-                    let catArray: string[] = [];
-                    if (Array.isArray(portfolio.categories) && portfolio.categories.length > 0) {
-                      catArray = portfolio.categories;
-                    } else if (typeof portfolio.category === "string") {
-                      try {
-                        const parsed = JSON.parse(portfolio.category);
-                        catArray = Array.isArray(parsed)
-                          ? parsed
-                          : [portfolio.category];
-                      } catch {
-                        catArray = [portfolio.category];
-                      }
-                    }
-
-                    return catArray.map((c) => {
-                      const properName =
-                        CATEGORY_CONFIG[c as keyof typeof CATEGORY_CONFIG]
-                          ?.name || c.replace(/_/g, " ");
-                      return (
-                        <span
-                          key={c}
-                          className="px-3 py-1 text-[10px] uppercase font-bold bg-brand-accent/10 border border-brand-accent/20 rounded-full tracking-widest text-brand-accent"
-                        >
-                          {properName}
-                        </span>
-                      );
-                    });
-                  })()}
+                  {getPortfolioSkillValues(portfolio).map((c) => {
+                    const properName =
+                      CATEGORY_CONFIG[c as keyof typeof CATEGORY_CONFIG]
+                        ?.name || c.replace(/_/g, " ");
+                    return (
+                      <span
+                        key={c}
+                        className="px-3 py-1 text-[10px] uppercase font-bold bg-brand-accent/10 border border-brand-accent/20 rounded-full tracking-widest text-brand-accent"
+                      >
+                        {properName}
+                      </span>
+                    );
+                  })}
                   {portfolio.extra_category_name && (
                     <span
                       className="max-w-full break-words px-3 py-1 text-[10px] uppercase font-bold bg-brand-accent/10 border border-brand-accent/20 rounded-full tracking-widest text-brand-accent"
