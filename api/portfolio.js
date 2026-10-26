@@ -7,8 +7,12 @@ import { rejectDisallowedOrigin } from "./_httpSecurity.js";
 import { requireVerifiedClerkUser } from "./_clerkAuth.js"
 import { prepareJsonRequestBody } from "./_walletFundingWebhook.js"
 import {
+  categoryIdentity,
+  CustomPortfolioSkillsValidationError,
   getPurchasedCategoryValues,
+  getPortfolioSkillValues,
   validateExtraCategoryName,
+  validateCustomPortfolioSkills,
   ExtraCategoryValidationError,
 } from "../shared/portfolioExtraCategory.js"
 
@@ -322,6 +326,112 @@ async function handleUpdateExtraCategory(req, res) {
   }
 }
 
+async function handleCustomSkills(req, res) {
+  if (req.method !== "GET" && req.method !== "POST") {
+    return res.status(405).json({ success: false, error: "Method not allowed" })
+  }
+  if (req.method === "POST" && !hasJsonContentType(req)) {
+    return res.status(415).json({ success: false, error: "Use application/json for this request." })
+  }
+
+  const actor = await requireVerifiedClerkUser(req, res)
+  if (!actor) return
+
+  let body = null
+  if (req.method === "POST") {
+    try {
+      body = await prepareJsonRequestBody(req)
+    } catch {
+      return res.status(400).json({ success: false, error: "The request body is invalid." })
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body) ||
+        Object.keys(body).some((key) => key !== "portfolioId" && key !== "skills")) {
+      return res.status(400).json({ success: false, error: "The skills request is invalid." })
+    }
+  }
+
+  const portfolioId = String(
+    req.method === "GET"
+      ? req.query?.portfolioId || new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`).searchParams.get("portfolioId") || ""
+      : body.portfolioId || "",
+  ).trim()
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(portfolioId)) {
+    return res.status(400).json({ success: false, error: "The portfolio is invalid." })
+  }
+
+  const supabase = getWalletServiceClient(res)
+  if (!supabase) return
+
+  const { data: portfolio, error: portfolioError } = await supabase
+    .from("vp_portfolios")
+    .select("id,user_id,paystack_ref,category,categories,extra_category_name")
+    .eq("id", portfolioId)
+    .maybeSingle()
+  if (portfolioError) {
+    return res.status(503).json({ success: false, error: "The portfolio could not be loaded." })
+  }
+  if (!portfolio) return res.status(404).json({ success: false, error: "Portfolio not found." })
+  if (portfolio.user_id !== actor.userId) {
+    return res.status(403).json({ success: false, error: "You do not own this portfolio." })
+  }
+
+  let isCustomPortfolio = false
+  if (portfolio.paystack_ref) {
+    const { data: purchase, error: purchaseError } = await supabase
+      .from("portfolio_purchases")
+      .select("id")
+      .eq("user_id", actor.userId)
+      .eq("paystack_ref", portfolio.paystack_ref)
+      .eq("category", "custom_portfolio")
+      .maybeSingle()
+    if (purchaseError) {
+      return res.status(503).json({ success: false, error: "The purchase could not be checked." })
+    }
+    isCustomPortfolio = Boolean(purchase)
+  }
+
+  if (req.method === "GET") {
+    return res.status(200).json({
+      success: true,
+      isCustomPortfolio,
+      skills: isCustomPortfolio ? getPortfolioSkillValues(portfolio) : [],
+    })
+  }
+  if (!isCustomPortfolio) {
+    return res.status(403).json({ success: false, error: "Only Custom Portfolio skills can be edited here." })
+  }
+
+  let skills
+  try {
+    skills = validateCustomPortfolioSkills(body.skills)
+  } catch (error) {
+    if (error instanceof CustomPortfolioSkillsValidationError) {
+      return res.status(400).json({ success: false, error: error.message })
+    }
+    throw error
+  }
+  if (portfolio.extra_category_name && skills.some((skill) =>
+    categoryIdentity(skill) === categoryIdentity(portfolio.extra_category_name))) {
+    return res.status(400).json({ success: false, error: "A skill already appears as your extra profession." })
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from("vp_portfolios")
+    .update({
+      category: skills[0] || "custom_portfolio",
+      categories: skills,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", portfolio.id)
+    .eq("user_id", actor.userId)
+    .select("id,category,categories")
+    .maybeSingle()
+  if (updateError || !updated) {
+    return res.status(503).json({ success: false, error: "The skills could not be saved." })
+  }
+  return res.status(200).json({ success: true, skills: updated.categories, portfolio: updated })
+}
+
 export default async function handler(req, res) {
   if (rejectDisallowedOrigin(req, res, {
     methods: "POST, GET, OPTIONS",
@@ -359,6 +469,10 @@ export default async function handler(req, res) {
 
   if (action === "update-extra-category") {
     return handleUpdateExtraCategory(req, res)
+  }
+
+  if (action === "custom-skills") {
+    return handleCustomSkills(req, res)
   }
 
   if (action === "create-from-wallet") {

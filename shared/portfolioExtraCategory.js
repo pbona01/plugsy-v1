@@ -69,6 +69,34 @@ export const getPortfolioSkillValues = ({ category, categories } = {}) => {
     .filter((value) => value && categoryIdentity(value) !== "customportfolio");
 };
 
+export class CustomPortfolioSkillsValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "CustomPortfolioSkillsValidationError";
+  }
+}
+
+export const validateCustomPortfolioSkills = (skills) => {
+  if (!Array.isArray(skills) || skills.length > 4) {
+    throw new CustomPortfolioSkillsValidationError("Choose up to four skills.");
+  }
+  const normalized = skills.map((skill) => normalizeExtraCategoryName(skill));
+  if (normalized.some((skill) =>
+    !skill ||
+    Array.from(skill).length < 2 ||
+    Array.from(skill).length > 40 ||
+    CONTROL_CHARACTER_PATTERN.test(skill) ||
+    ANGLE_BRACKET_PATTERN.test(skill) ||
+    categoryIdentity(skill) === "customportfolio"
+  )) {
+    throw new CustomPortfolioSkillsValidationError("Each skill must be 2 to 40 characters and cannot be the package name.");
+  }
+  if (new Set(normalized.map(categoryIdentity)).size !== normalized.length) {
+    throw new CustomPortfolioSkillsValidationError("Each skill must be different.");
+  }
+  return normalized;
+};
+
 export const validateExtraCategoryName = (
   value,
   purchasedCategories = [],

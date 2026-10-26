@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { useUser } from "@clerk/clerk-react";
+import { useAuth, useUser } from "@clerk/clerk-react";
 import { Helmet } from "react-helmet-async";
 import { supabase } from "../lib/supabase";
 import { VPPortfolio, VPCustomCategory } from "../types/verification";
@@ -22,11 +22,13 @@ import { TabPublish } from "../components/verification/editor/TabPublish";
 export function EditPortfolio() {
   const { id } = useParams<{ id: string }>();
   const { user, isLoaded } = useUser();
+  const { getToken } = useAuth();
   const navigate = useNavigate();
   const { isPortfolioUnlocked } = usePortfolioAccess();
   
   const [portfolio, setPortfolio] = useState<VPPortfolio | null>(null);
   const [categories, setCategories] = useState<VPCustomCategory[]>([]);
+  const [isCustomPortfolio, setIsCustomPortfolio] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(true);
   const [saveStatus, setSaveStatus] = useState<"Saved ✓" | "Saving..." | "">("");
@@ -52,6 +54,7 @@ export function EditPortfolio() {
   }, [isLoaded, user, id]);
 
   const loadData = async () => {
+    setIsCustomPortfolio(false);
     try {
       const { data: port, error } = await supabase
         .from("vp_portfolios")
@@ -74,6 +77,20 @@ export function EditPortfolio() {
         .order("order_index");
         
       setCategories(cats || []);
+
+      try {
+        const token = await getToken();
+        if (!token) throw new Error("Your sign-in session has expired.");
+        const response = await fetch(`/api/portfolio?action=custom-skills&portfolioId=${encodeURIComponent(port.id)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || "Could not check custom skill access.");
+        setIsCustomPortfolio(result.isCustomPortfolio === true);
+      } catch (customSkillsError) {
+        console.warn("Could not load custom skill editing:", customSkillsError);
+        showToast("Could not load skill editing. Please refresh the page.", "error");
+      }
 
       // Load custom tutorial URL from site settings if available
       try {
@@ -283,6 +300,12 @@ export function EditPortfolio() {
           previewMode={true} 
           isEditMode={isEditMode}
           onUpdatePortfolio={updatePortfolio}
+          customSkillsEditable={isCustomPortfolio}
+          onCustomSkillsUpdated={(skills) =>
+            setPortfolio((current) => current
+              ? { ...current, category: skills[0] || "custom_portfolio", categories: skills }
+              : current)
+          }
           onExtraCategoryUpdated={(name) =>
             setPortfolio((current) =>
               current

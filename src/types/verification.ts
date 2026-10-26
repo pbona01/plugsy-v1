@@ -14,6 +14,7 @@ export interface VPPortfolio {
   user_id: string
   user_email: string
   category: string
+  categories?: string[]
   full_name: string
   tagline: string
   longBio?: string

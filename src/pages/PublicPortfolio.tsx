@@ -81,10 +81,12 @@ import { hasPortfolioAdAttribution, readPlugsyAdConsent, trackPortfolioAdEvent }
 import {
   EXTRA_CATEGORY_MAX_LENGTH,
   EXTRA_CATEGORY_MIN_LENGTH,
+  CustomPortfolioSkillsValidationError,
   ExtraCategoryValidationError,
   getPortfolioSkillValues,
   getPurchasedCategoryValues,
   normalizeExtraCategoryName,
+  validateCustomPortfolioSkills,
   validateExtraCategoryName,
 } from "../../shared/portfolioExtraCategory.js";
 
@@ -407,6 +409,8 @@ export function PublicPortfolio({
   isEditMode = false,
   onUpdatePortfolio,
   onExtraCategoryUpdated,
+  customSkillsEditable = false,
+  onCustomSkillsUpdated,
 }: {
   slugOrId?: string;
   previewData?: VPPortfolio;
@@ -414,6 +418,8 @@ export function PublicPortfolio({
   isEditMode?: boolean;
   onUpdatePortfolio?: (updates: Partial<VPPortfolio>) => void;
   onExtraCategoryUpdated?: (name: string | null) => void;
+  customSkillsEditable?: boolean;
+  onCustomSkillsUpdated?: (skills: string[]) => void;
 }) {
   const { slug } = useParams<{ slug: string }>();
   const activeSlug = slugOrId || slug;
@@ -437,6 +443,10 @@ export function PublicPortfolio({
   const [extraCategoryDraft, setExtraCategoryDraft] = useState("");
   const [extraCategorySaving, setExtraCategorySaving] = useState(false);
   const [extraCategoryError, setExtraCategoryError] = useState("");
+  const [skillsEditorOpen, setSkillsEditorOpen] = useState(false);
+  const [skillsDraft, setSkillsDraft] = useState<string[]>([""]);
+  const [skillsSaving, setSkillsSaving] = useState(false);
+  const [skillsError, setSkillsError] = useState("");
 
   const [profileImageLoaded, setProfileImageLoaded] = useState(false);
   const [bioGraphicLoaded, setBioGraphicLoaded] = useState(false);
@@ -495,6 +505,49 @@ export function PublicPortfolio({
       portfolio as (VPPortfolio & { categories?: string[] }) | null
     )?.categories,
   });
+  const startSkillsEdit = () => {
+    if (!portfolio) return;
+    const skills = getPortfolioSkillValues(portfolio);
+    setSkillsDraft(skills.length ? skills : [""]);
+    setSkillsError("");
+    setSkillsEditorOpen(true);
+  };
+
+  const saveCustomSkills = async () => {
+    if (!portfolio?.id || skillsSaving || !customSkillsEditable) return;
+    let skills: string[];
+    try {
+      skills = validateCustomPortfolioSkills(skillsDraft.filter((skill) => skill.trim()));
+    } catch (error) {
+      setSkillsError(error instanceof CustomPortfolioSkillsValidationError ? error.message : "Check your skills and try again.");
+      return;
+    }
+    setSkillsSaving(true);
+    setSkillsError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Your sign-in session has expired.");
+      const response = await fetch("/api/portfolio?action=custom-skills", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ portfolioId: portfolio.id, skills }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || "Could not save skills.");
+      const savedSkills = result.skills as string[];
+      setPortfolio((current) => current
+        ? { ...current, category: savedSkills[0] || "custom_portfolio", categories: savedSkills }
+        : current);
+      onCustomSkillsUpdated?.(savedSkills);
+      setSkillsEditorOpen(false);
+      window.dispatchEvent(new CustomEvent("vp-portfolio-updated"));
+      showToast("Skills updated");
+    } catch (error) {
+      setSkillsError(error instanceof Error ? error.message : "Could not save skills.");
+    } finally {
+      setSkillsSaving(false);
+    }
+  };
   const normalizedExtraCategoryDraft =
     normalizeExtraCategoryName(extraCategoryDraft);
   const extraCategoryDraftTooShort =
@@ -1710,6 +1763,59 @@ export function PublicPortfolio({
                       </span>
                     );
                   })}
+                  {isEditMode && customSkillsEditable && !skillsEditorOpen && (
+                    <button
+                      type="button"
+                      onClick={startSkillsEdit}
+                      className="min-h-9 rounded-lg border border-dashed border-brand-accent/40 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-brand-accent transition hover:bg-brand-accent/10"
+                    >
+                      {getPortfolioSkillValues(portfolio).length ? "Edit skills" : "+ Add skills"}
+                    </button>
+                  )}
+                  {isEditMode && customSkillsEditable && skillsEditorOpen && (
+                    <div className="w-full max-w-lg rounded-xl border border-brand-accent/20 bg-brand-accent/5 p-3 text-left">
+                      <div className="mb-2 flex items-center justify-between text-xs font-bold text-brand-text">
+                        <span>Your skills</span>
+                        <span>{skillsDraft.filter((skill) => skill.trim()).length}/4</span>
+                      </div>
+                      <div className="space-y-2">
+                        {skillsDraft.map((skill, index) => (
+                          <div key={index} className="flex gap-2">
+                            <input
+                              aria-label={`Skill ${index + 1}`}
+                              value={skill}
+                              onChange={(event) => setSkillsDraft((current) => current.map((value, i) => i === index ? event.target.value : value))}
+                              maxLength={40}
+                              placeholder="e.g. Barber"
+                              className="min-h-11 min-w-0 flex-1 rounded-lg border border-brand-border bg-brand-card px-3 py-2 text-sm text-brand-text outline-none focus:border-brand-accent"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setSkillsDraft((current) => current.length === 1 ? [""] : current.filter((_, i) => i !== index))}
+                              aria-label={`Remove skill ${index + 1}`}
+                              className="min-h-11 rounded-lg border border-brand-border px-3 text-sm text-brand-text-secondary hover:text-red-400"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      {skillsDraft.length < 4 && (
+                        <button type="button" onClick={() => setSkillsDraft((current) => [...current, ""])} className="mt-2 text-xs font-bold text-brand-accent">
+                          + Add another skill
+                        </button>
+                      )}
+                      {skillsError && <p role="alert" className="mt-2 text-xs text-red-400">{skillsError}</p>}
+                      <div className="mt-3 flex gap-2">
+                        <button type="button" onClick={() => void saveCustomSkills()} disabled={skillsSaving} className="min-h-10 rounded-lg bg-brand-accent px-4 text-xs font-bold text-white disabled:opacity-50">
+                          {skillsSaving ? "Saving..." : "Save skills"}
+                        </button>
+                        <button type="button" onClick={() => setSkillsEditorOpen(false)} disabled={skillsSaving} className="min-h-10 rounded-lg border border-brand-border px-4 text-xs font-bold text-brand-text-secondary">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {portfolio.extra_category_name && (
                     <span
                       className="max-w-full break-words px-3 py-1 text-[10px] uppercase font-bold bg-brand-accent/10 border border-brand-accent/20 rounded-full tracking-widest text-brand-accent"
