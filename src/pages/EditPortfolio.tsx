@@ -151,13 +151,13 @@ export function EditPortfolio() {
   const currentTheme = THEMES[portfolio.color_theme] || THEMES.modern;
 
   return (
-    <div className="min-h-screen transition-colors duration-300" style={{ backgroundColor: currentTheme.bg }}>
+    <div className="min-h-screen pt-[61px] transition-colors duration-300" style={{ backgroundColor: currentTheme.bg }}>
       <Helmet>
         <title>Plugsy - Edit Portfolio</title>
       </Helmet>
       
       {/* Live Builder Top Bar */}
-      <div className="bg-brand-text text-brand-surface px-4 md:px-6 py-3 flex items-center justify-between sticky top-0 z-[100] shadow-md border-b border-gray-800 overflow-x-auto no-scrollbar gap-4">
+      <div className="fixed inset-x-0 top-0 z-[200] flex min-h-[61px] items-center justify-between gap-4 overflow-x-auto border-b border-gray-800 bg-brand-text px-4 py-3 text-brand-surface shadow-md no-scrollbar md:px-6">
         <div className="flex items-center gap-4 shrink-0">
           <Link to="/portfolio" className="text-gray-400 hover:text-white transition text-xs font-bold tracking-wider uppercase">
             <span className="md:hidden">←</span>

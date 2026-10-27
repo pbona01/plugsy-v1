@@ -5,6 +5,13 @@ export const EXTRA_CATEGORY_MIN_LENGTH = 2;
 const CONTROL_CHARACTER_PATTERN = /\p{Cc}/u;
 const ANGLE_BRACKET_PATTERN = /[<>]/u;
 const ALPHANUMERIC_PATTERN = /[\p{L}\p{N}]/u;
+const STANDARD_PORTFOLIO_CATEGORIES = new Set([
+  "graphic_design", "video_editing", "motion_graphics", "web_development",
+  "uiux_design", "copywriting", "content_writing", "digital_marketing",
+  "social_media_management", "photography", "videography", "ai_automation",
+  "prompt_engineering", "three_d_animation", "three_d_design", "vfx",
+  "cybersecurity",
+]);
 
 export class ExtraCategoryValidationError extends Error {
   constructor(code, message) {
@@ -67,6 +74,12 @@ export const getPortfolioSkillValues = ({ category, categories } = {}) => {
     .filter((value) => typeof value === "string")
     .map((value) => normalizeExtraCategoryName(value))
     .filter((value) => value && categoryIdentity(value) !== "customportfolio");
+};
+
+export const isCustomPortfolioRecord = ({ category, categories } = {}) => {
+  if (categoryIdentity(category) === "customportfolio") return true;
+  const skills = getPortfolioSkillValues({ category, categories });
+  return skills.some((skill) => !STANDARD_PORTFOLIO_CATEGORIES.has(skill));
 };
 
 export class CustomPortfolioSkillsValidationError extends Error {

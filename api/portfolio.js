@@ -9,6 +9,7 @@ import { prepareJsonRequestBody } from "./_walletFundingWebhook.js"
 import {
   categoryIdentity,
   CustomPortfolioSkillsValidationError,
+  isCustomPortfolioRecord,
   getPurchasedCategoryValues,
   getPortfolioSkillValues,
   validateExtraCategoryName,
@@ -375,7 +376,7 @@ async function handleCustomSkills(req, res) {
     return res.status(403).json({ success: false, error: "You do not own this portfolio." })
   }
 
-  let isCustomPortfolio = false
+  let isCustomPortfolio = isCustomPortfolioRecord(portfolio)
   if (portfolio.paystack_ref) {
     const { data: purchase, error: purchaseError } = await supabase
       .from("portfolio_purchases")
@@ -387,7 +388,7 @@ async function handleCustomSkills(req, res) {
     if (purchaseError) {
       return res.status(503).json({ success: false, error: "The purchase could not be checked." })
     }
-    isCustomPortfolio = Boolean(purchase)
+    isCustomPortfolio = Boolean(purchase) || isCustomPortfolio
   }
 
   if (req.method === "GET") {

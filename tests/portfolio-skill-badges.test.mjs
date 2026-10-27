@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isCustomPortfolioRecord,
   getPortfolioSkillValues,
   validateCustomPortfolioSkills,
 } from "../shared/portfolioExtraCategory.js";
@@ -21,6 +22,12 @@ test("custom skills can be changed or left empty, with a strict four-skill limit
   assert.throws(() => validateCustomPortfolioSkills(["Barber", " barber "]));
   assert.throws(() => validateCustomPortfolioSkills(["custom_portfolio"]));
   assert.throws(() => validateCustomPortfolioSkills(["<script>"]));
+});
+
+test("legacy custom portfolios with manually entered skills remain editable", () => {
+  assert.equal(isCustomPortfolioRecord({ category: "custom_portfolio", categories: [] }), true);
+  assert.equal(isCustomPortfolioRecord({ category: "Barber", categories: ["Barber", "Programmer", "Dancer"] }), true);
+  assert.equal(isCustomPortfolioRecord({ category: "graphic_design", categories: ["graphic_design"] }), false);
 });
 
 test("custom skills and standard categories remain visible", () => {

@@ -84,6 +84,7 @@ import {
   CustomPortfolioSkillsValidationError,
   ExtraCategoryValidationError,
   getPortfolioSkillValues,
+  isCustomPortfolioRecord,
   getPurchasedCategoryValues,
   normalizeExtraCategoryName,
   validateCustomPortfolioSkills,
@@ -505,6 +506,7 @@ export function PublicPortfolio({
       portfolio as (VPPortfolio & { categories?: string[] }) | null
     )?.categories,
   });
+  const isCustomPortfolioView = customSkillsEditable || isCustomPortfolioRecord(portfolio || {});
   const startSkillsEdit = () => {
     if (!portfolio) return;
     const skills = getPortfolioSkillValues(portfolio);
@@ -514,7 +516,7 @@ export function PublicPortfolio({
   };
 
   const saveCustomSkills = async () => {
-    if (!portfolio?.id || skillsSaving || !customSkillsEditable) return;
+    if (!portfolio?.id || skillsSaving || !isCustomPortfolioView) return;
     let skills: string[];
     try {
       skills = validateCustomPortfolioSkills(skillsDraft.filter((skill) => skill.trim()));
@@ -1763,7 +1765,7 @@ export function PublicPortfolio({
                       </span>
                     );
                   })}
-                  {isEditMode && customSkillsEditable && !skillsEditorOpen && (
+                  {isEditMode && isCustomPortfolioView && !skillsEditorOpen && (
                     <button
                       type="button"
                       onClick={startSkillsEdit}
@@ -1772,7 +1774,7 @@ export function PublicPortfolio({
                       {getPortfolioSkillValues(portfolio).length ? "Edit skills" : "+ Add skills"}
                     </button>
                   )}
-                  {isEditMode && customSkillsEditable && skillsEditorOpen && (
+                  {isEditMode && isCustomPortfolioView && skillsEditorOpen && (
                     <div className="w-full max-w-lg rounded-xl border border-brand-accent/20 bg-brand-accent/5 p-3 text-left">
                       <div className="mb-2 flex items-center justify-between text-xs font-bold text-brand-text">
                         <span>Your skills</span>
@@ -1816,7 +1818,7 @@ export function PublicPortfolio({
                       </div>
                     </div>
                   )}
-                  {portfolio.extra_category_name && (
+                  {!isCustomPortfolioView && portfolio.extra_category_name && (
                     <span
                       className="max-w-full break-words px-3 py-1 text-[10px] uppercase font-bold bg-brand-accent/10 border border-brand-accent/20 rounded-full tracking-widest text-brand-accent"
                       title={portfolio.extra_category_name}
@@ -1824,7 +1826,7 @@ export function PublicPortfolio({
                       {portfolio.extra_category_name}
                     </span>
                   )}
-                  {isEditMode && !extraCategoryEditorOpen && (
+                  {isEditMode && !isCustomPortfolioView && !extraCategoryEditorOpen && (
                     portfolio.extra_category_name ? (
                       <span className="flex max-w-full flex-wrap items-center gap-1.5">
                         <button
@@ -1854,7 +1856,7 @@ export function PublicPortfolio({
                       </button>
                     )
                   )}
-                  {isEditMode && extraCategoryEditorOpen && (
+                  {isEditMode && !isCustomPortfolioView && extraCategoryEditorOpen && (
                     <div className="w-full max-w-md rounded-xl border border-brand-accent/20 bg-brand-accent/5 p-3 text-left">
                       <label className="sr-only" htmlFor="extra-category-name">
                         Custom category badge
