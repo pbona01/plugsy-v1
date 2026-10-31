@@ -8,7 +8,7 @@ export const TermsOfService = () => {
           Plugsy Terms of Service
         </h1>
         <p className="text-neutral-500 mb-8 font-medium">
-          Last Updated: May 28, 2026
+          Last Updated: October 31, 2026
         </p>
 
         <div className="text-neutral-700">
@@ -142,7 +142,64 @@ export const TermsOfService = () => {
           </ul>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            8. Third-Party Services
+            8. Marketplace, Seller Delivery & Buyer Protection
+          </h2>
+          <p className="mb-4">
+            Plugsy provides a marketplace where verified sellers may offer
+            eligible digital products, including eBooks, courses, templates,
+            design assets, video assets, guides, and creator tools. Sellers are
+            responsible for ensuring that their listings, descriptions,
+            delivery files, and marketing claims are accurate, lawful, and do
+            not infringe another person&apos;s intellectual-property rights.
+          </p>
+          <p className="mb-4">
+            Sellers must have the rights, licences, or permissions required to
+            sell every product they upload. Plugsy may remove, pause, reject,
+            or investigate a listing where it reasonably believes a product is
+            unlawful, misleading, unsafe, infringing, unavailable after
+            purchase, or otherwise inconsistent with these Terms.
+          </p>
+          <p className="mb-4">
+            Buyers receive access only after a successful order. If a seller
+            fails to deliver, delivers an unavailable file, or a product is
+            materially different from its listing, a buyer may report the issue
+            through Plugsy during the stated buyer-protection period. Plugsy
+            may request evidence, pause seller proceeds, refund the buyer where
+            appropriate, and revoke access to a refunded product. Digital
+            purchases are not automatically refundable after successful
+            delivery; each report is reviewed on its facts.
+          </p>
+
+          <h2 className="text-xl font-bold mt-12 mb-4 text-black">
+            9. Plugsy Wallet & Internal Ledger
+          </h2>
+          <p className="mb-4">
+            The Plugsy Wallet is a closed-loop internal ledger used to record
+            eligible activity on Plugsy, such as wallet funding, marketplace
+            payments, seller earnings, rewards, referral credits, fees, and
+            refunds. A wallet balance is not a bank account, bank deposit,
+            savings product, electronic-money account, investment, or regulated
+            financial service offered by Plugsy.
+          </p>
+          <p className="mb-4">
+            Wallet credits may be used only within the features and rules made
+            available by Plugsy. Only settled seller earnings and other credits
+            expressly marked as withdrawable are eligible for withdrawal,
+            subject to identity checks, applicable limits, review, and payment
+            provider availability. Funds added for purchasing or refunded to a
+            wallet do not automatically become withdrawable cash.
+          </p>
+          <p className="mb-4">
+            Payment processing and bank transfers are provided by independent
+            payment providers. Plugsy may correct obvious ledger errors, hold
+            proceeds while investigating fraud or a reported delivery issue,
+            reverse a refund or payment only where permitted by law and the
+            applicable payment provider, and notify the affected user where
+            practicable.
+          </p>
+
+          <h2 className="text-xl font-bold mt-12 mb-4 text-black">
+            10. Third-Party Services
           </h2>
           <p className="mb-4">
             Plugsy may integrate with third-party services including payment
@@ -160,7 +217,7 @@ export const TermsOfService = () => {
           </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            9. Customer Support & Communication
+            11. Customer Support & Communication
           </h2>
           <p className="mb-4">
             For security and verification purposes, official Plugsy customer
@@ -176,9 +233,18 @@ export const TermsOfService = () => {
             Plugsy is not responsible for losses caused by communication outside
             verified official channels.
           </p>
+          <p className="mb-4">
+            For support, complaints, delivery issues, refund requests, or legal
+            enquiries, contact us at{' '}
+            <a className="font-semibold text-blue-700 underline" href="mailto:plugsyngsupport@gmail.com">
+              plugsyngsupport@gmail.com
+            </a>
+            . Please include the relevant order reference or account email so
+            we can investigate the request.
+          </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            10. Platform Availability
+            12. Platform Availability
           </h2>
           <p className="mb-4">
             We aim to provide reliable services, but Plugsy does not guarantee
@@ -190,7 +256,7 @@ export const TermsOfService = () => {
           </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            11. Intellectual Property
+            13. Intellectual Property
           </h2>
           <p className="mb-4">
             The Plugsy brand, platform identity, logos, designs, and platform
@@ -204,7 +270,7 @@ export const TermsOfService = () => {
           </ul>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            12. Limitation of Liability
+            14. Limitation of Liability
           </h2>
           <p className="mb-4">Plugsy is not liable for:</p>
           <ul className="list-disc pl-6 mb-4 space-y-2">
@@ -221,7 +287,7 @@ export const TermsOfService = () => {
           </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            13. Account Suspension & Termination
+            15. Account Suspension & Termination
           </h2>
           <p className="mb-4">Plugsy reserves the right to:</p>
           <ul className="list-disc pl-6 mb-4 space-y-2">
@@ -234,7 +300,7 @@ export const TermsOfService = () => {
           </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            14. Future Expansion
+            16. Future Expansion
           </h2>
           <p className="mb-4">
             As Plugsy evolves, additional services may be introduced including:
@@ -252,7 +318,7 @@ export const TermsOfService = () => {
           </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            15. Changes to Terms
+            17. Changes to Terms
           </h2>
           <p className="mb-4">These Terms may be updated periodically.</p>
           <p className="mb-4">
@@ -261,11 +327,14 @@ export const TermsOfService = () => {
           </p>
 
           <h2 className="text-xl font-bold mt-12 mb-4 text-black">
-            16. Contact & Support
+            18. Contact & Support
           </h2>
           <p className="mb-4">
-            Official support and legal communication channels will be provided
-            through Plugsy’s official platform and support systems.
+            Official support is available at{' '}
+            <a className="font-semibold text-blue-700 underline" href="mailto:plugsyngsupport@gmail.com">
+              plugsyngsupport@gmail.com
+            </a>
+            . For formal notices, please contact us through this email first.
           </p>
           <p className="mb-4">
             By using Plugsy, you acknowledge that you have read, understood, and

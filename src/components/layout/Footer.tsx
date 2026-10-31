@@ -72,6 +72,13 @@ export default function Footer() {
             </Link>
           </nav>
 
+          <a
+            href="mailto:plugsyngsupport@gmail.com"
+            className="mb-12 text-sm font-bold text-brand-accent hover:underline underline-offset-4"
+          >
+            Support: plugsyngsupport@gmail.com
+          </a>
+
           <div className="flex justify-center gap-8 mb-12">
             <a
               href="https://x.com/plugsyng?s=21"
