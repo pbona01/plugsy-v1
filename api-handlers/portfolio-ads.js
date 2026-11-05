@@ -67,6 +67,8 @@ function safePageUrl(value) {
 async function sendTikTokEvent(settings, event, req, rawClickId) {
   if (!settings?.enabled || !settings?.tiktok_pixel_id || !settings?.tiktok_access_token_encrypted) return "disabled";
   const token = decryptMarketplaceAdToken(settings.tiktok_access_token_encrypted);
+  const value = Number(req.body?.value || 0);
+  const currency = text(req.body?.currency, 3).toUpperCase();
   const response = await fetch("https://business-api.tiktok.com/open_api/v1.3/event/track/", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Access-Token": token },
@@ -86,15 +88,17 @@ async function sendTikTokEvent(settings, event, req, rawClickId) {
         page: { url: safePageUrl(req.body?.pageUrl), referrer: safePageUrl(req.headers?.referer) },
         properties: {
           content_id: event.portfolio_id,
-          content_name: `Portfolio: ${event.portfolio_slug}`,
+          content_name: event.portfolio_slug === PORTFOLIO_BUILDER_SLUG ? "Plugsy Portfolio" : `Portfolio: ${event.portfolio_slug}`,
           content_type: "product",
+          ...(value > 0 ? { value, currency: /^[A-Z]{3}$/.test(currency) ? currency : "NGN" } : {}),
         },
       }],
     }),
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || (payload?.code !== undefined && Number(payload.code) !== 0)) {
-    throw new Error(`TikTok Events API returned ${response.status}.`);
+    const detail = text(payload?.message || payload?.msg || payload?.data?.message, 180);
+    throw new Error(`TikTok Events API returned ${response.status}${detail ? `: ${detail}` : ""}.`);
   }
   return "sent";
 }
@@ -121,15 +125,27 @@ async function handleTrack(req, res) {
   if (eventName === "CompleteRegistration") {
     registrationActor = await requireVerifiedClerkUser(req, res);
     if (!registrationActor) return;
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("created_at")
-      .eq("clerk_id", registrationActor.userId)
-      .maybeSingle();
-    if (profileError) throw profileError;
-    const createdAt = new Date(profile?.created_at || 0).getTime();
-    if (!Number.isFinite(createdAt) || Date.now() - createdAt > 30 * 60_000) {
-      return res.status(202).json({ success: true, recorded: false, reason: "REGISTRATION_NOT_NEW" });
+    const purchaseReference = text(body.purchaseReference, 160);
+    if (purchaseReference) {
+      const { data: purchase, error: purchaseError } = await supabase
+        .from("portfolio_purchases")
+        .select("paystack_ref")
+        .eq("user_id", registrationActor.userId)
+        .eq("paystack_ref", purchaseReference)
+        .maybeSingle();
+      if (purchaseError) throw purchaseError;
+      if (!purchase) return res.status(403).json({ success: false, error: "Confirmed portfolio purchase not found." });
+    } else {
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("created_at")
+        .eq("clerk_id", registrationActor.userId)
+        .maybeSingle();
+      if (profileError) throw profileError;
+      const createdAt = new Date(profile?.created_at || 0).getTime();
+      if (!Number.isFinite(createdAt) || Date.now() - createdAt > 30 * 60_000) {
+        return res.status(202).json({ success: true, recorded: false, reason: "REGISTRATION_NOT_NEW" });
+      }
     }
   }
   let portfolio = slug === PORTFOLIO_BUILDER_SLUG
@@ -176,17 +192,18 @@ async function handleTrack(req, res) {
   if (insertError?.code === "23505") return res.status(200).json({ success: true, recorded: true, duplicate: true });
   if (insertError) throw insertError;
 
+  let providerDeliveryStatus = "not_requested";
   if (body.marketingConsent === true) {
-    let status = "failed";
+    providerDeliveryStatus = "failed";
     try {
       const { data: settings } = await supabase.from("portfolio_ad_settings_v1").select("*").eq("id", "primary").maybeSingle();
-      status = await sendTikTokEvent(settings, inserted, req, clickId);
+      providerDeliveryStatus = await sendTikTokEvent(settings, inserted, req, clickId);
     } catch (error) {
       console.error("[portfolio-ads] TikTok delivery failed:", error?.message || error);
     }
-    await supabase.from("portfolio_ad_events_v1").update({ provider_delivery_status: status }).eq("id", inserted.id);
+    await supabase.from("portfolio_ad_events_v1").update({ provider_delivery_status: providerDeliveryStatus }).eq("id", inserted.id);
   }
-  return res.status(200).json({ success: true, recorded: true, eventId: inserted.event_id });
+  return res.status(200).json({ success: true, recorded: true, eventId: inserted.event_id, providerDeliveryStatus });
 }
 
 export default async function handler(req, res) {

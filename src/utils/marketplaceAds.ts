@@ -39,13 +39,34 @@ function ensureTikTok(id: string) {
     ttq.methods = ["page", "track", "identify", "instances", "debug", "on", "off", "once", "ready", "alias", "group", "enableCookie", "disableCookie", "holdConsent", "revokeConsent", "grantConsent"];
     ttq.setAndDefer = (target: any, method: string) => { target[method] = (...args: any[]) => { target.push([method, ...args]); }; };
     ttq.methods.forEach((method: string) => ttq.setAndDefer(ttq, method));
-    ttq._i = {}; ttq._t = {}; ttq._o = {};
-    ttq.instance = (pixel: string) => { const instance = ttq._i[pixel] || []; ttq.methods.forEach((method: string) => ttq.setAndDefer(instance, method)); return instance; };
-    ttq.load = (pixel: string, options?: any) => { ttq._i[pixel] = []; ttq._t[pixel] = Date.now(); ttq._o[pixel] = options || {}; const script = document.createElement("script"); script.async = true; script.src = `https://analytics.tiktok.com/i18n/pixel/events.js?sdkid=${encodeURIComponent(pixel)}&lib=ttq`; document.head.appendChild(script); };
+    ttq.instance = (pixel: string) => {
+      const instance = ttq._i?.[pixel] || [];
+      ttq.methods.forEach((method: string) => ttq.setAndDefer(instance, method));
+      return instance;
+    };
+    ttq.load = (pixel: string, options?: any) => {
+      const sdkUrl = "https://analytics.tiktok.com/i18n/pixel/events.js";
+      ttq._i ||= {};
+      ttq._i[pixel] = [];
+      ttq._i[pixel]._u = sdkUrl;
+      ttq._t ||= {};
+      ttq._t[pixel] = Date.now();
+      ttq._o ||= {};
+      ttq._o[pixel] = options || {};
+      const script = document.createElement("script");
+      script.type = "text/javascript";
+      script.async = true;
+      script.src = `${sdkUrl}?sdkid=${encodeURIComponent(pixel)}&lib=ttq`;
+      const firstScript = document.getElementsByTagName("script")[0];
+      if (firstScript?.parentNode) firstScript.parentNode.insertBefore(script, firstScript);
+      else document.head.appendChild(script);
+    };
   }
   if (!window.__plugsyTikTokPixels.has(id)) { window.ttq.load(id); window.__plugsyTikTokPixels.add(id); }
   if (!window.__plugsyTikTokPagePixels.has(id)) {
-    window.ttq?.instance?.(id)?.page?.();
+    // TikTok's official base code uses the root queue for PageView. Pixel
+    // Helper also expects the base page event on this queue.
+    window.ttq?.page?.();
     window.__plugsyTikTokPagePixels.add(id);
   }
 }

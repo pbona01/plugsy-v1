@@ -8,6 +8,12 @@ export type PortfolioAdEventName =
   | "CompleteRegistration"
   | "Purchase";
 
+type PortfolioAdEventDetails = {
+  purchaseReference?: string;
+  value?: number;
+  currency?: string;
+};
+
 type Consent = { analytics: boolean; marketing: boolean };
 type Attribution = { source: string; medium: string; campaign: string; content: string; term: string; ttclid: string };
 
@@ -90,7 +96,7 @@ function sessionId() {
   }
 }
 
-export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: PortfolioAdEventName, authToken?: string | null, stableEventId?: string) {
+export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: PortfolioAdEventName, authToken?: string | null, stableEventId?: string, details: PortfolioAdEventDetails = {}) {
   const consent = readPlugsyAdConsent();
   if (!consent.analytics && !consent.marketing) return { recorded: false, reason: "CONSENT_NOT_GRANTED" };
   const attribution = readAttribution();
@@ -99,11 +105,14 @@ export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: Po
     sessionStorage.setItem(portfolioSlugKey, portfolioSlug);
     localStorage.setItem(persistentPortfolioSlugKey, JSON.stringify({ slug: portfolioSlug, savedAt: Date.now() }));
   } catch { /* attribution remains best effort */ }
+  const value = Number(details.value || 0);
+  const currency = String(details.currency || "NGN").trim().toUpperCase();
   if (consent.marketing) {
     trackPlugsyTikTokEvent(tiktokPixelId, eventName, {
       content_id: portfolioSlug,
-      content_name: `Portfolio: ${portfolioSlug}`,
+      content_name: portfolioSlug === "plugsy-portfolio-builder" ? "Plugsy Portfolio" : `Portfolio: ${portfolioSlug}`,
       content_type: "product",
+      ...(value > 0 ? { value, currency } : {}),
     }, eventId);
   } else window.ttq?.revokeConsent?.();
   const response = await fetch("/api/portfolio-ads?action=track", {
@@ -119,10 +128,24 @@ export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: Po
       marketingConsent: consent.marketing,
       attribution,
       pageUrl: window.location.href.slice(0, 500),
+      purchaseReference: String(details.purchaseReference || "").trim().slice(0, 160),
+      value: value > 0 ? value : undefined,
+      currency: /^[A-Z]{3}$/.test(currency) ? currency : "NGN",
     }),
   });
   if (!response.ok) throw new Error("Portfolio event could not be recorded.");
   return response.json();
+}
+
+export async function trackPortfolioPurchaseConversion(authToken: string, purchaseReference: string, value?: number) {
+  if (!authToken || !purchaseReference) return { recorded: false, reason: "PURCHASE_REQUIRED" };
+  return trackPortfolioAdEvent(
+    "plugsy-portfolio-builder",
+    "CompleteRegistration",
+    authToken,
+    crypto.randomUUID(),
+    { purchaseReference, value, currency: "NGN" },
+  );
 }
 
 export async function trackPortfolioRegistration(authToken: string) {

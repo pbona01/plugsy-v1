@@ -30,7 +30,8 @@ test("portfolio tracking is consent gated and stores only pseudonymous attributi
   assert.match(client, /trackPlugsyTikTokEvent\(tiktokPixelId/);
   assert.match(client, /if \(consent\.marketing\)/);
   const pixel = read("src/utils/marketplaceAds.ts");
-  assert.match(pixel, /instance\?\.\(id\)\?\.page\?\.\(\)/);
+  assert.match(pixel, /ttq\?\.page\?\.\(\)/);
+  assert.match(pixel, /ttq\._i\[pixel\]\._u = sdkUrl/);
   assert.match(vercel, /https:\/\/analytics\.tiktok\.com/);
   assert.match(api, /body\.analyticsConsent !== true && body\.marketingConsent !== true/);
   assert.match(api, /session_id_hash: sha256\(sessionId\)/);
@@ -99,6 +100,18 @@ test("CompleteRegistration fires only after a new authenticated Plugsy profile i
   assert.match(api, /eventName === "CompleteRegistration"/);
   assert.match(api, /requireVerifiedClerkUser\(req, res\)/);
   assert.match(api, /REGISTRATION_NOT_NEW/);
+});
+
+test("confirmed portfolio purchases fire the configured CompleteRegistration conversion", () => {
+  const checkout = read("src/pages/CreatePortfolio.tsx");
+  const client = read("src/utils/portfolioAds.ts");
+  const api = read("api-handlers/portfolio-ads.js");
+  assert.match(checkout, /trackPortfolioPurchaseConversion\(token, data\.reference/);
+  assert.match(client, /"plugsy-portfolio-builder",\s*"CompleteRegistration"/);
+  assert.match(client, /purchaseReference/);
+  assert.match(api, /from\("portfolio_purchases"\)/);
+  assert.match(api, /eq\("paystack_ref", purchaseReference\)/);
+  assert.match(api, /providerDeliveryStatus/);
 });
 
 test("admin portfolio ads query uses only real vp_portfolios columns", () => {

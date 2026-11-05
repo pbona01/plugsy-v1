@@ -21,6 +21,7 @@ import { showToast } from "../components/Toast";
 import PreviewModal from "../components/verification/PreviewModal";
 import { getStableIdempotencyKey, clearStableIdempotencyKey } from "../utils/idempotency";
 import { loadSavedPurchaseCode, validatePurchaseCode as validatePurchaseCodeRequest } from "../lib/purchaseCodeProfile";
+import { trackPortfolioPurchaseConversion } from "../utils/portfolioAds";
 
 export interface PairedCategory {
   id: string;
@@ -283,6 +284,12 @@ export function CreatePortfolio() {
       const data = await res.json();
       if (!res.ok || !data.success || !data.entitlement?.id) {
         throw new Error(data.error || "Portfolio purchase failed");
+      }
+      // TikTok's configured conversion is CompleteRegistration. It is sent
+      // only after Plugsy has confirmed the paid portfolio entitlement.
+      if (token && data.reference) {
+        void trackPortfolioPurchaseConversion(token, data.reference, Number(data.chargedAmount || 0))
+          .catch((error) => console.warn("[portfolio-ads] purchase conversion retry needed", error));
       }
       clearStableIdempotencyKey(purchaseKey);
       showToast("Portfolio purchase successful!");
