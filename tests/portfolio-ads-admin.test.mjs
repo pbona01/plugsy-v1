@@ -114,6 +114,19 @@ test("confirmed portfolio purchases fire the configured CompleteRegistration con
   assert.match(api, /providerDeliveryStatus/);
 });
 
+test("Plugsy main pixel tracks marketplace product views and confirmed wallet purchases", () => {
+  const product = read("src/pages/MarketplaceProductPage.tsx");
+  const client = read("src/utils/portfolioAds.ts");
+  const api = read("api-handlers/portfolio-ads.js");
+  assert.match(product, /trackPlugsyMarketplaceAdEvent\("ViewContent", product\)/);
+  assert.match(product, /trackPlugsyMarketplaceAdEvent\("InitiateCheckout", product\)/);
+  assert.match(product, /trackPlugsyMarketplaceAdEvent\("CompleteRegistration", paidProduct, token, payload\.purchase\.reference\)/);
+  assert.match(client, /"plugsy-marketplace"/);
+  assert.match(api, /MARKETPLACE_SLUG = "plugsy-marketplace"/);
+  assert.match(api, /from\("marketplace_orders"\)/);
+  assert.match(api, /eq\("payment_status", "paid"\)/);
+});
+
 test("admin portfolio ads query uses only real vp_portfolios columns", () => {
   const admin = read("api-handlers/admin.js");
   assert.match(admin, /select\("id,slug,full_name,status"\)/);

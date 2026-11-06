@@ -26,7 +26,7 @@ export const getCanonicalOneLinkUrl = (username: string) => {
   return `${origin}${path}`;
 };
 
-export const createOneLinkItemId = (prefix: "social" | "link") => {
+export const createOneLinkItemId = (prefix: "social" | "link" | "product") => {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return `${prefix}-${crypto.randomUUID()}`;
   }

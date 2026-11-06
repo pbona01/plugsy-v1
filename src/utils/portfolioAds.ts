@@ -2,6 +2,7 @@ import { trackPlugsyTikTokEvent } from "./marketplaceAds";
 
 export type PortfolioAdEventName =
   | "ViewContent"
+  | "InitiateCheckout"
   | "ClickButton"
   | "Contact"
   | "SubmitForm"
@@ -12,6 +13,8 @@ type PortfolioAdEventDetails = {
   purchaseReference?: string;
   value?: number;
   currency?: string;
+  contentId?: string;
+  contentName?: string;
 };
 
 type Consent = { analytics: boolean; marketing: boolean };
@@ -107,10 +110,12 @@ export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: Po
   } catch { /* attribution remains best effort */ }
   const value = Number(details.value || 0);
   const currency = String(details.currency || "NGN").trim().toUpperCase();
+  const contentId = String(details.contentId || portfolioSlug).trim().slice(0, 160);
+  const contentName = String(details.contentName || (portfolioSlug === "plugsy-portfolio-builder" ? "Plugsy Portfolio" : `Portfolio: ${portfolioSlug}`)).trim().slice(0, 200);
   if (consent.marketing) {
     trackPlugsyTikTokEvent(tiktokPixelId, eventName, {
-      content_id: portfolioSlug,
-      content_name: portfolioSlug === "plugsy-portfolio-builder" ? "Plugsy Portfolio" : `Portfolio: ${portfolioSlug}`,
+      content_id: contentId,
+      content_name: contentName,
       content_type: "product",
       ...(value > 0 ? { value, currency } : {}),
     }, eventId);
@@ -131,10 +136,33 @@ export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: Po
       purchaseReference: String(details.purchaseReference || "").trim().slice(0, 160),
       value: value > 0 ? value : undefined,
       currency: /^[A-Z]{3}$/.test(currency) ? currency : "NGN",
+      contentId,
+      contentName,
     }),
   });
   if (!response.ok) throw new Error("Portfolio event could not be recorded.");
   return response.json();
+}
+
+export async function trackPlugsyMarketplaceAdEvent(
+  eventName: "ViewContent" | "InitiateCheckout" | "CompleteRegistration",
+  product: { id: string; title: string; price: number; currency?: string },
+  authToken?: string | null,
+  purchaseReference?: string,
+) {
+  return trackPortfolioAdEvent(
+    "plugsy-marketplace",
+    eventName,
+    authToken,
+    crypto.randomUUID(),
+    {
+      purchaseReference,
+      value: Number(product.price || 0),
+      currency: product.currency || "NGN",
+      contentId: product.id,
+      contentName: product.title,
+    },
+  );
 }
 
 export async function trackPortfolioPurchaseConversion(authToken: string, purchaseReference: string, value?: number) {

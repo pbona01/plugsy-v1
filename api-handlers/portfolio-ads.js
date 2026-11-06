@@ -6,6 +6,7 @@ import { requireVerifiedClerkUser } from "../api/_clerkAuth.js";
 
 const EVENT_NAMES = new Set([
   "ViewContent",
+  "InitiateCheckout",
   "ClickButton",
   "Contact",
   "SubmitForm",
@@ -17,6 +18,8 @@ const sha256 = (value) => createHash("sha256").update(String(value || "")).diges
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PORTFOLIO_BUILDER_SLUG = "plugsy-portfolio-builder";
 const PORTFOLIO_BUILDER_ID = "00000000-0000-4000-8000-000000000001";
+const MARKETPLACE_SLUG = "plugsy-marketplace";
+const MARKETPLACE_ID = "00000000-0000-4000-8000-000000000002";
 const rateWindows = new Map();
 
 function client() {
@@ -69,6 +72,8 @@ async function sendTikTokEvent(settings, event, req, rawClickId) {
   const token = decryptMarketplaceAdToken(settings.tiktok_access_token_encrypted);
   const value = Number(req.body?.value || 0);
   const currency = text(req.body?.currency, 3).toUpperCase();
+  const contentId = text(req.body?.contentId, 160) || event.portfolio_id;
+  const contentName = text(req.body?.contentName, 200) || (event.portfolio_slug === PORTFOLIO_BUILDER_SLUG ? "Plugsy Portfolio" : `Portfolio: ${event.portfolio_slug}`);
   const response = await fetch("https://business-api.tiktok.com/open_api/v1.3/event/track/", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Access-Token": token },
@@ -87,8 +92,8 @@ async function sendTikTokEvent(settings, event, req, rawClickId) {
         },
         page: { url: safePageUrl(req.body?.pageUrl), referrer: safePageUrl(req.headers?.referer) },
         properties: {
-          content_id: event.portfolio_id,
-          content_name: event.portfolio_slug === PORTFOLIO_BUILDER_SLUG ? "Plugsy Portfolio" : `Portfolio: ${event.portfolio_slug}`,
+          content_id: contentId,
+          content_name: contentName,
           content_type: "product",
           ...(value > 0 ? { value, currency: /^[A-Z]{3}$/.test(currency) ? currency : "NGN" } : {}),
         },
@@ -127,12 +132,10 @@ async function handleTrack(req, res) {
     if (!registrationActor) return;
     const purchaseReference = text(body.purchaseReference, 160);
     if (purchaseReference) {
-      const { data: purchase, error: purchaseError } = await supabase
-        .from("portfolio_purchases")
-        .select("paystack_ref")
-        .eq("user_id", registrationActor.userId)
-        .eq("paystack_ref", purchaseReference)
-        .maybeSingle();
+      const purchaseQuery = slug === MARKETPLACE_SLUG
+        ? supabase.from("marketplace_orders").select("order_reference").eq("buyer_id", registrationActor.userId).eq("order_reference", purchaseReference).eq("payment_status", "paid")
+        : supabase.from("portfolio_purchases").select("paystack_ref").eq("user_id", registrationActor.userId).eq("paystack_ref", purchaseReference);
+      const { data: purchase, error: purchaseError } = await purchaseQuery.maybeSingle();
       if (purchaseError) throw purchaseError;
       if (!purchase) return res.status(403).json({ success: false, error: "Confirmed portfolio purchase not found." });
     } else {
@@ -150,6 +153,8 @@ async function handleTrack(req, res) {
   }
   let portfolio = slug === PORTFOLIO_BUILDER_SLUG
     ? { id: PORTFOLIO_BUILDER_ID, slug: PORTFOLIO_BUILDER_SLUG, status: "published" }
+    : slug === MARKETPLACE_SLUG
+      ? { id: MARKETPLACE_ID, slug: MARKETPLACE_SLUG, status: "published" }
     : null;
   if (!portfolio) {
     const { data, error: portfolioError } = await supabase

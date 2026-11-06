@@ -507,6 +507,14 @@ async function sellerWorkspace(req, res) {
     supabase.from("marketplace_guest_orders").select("id,order_reference,listing_id,buyer_email,amount,seller_amount,platform_fee,payment_status,funds_status,hold_expires_at,payout_available_at,created_at,updated_at").eq("seller_id", actor.userId).eq("payment_status", "paid").order("created_at", { ascending: false }).limit(250),
   ]);
   if (listingError || sellerError || salesError || guestSalesError) throw listingError || sellerError || salesError || guestSalesError;
+  // Keep the existing workspace usable while the trial/renewal migration is
+  // being rolled out. PostgREST rejects a select containing unknown columns,
+  // so optional billing preferences are loaded separately.
+  let sellerBilling = { premium_features_ready: false };
+  const billingResult = await supabase.from("marketplace_seller_profiles")
+    .select("premium_trial_claimed_at,premium_auto_renew,premium_plan_code,premium_renewal_failure")
+    .eq("user_id", actor.userId).maybeSingle();
+  if (!billingResult.error) sellerBilling = { ...(billingResult.data || {}), premium_features_ready: true };
   const buyerIds = [...new Set((sales || []).map((sale) => text(sale.buyer_id)).filter(Boolean))];
   let buyers = new Map();
   if (buyerIds.length) {
@@ -543,7 +551,7 @@ async function sellerWorkspace(req, res) {
   const verificationRetryAvailable = seller?.verification_status === 'pending'
     && ['prembly', 'prembly_widget'].includes(seller?.verification_provider)
     && (!Number.isFinite(pendingSince) || pendingSince <= Date.now() - 5 * 60_000);
-  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), verification_retry_available: verificationRetryAvailable, trust_score: trustScoreForSeller(seller) }, listings: listingsWithDeliveries, sales: allSales });
+  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), ...sellerBilling, verification_retry_available: verificationRetryAvailable, trust_score: trustScoreForSeller(seller) }, listings: listingsWithDeliveries, sales: allSales });
 }
 
 async function sellerAdIntegrations(req, res, method) {
@@ -1309,7 +1317,52 @@ async function activatePremium(req, res) {
     p_actor_user_id: actor.userId, p_actor_email: actor.email || '', p_idempotency_key: text(body.idempotencyKey), p_plan_code: planCode,
   });
   if (error) return send(res,409,'PREMIUM_ACTIVATION_UNAVAILABLE',`Activation requires an inactive plan and at least ₦${planCode === 'yearly' ? '13,500' : '1,500'} in your Wallet.`);
+  const { error: preferenceError } = await getClient().from('marketplace_seller_profiles').update({
+    premium_auto_renew: body.autoRenew === true,
+    premium_plan_code: planCode,
+    premium_renewal_failure: null,
+    updated_at: new Date().toISOString(),
+  }).eq('user_id', actor.userId);
+  if (preferenceError) console.error('[marketplace] premium renewal preference pending', preferenceError.message || preferenceError);
   return res.status(200).json({success:true,plan:data});
+}
+
+async function startPremiumTrial(req, res) {
+  if (process.env.MARKETPLACE_PAYMENTS_ENABLED !== 'true') return send(res,403,'MARKETPLACE_PREVIEW','Seller plans are disabled during the marketplace preview.');
+  const actor = await requireActor(req,res); if (!actor) return;
+  const body = readBody(req);
+  if (body.acceptedTermsVersion !== 'marketplace-premium-v1' || body.acceptedAutoRenew !== true) {
+    return send(res,400,'PREMIUM_TRIAL_TERMS_REQUIRED','Confirm the free month and ₦1,500 monthly wallet renewal before starting.');
+  }
+  const { data, error } = await getClient().rpc('marketplace_start_premium_trial_v1', {
+    p_actor_user_id: actor.userId,
+    p_plan_code: 'monthly',
+  });
+  if (error) return send(res,409,'PREMIUM_TRIAL_UNAVAILABLE',error.message?.includes('ALREADY_USED') ? 'Your one-time free Premium month has already been used.' : 'The free Premium month could not be started.');
+  return res.status(200).json({ success: true, plan: data });
+}
+
+async function setPremiumAutoRenew(req, res) {
+  const actor = await requireActor(req,res); if (!actor) return;
+  const body = readBody(req);
+  const planCode = ['monthly','yearly'].includes(text(body.planCode)) ? text(body.planCode) : 'monthly';
+  if (typeof body.enabled !== 'boolean') return send(res,400,'PREMIUM_RENEWAL_INPUT_INVALID','Choose whether automatic renewal should be on or off.');
+  const { data, error } = await getClient().rpc('marketplace_set_premium_auto_renew_v1', {
+    p_actor_user_id: actor.userId,
+    p_enabled: body.enabled,
+    p_plan_code: planCode,
+  });
+  if (error) return send(res,409,'PREMIUM_RENEWAL_UNAVAILABLE','Automatic renewal could not be updated.');
+  return res.status(200).json({ success: true, renewal: data });
+}
+
+async function processPremiumRenewals(req, res) {
+  const expectedSecret = text(process.env.CRON_SECRET);
+  const receivedSecret = text(req.headers?.authorization).replace(/^Bearer\s+/i, '');
+  if (!secretsMatch(expectedSecret, receivedSecret)) return send(res,401,'CRON_UNAUTHORIZED','Not authorized.');
+  const { data, error } = await getClient().rpc('marketplace_process_premium_renewals_v1', { p_limit: 250 });
+  if (error) throw error;
+  return res.status(200).json({ success: true, renewals: data });
 }
 
 async function activateStorage(req, res) {
@@ -1744,6 +1797,8 @@ export default async function handler(req, res) {
     if (req.method === "POST" && action === "purchase") return await purchase(req, res);
     if (req.method === "POST" && action === "follow-seller") return await setSellerFollow(req, res);
     if (req.method === 'POST' && action === 'activate-premium') return await activatePremium(req,res);
+    if (req.method === 'POST' && action === 'start-premium-trial') return await startPremiumTrial(req,res);
+    if (req.method === 'POST' && action === 'set-premium-auto-renew') return await setPremiumAutoRenew(req,res);
     if (req.method === 'POST' && action === 'activate-storage') return await activateStorage(req,res);
     if (req.method === 'POST' && action === 'begin-identity-verification') return await beginSellerVerification(req, res);
     if (req.method === 'POST' && action === 'complete-identity-verification') return await completeSellerVerification(req, res);
@@ -1751,6 +1806,7 @@ export default async function handler(req, res) {
     if (req.method === 'POST' && action === 'cancel-identity-verification') return await cancelSellerVerification(req, res);
     if (req.method === "POST" && action === "open-dispute") return await openDispute(req, res);
     if (["GET", "POST"].includes(req.method) && action === "release-due") return await releaseDue(req, res);
+    if (["GET", "POST"].includes(req.method) && action === "process-premium-renewals") return await processPremiumRenewals(req, res);
     if (["GET", "POST"].includes(req.method) && action === "process-emails") return await processEmails(req,res);
     return send(res, 404, "MARKETPLACE_ACTION_NOT_FOUND", "That marketplace action does not exist.");
   } catch (error) {

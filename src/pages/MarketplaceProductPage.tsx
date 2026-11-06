@@ -11,6 +11,7 @@ import { TrustScoreMeter } from "../components/marketplace/TrustScoreMeter";
 import MarketplaceCookieConsent from "../components/marketplace/MarketplaceCookieConsent";
 import { marketplaceMarketingConsent, trackMarketplaceCheckout, trackMarketplaceProductView, trackMarketplacePurchase } from "../utils/marketplaceAds";
 import { getSiteOrigin } from "../lib/siteUrl";
+import { trackPlugsyMarketplaceAdEvent } from "../utils/portfolioAds";
 
 type Product = {
   id: string; title: string; summary: string; description: string; category: string; price: number; currency: string;
@@ -70,7 +71,12 @@ export default function MarketplaceProductPage() {
   useEffect(() => {
     if (!product) return;
     trackMarketplaceProductView(product.seller.adPixels, product);
-    const onConsent = (event: Event) => { if ((event as CustomEvent).detail?.marketing === true) trackMarketplaceProductView(product.seller.adPixels, product); };
+    void trackPlugsyMarketplaceAdEvent("ViewContent", product).catch(() => undefined);
+    const onConsent = (event: Event) => {
+      if ((event as CustomEvent).detail?.marketing !== true) return;
+      trackMarketplaceProductView(product.seller.adPixels, product);
+      void trackPlugsyMarketplaceAdEvent("ViewContent", product).catch(() => undefined);
+    };
     window.addEventListener("plugsy-cookie-consent", onConsent);
     return () => window.removeEventListener("plugsy-cookie-consent", onConsent);
   }, [product]);
@@ -221,7 +227,10 @@ export default function MarketplaceProductPage() {
   };
 
   const buyWithWallet = async () => {
-    if (product) trackMarketplaceCheckout(product.seller.adPixels, product);
+    if (product) {
+      trackMarketplaceCheckout(product.seller.adPixels, product);
+      void trackPlugsyMarketplaceAdEvent("InitiateCheckout", product).catch(() => undefined);
+    }
     if (!product || !userId) { setGuestChoiceOpen(true); return; }
     setBuying(true);
     try {
@@ -234,7 +243,11 @@ export default function MarketplaceProductPage() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) throw new Error(payload?.error || "Purchase could not be completed.");
-      if (payload.purchase?.reference) trackMarketplacePurchase(product.seller.adPixels, product, payload.purchase.reference, Number(payload.purchase.amount || product.price));
+      if (payload.purchase?.reference) {
+        const paidProduct = { ...product, price: Number(payload.purchase.amount || product.price) };
+        trackMarketplacePurchase(product.seller.adPixels, paidProduct, payload.purchase.reference, paidProduct.price);
+        if (token) void trackPlugsyMarketplaceAdEvent("CompleteRegistration", paidProduct, token, payload.purchase.reference).catch(() => undefined);
+      }
       clearMarketplaceAttempt(localStorage, userId, product.id);
       toast.success("Purchase complete. Your product is now in My library.");
       navigate("/marketplace/buyer");
@@ -281,6 +294,7 @@ function GuestChoice({ product, onClose, onSignIn }: { product: Product; onClose
     setBusy(true);
     try {
       trackMarketplaceCheckout(product.seller.adPixels, product);
+      void trackPlugsyMarketplaceAdEvent("InitiateCheckout", product).catch(() => undefined);
       const response = await fetch("/api/marketplace?action=guest-checkout", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ listingId: product.id, email, privateAccessToken: product.privateAccessToken || null, adMarketingConsent: marketplaceMarketingConsent() }) });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) throw new Error(payload?.error || "Guest checkout is unavailable.");
