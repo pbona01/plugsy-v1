@@ -6,6 +6,7 @@ import { requireVerifiedClerkUser } from "../api/_clerkAuth.js";
 
 const EVENT_NAMES = new Set([
   "ViewContent",
+  "AddToCart",
   "InitiateCheckout",
   "ClickButton",
   "Contact",
@@ -92,9 +93,11 @@ async function sendTikTokEvent(settings, event, req, rawClickId) {
         },
         page: { url: safePageUrl(req.body?.pageUrl), referrer: safePageUrl(req.headers?.referer) },
         properties: {
-          content_id: contentId,
-          content_name: contentName,
+          content_ids: [contentId],
+          contents: [{ content_id: contentId, content_name: contentName, quantity: 1, ...(value > 0 ? { price: value } : {}) }],
+          description: contentName,
           content_type: "product",
+          quantity: 1,
           ...(value > 0 ? { value, currency: /^[A-Z]{3}$/.test(currency) ? currency : "NGN" } : {}),
         },
       }],
@@ -127,7 +130,7 @@ async function handleTrack(req, res) {
 
   const supabase = client();
   let registrationActor = null;
-  if (eventName === "CompleteRegistration") {
+  if (eventName === "CompleteRegistration" || (eventName === "Purchase" && slug === MARKETPLACE_SLUG)) {
     registrationActor = await requireVerifiedClerkUser(req, res);
     if (!registrationActor) return;
     const purchaseReference = text(body.purchaseReference, 160);
@@ -138,7 +141,7 @@ async function handleTrack(req, res) {
       const { data: purchase, error: purchaseError } = await purchaseQuery.maybeSingle();
       if (purchaseError) throw purchaseError;
       if (!purchase) return res.status(403).json({ success: false, error: "Confirmed portfolio purchase not found." });
-    } else {
+    } else if (eventName === "CompleteRegistration") {
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("created_at")
@@ -149,7 +152,7 @@ async function handleTrack(req, res) {
       if (!Number.isFinite(createdAt) || Date.now() - createdAt > 30 * 60_000) {
         return res.status(202).json({ success: true, recorded: false, reason: "REGISTRATION_NOT_NEW" });
       }
-    }
+    } else return res.status(400).json({ success: false, error: "A confirmed purchase reference is required." });
   }
   let portfolio = slug === PORTFOLIO_BUILDER_SLUG
     ? { id: PORTFOLIO_BUILDER_ID, slug: PORTFOLIO_BUILDER_SLUG, status: "published" }

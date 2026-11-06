@@ -1,12 +1,15 @@
-import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react"
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, Suspense, lazy } from "react"
 import { supabase } from "@/lib/supabase"
 import { ringtonePlayer } from "@/utils/ringtones"
 import { useAuth, useUser } from "@clerk/clerk-react"
 import IncomingCallScreen from "@/components/calls/IncomingCallScreen"
 import OutgoingCallScreen from "@/components/calls/OutgoingCallScreen"
-import ActiveCallScreen from "@/components/calls/ActiveCallScreen"
 import { endPersistedCall } from "@/utils/callLifecycle"
 import { createActiveCallReconciler } from "@/utils/activeCallReconciliation"
+
+// Daily's video SDK is large. Load it only when a call is actually active,
+// rather than making every Plugsy visitor download it at startup.
+const ActiveCallScreen = lazy(() => import("@/components/calls/ActiveCallScreen"))
 
 export interface CallState {
   id: string
@@ -434,7 +437,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
       {children}
       {incomingCall && <IncomingCallScreen call={incomingCall} />}
       {outgoingCall && <OutgoingCallScreen call={outgoingCall} />}
-      {activeCall && <ActiveCallScreen call={activeCall} />}
+      {activeCall && <Suspense fallback={null}><ActiveCallScreen call={activeCall} /></Suspense>}
     </CallContext.Provider>
   )
 }

@@ -8,6 +8,7 @@ import './index.css';
 import { ThemeProvider, useTheme } from './lib/ThemeContext';
 import { HelmetProvider } from 'react-helmet-async';
 import { installNativeApiFetch } from './lib/nativeApiFetch';
+import { recoverStaleDeployment } from './utils/deploymentRecovery';
 
 // Capacitor's bundled pages are served from a local WebView origin. All app
 // API calls must instead reach the hosted Plugsy backend.
@@ -18,11 +19,7 @@ installNativeApiFetch();
 // presenting a blank route to the user.
 window.addEventListener("vite:preloadError", (event) => {
   event.preventDefault();
-  const key = "plugsy-vite-preload-reload";
-  if (sessionStorage.getItem(key) !== window.location.href) {
-    sessionStorage.setItem(key, window.location.href);
-    window.location.reload();
-  }
+  void recoverStaleDeployment("preload");
 });
 
 function ThemedClerkProvider({ children }: { children: React.ReactNode }) {
@@ -216,7 +213,6 @@ function ThemedClerkProvider({ children }: { children: React.ReactNode }) {
       appearance={{
         baseTheme: theme === 'dark' ? dark : undefined,
       }}
-      clerkJSUrl="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
     >
       {children}
     </ClerkProvider>

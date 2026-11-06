@@ -1,6 +1,6 @@
 import { CallProvider } from "./contexts/CallContext";
 import React, { lazy, Suspense, useEffect } from "react";
-import { HelmetProvider, Helmet } from "react-helmet-async";
+import { Helmet } from "react-helmet-async";
 import {
   BrowserRouter as Router,
   Routes,
@@ -11,7 +11,6 @@ import {
   useParams,
 } from "react-router-dom";
 import { useAuth, useUser } from "@clerk/clerk-react";
-import { ThemeProvider } from "./lib/ThemeContext";
 import { syncClerkUserToSupabase, isAdmin } from "./lib/authUtils";
 import { PortfolioAccessProvider, usePortfolioAccess } from "./lib/PortfolioContext";
 import { setSupabaseAuth, supabase } from "./lib/supabase";
@@ -21,6 +20,7 @@ import { GlobalErrorBoundary } from "./components/GlobalErrorBoundary";
 
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import { recoverStaleDeployment } from "./utils/deploymentRecovery";
 const DYNAMIC_IMPORT_RELOAD_KEY = "plugsy-dynamic-import-reload";
 const lazyWithDeploymentRecovery = <T extends React.ComponentType<any>>(
   load: () => Promise<{ default: T }>,
@@ -32,9 +32,7 @@ const lazyWithDeploymentRecovery = <T extends React.ComponentType<any>>(
   } catch (error) {
     // A deploy can replace hashed chunks while a previous HTML shell remains
     // open. Reload once to retrieve a matching shell and asset manifest.
-    if (typeof window !== "undefined" && sessionStorage.getItem(DYNAMIC_IMPORT_RELOAD_KEY) !== window.location.href) {
-      sessionStorage.setItem(DYNAMIC_IMPORT_RELOAD_KEY, window.location.href);
-      window.location.reload();
+    if (typeof window !== "undefined" && await recoverStaleDeployment(DYNAMIC_IMPORT_RELOAD_KEY)) {
       return new Promise<never>(() => {});
     }
     throw error;
@@ -86,16 +84,15 @@ const PrivacyPolicy = lazyWithDeploymentRecovery(() => import("./pages/PrivacyPo
 const BackgroundGradientAnimationDemo = lazyWithDeploymentRecovery(() => import("./components/effects/background-gradient-animation-demo").then((module) => ({ default: module.BackgroundGradientAnimationDemo })));
 const BackgroundComponentsDemo = lazyWithDeploymentRecovery(() => import("./components/effects/background-components-demo"));
 const DemoHeroGeometric = lazyWithDeploymentRecovery(() => import("./components/effects/shape-landing-hero-demo"));
+const ChatWidget = lazyWithDeploymentRecovery(() => import("./components/chat/ChatWidget"));
+const NotificationBell = lazyWithDeploymentRecovery(() => import("./components/NotificationBell"));
+const InstallApp = lazyWithDeploymentRecovery(() => import("./components/InstallApp"));
+const RealtimeNotifications = lazyWithDeploymentRecovery(() => import("./components/RealtimeNotifications"));
 import Navbar from "./components/layout/Navbar";
 import DashboardBackButton from "./components/layout/DashboardBackButton";
 import Footer from "./components/layout/Footer";
-import ChatWidget from "./components/chat/ChatWidget";
-import NotificationBell from "./components/NotificationBell";
-import InstallApp from "./components/InstallApp";
-import SplashScreen from "./components/SplashScreen";
 import LoadingSplash from "./components/LoadingSplash";
 import { safeAuthRedirect } from "./utils/safeAuthRedirect";
-import RealtimeNotifications from "./components/RealtimeNotifications";
 import { Toaster } from "react-hot-toast";
 import { initOneSignal, clearAppBadge, silentlyLinkOneSignalUser, logoutOneSignalUser } from "./utils/onesignal";
 import { retryPendingPortfolioRegistration, trackPortfolioRegistration } from "./utils/portfolioAds";
@@ -389,9 +386,9 @@ export default function App() {
   }
 
   return (
-    <HelmetProvider>
+    <>
       <Toaster position="top-center" containerStyle={{ zIndex: 99999 }} />
-      <RealtimeNotifications />
+      <Suspense fallback={null}><RealtimeNotifications /></Suspense>
       <Helmet>
         <title>Plugsy | smart, low cost &amp; for all.</title>
         <meta
@@ -399,9 +396,7 @@ export default function App() {
           content="Simple digital solution built around what you actually need."
         />
       </Helmet>
-      <SplashScreen />
-      <MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}>
-      <ThemeProvider>
+      <MotionConfig reducedMotion="user" transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}>
         <PortfolioAccessProvider>
           <Router>
             <OnlinePresenceProvider>
@@ -410,9 +405,8 @@ export default function App() {
             </OnlinePresenceProvider>
           </Router>
         </PortfolioAccessProvider>
-      </ThemeProvider>
       </MotionConfig>
-    </HelmetProvider>
+    </>
   );
 }
 
@@ -487,13 +481,13 @@ function AppContent({
   }, [navigate]);
 
   const mainRoutes = (
-    <AnimatePresence initial={false} mode="wait">
+    <AnimatePresence initial={false} mode="sync">
       <motion.div
         key={location.pathname}
-        initial={{ opacity: 0, y: reduceMotion ? 0 : 6, scale: reduceMotion ? 1 : 0.998 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: reduceMotion ? 0 : -2, scale: 1 }}
-        transition={{ duration: reduceMotion ? 0.01 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: reduceMotion ? 0.01 : 0.12, ease: "easeOut" }}
         className="page-shell w-full h-full flex-grow flex flex-col overflow-x-hidden"
       >
         <GlobalErrorBoundary>
@@ -811,9 +805,11 @@ function AppContent({
         >
           {mainRoutes}
         </main>
-        {!hideFloatingSupport && <ChatWidget />}
-        <NotificationBell />
-        <InstallApp />
+        <Suspense fallback={null}>
+          {!hideFloatingSupport && <ChatWidget />}
+          <NotificationBell />
+          <InstallApp />
+        </Suspense>
       </div>
     </CallProvider>
   );

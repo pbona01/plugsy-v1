@@ -26,17 +26,23 @@ export function decryptMarketplaceAdToken(value) {
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
 export async function sendMarketplacePurchaseEvents(supabase, { sellerId, listing, reference, amount, currency = "NGN", email = "", sourceUrl = "", userAgent = "", ip = "" }) {
-  const { data: config, error } = await supabase.from("marketplace_ad_integrations")
-    .select("meta_pixel_id,meta_access_token_encrypted,tiktok_pixel_id,tiktok_access_token_encrypted")
-    .eq("seller_id", sellerId).maybeSingle();
+  const [{ data: config, error }, { data: plugsyConfig, error: plugsyConfigError }] = await Promise.all([
+    supabase.from("marketplace_ad_integrations")
+      .select("meta_pixel_id,meta_access_token_encrypted,tiktok_pixel_id,tiktok_access_token_encrypted")
+      .eq("seller_id", sellerId).maybeSingle(),
+    supabase.from("portfolio_ad_settings_v1")
+      .select("tiktok_pixel_id,tiktok_access_token_encrypted,enabled")
+      .eq("id", "primary").maybeSingle(),
+  ]);
   if (error) throw error;
-  if (!config) return;
+  if (plugsyConfigError && plugsyConfigError.code !== "42P01") throw plugsyConfigError;
+  if (!config && !plugsyConfig) return;
   const time = Math.floor(Date.now() / 1000);
   const normalizedEmail = text(email).toLowerCase();
   const hashedEmail = normalizedEmail ? sha256(normalizedEmail) : undefined;
   const tasks = [];
 
-  if (config.meta_pixel_id && config.meta_access_token_encrypted) tasks.push((async () => {
+  if (config?.meta_pixel_id && config.meta_access_token_encrypted) tasks.push((async () => {
     const version = /^v\d+\.\d+$/.test(text(process.env.META_GRAPH_API_VERSION)) ? text(process.env.META_GRAPH_API_VERSION) : "v26.0";
     const accessToken = decryptMarketplaceAdToken(config.meta_access_token_encrypted);
     const response = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(config.meta_pixel_id)}/events?access_token=${encodeURIComponent(accessToken)}`, {
@@ -48,7 +54,7 @@ export async function sendMarketplacePurchaseEvents(supabase, { sellerId, listin
     if (!response.ok) throw new Error(`Meta Conversions API returned ${response.status}.`);
   })());
 
-  if (config.tiktok_pixel_id && config.tiktok_access_token_encrypted) tasks.push((async () => {
+  if (config?.tiktok_pixel_id && config.tiktok_access_token_encrypted) tasks.push((async () => {
     const accessToken = decryptMarketplaceAdToken(config.tiktok_access_token_encrypted);
     const response = await fetch("https://business-api.tiktok.com/open_api/v1.3/event/track/", {
       method: "POST", headers: { "Content-Type": "application/json", "Access-Token": accessToken },
@@ -57,6 +63,22 @@ export async function sendMarketplacePurchaseEvents(supabase, { sellerId, listin
     });
     const result = await response.json().catch(() => null);
     if (!response.ok || (result?.code !== undefined && Number(result.code) !== 0)) throw new Error(`TikTok Events API returned ${response.status}.`);
+  })());
+
+  // The platform pixel receives the same consented, deduplicated purchase as
+  // the seller pixel. This also covers guest checkout and cases where the
+  // browser navigates away before its keepalive request finishes.
+  if (plugsyConfig?.enabled && plugsyConfig.tiktok_pixel_id && plugsyConfig.tiktok_access_token_encrypted
+    && plugsyConfig.tiktok_pixel_id !== config?.tiktok_pixel_id) tasks.push((async () => {
+    const accessToken = decryptMarketplaceAdToken(plugsyConfig.tiktok_access_token_encrypted);
+    const response = await fetch("https://business-api.tiktok.com/open_api/v1.3/event/track/", {
+      method: "POST", headers: { "Content-Type": "application/json", "Access-Token": accessToken },
+      body: JSON.stringify({ event_source: "web", event_source_id: plugsyConfig.tiktok_pixel_id, data: [{ event: "Purchase", event_time: time, event_id: reference,
+        user: { email: hashedEmail, user_agent: userAgent || undefined, ip: ip || undefined }, page: { url: sourceUrl || undefined },
+        properties: { currency, value: Number(amount), content_ids: [listing.id], contents: [{ content_id: listing.id, content_name: listing.title, content_type: "product", price: Number(amount), quantity: 1 }], content_type: "product", quantity: 1 } }] }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || (result?.code !== undefined && Number(result.code) !== 0)) throw new Error(`Plugsy TikTok Events API returned ${response.status}.`);
   })());
 
   const results = await Promise.allSettled(tasks);

@@ -51,11 +51,17 @@ export default defineConfig(({mode}) => {
           ]
         } as any,
         workbox: {
+          cleanupOutdatedCaches: true,
+          skipWaiting: true,
+          clientsClaim: true,
           importScripts: [
             "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js",
             "/onesignal-badge-sw.js"
           ],
-          globPatterns: ["**/*.{html,ico,png,svg}", "assets/index-*.css"],
+          // Never pin index.html or hashed JavaScript in the service worker.
+          // A cached HTML shell that references a removed deployment chunk is
+          // the main cause of intermittent blank screens after releases.
+          globPatterns: ["**/*.{ico,png,svg}", "assets/index-*.css"],
           globIgnores: [
             "icon-192.png",
             "icon-512.png",
@@ -63,14 +69,8 @@ export default defineConfig(({mode}) => {
             "icon-maskable-512.png",
           ],
           maximumFileSizeToCacheInBytes: 4000000,
-          navigateFallback: "/index.html",
-          navigateFallbackDenylist: [/^\/api\//],
+          navigateFallback: null,
           runtimeCaching: [
-            {
-              urlPattern: ({ request, url }) => url.origin === self.location.origin && ["script", "style", "worker"].includes(request.destination),
-              handler: "StaleWhileRevalidate",
-              options: { cacheName: "plugsy-app-assets", expiration: { maxEntries: 80, maxAgeSeconds: 60 * 60 * 24 * 30 } }
-            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: "CacheFirst",

@@ -2,6 +2,7 @@ import { trackPlugsyTikTokEvent } from "./marketplaceAds";
 
 export type PortfolioAdEventName =
   | "ViewContent"
+  | "AddToCart"
   | "InitiateCheckout"
   | "ClickButton"
   | "Contact"
@@ -114,9 +115,11 @@ export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: Po
   const contentName = String(details.contentName || (portfolioSlug === "plugsy-portfolio-builder" ? "Plugsy Portfolio" : `Portfolio: ${portfolioSlug}`)).trim().slice(0, 200);
   if (consent.marketing) {
     trackPlugsyTikTokEvent(tiktokPixelId, eventName, {
-      content_id: contentId,
-      content_name: contentName,
+      content_ids: [contentId],
+      contents: [{ content_id: contentId, content_name: contentName, quantity: 1, ...(value > 0 ? { price: value } : {}) }],
+      description: contentName,
       content_type: "product",
+      quantity: 1,
       ...(value > 0 ? { value, currency } : {}),
     }, eventId);
   } else window.ttq?.revokeConsent?.();
@@ -145,7 +148,7 @@ export async function trackPortfolioAdEvent(portfolioSlug: string, eventName: Po
 }
 
 export async function trackPlugsyMarketplaceAdEvent(
-  eventName: "ViewContent" | "InitiateCheckout" | "CompleteRegistration",
+  eventName: "ViewContent" | "AddToCart" | "InitiateCheckout" | "Purchase",
   product: { id: string; title: string; price: number; currency?: string },
   authToken?: string | null,
   purchaseReference?: string,

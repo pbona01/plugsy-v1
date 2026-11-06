@@ -9,7 +9,7 @@ import { marketplaceAttempt, clearMarketplaceAttempt } from "../utils/marketplac
 import { loadSavedPurchaseCode } from "../lib/purchaseCodeProfile";
 import { TrustScoreMeter } from "../components/marketplace/TrustScoreMeter";
 import MarketplaceCookieConsent from "../components/marketplace/MarketplaceCookieConsent";
-import { marketplaceMarketingConsent, trackMarketplaceCheckout, trackMarketplaceProductView, trackMarketplacePurchase } from "../utils/marketplaceAds";
+import { marketplaceMarketingConsent, trackMarketplaceAddToCart, trackMarketplaceCheckout, trackMarketplaceProductView, trackMarketplacePurchase } from "../utils/marketplaceAds";
 import { getSiteOrigin } from "../lib/siteUrl";
 import { trackPlugsyMarketplaceAdEvent } from "../utils/portfolioAds";
 
@@ -228,10 +228,12 @@ export default function MarketplaceProductPage() {
 
   const buyWithWallet = async () => {
     if (product) {
-      trackMarketplaceCheckout(product.seller.adPixels, product);
-      void trackPlugsyMarketplaceAdEvent("InitiateCheckout", product).catch(() => undefined);
+      trackMarketplaceAddToCart(product.seller.adPixels, product);
+      void trackPlugsyMarketplaceAdEvent("AddToCart", product).catch(() => undefined);
     }
     if (!product || !userId) { setGuestChoiceOpen(true); return; }
+    trackMarketplaceCheckout(product.seller.adPixels, product);
+    void trackPlugsyMarketplaceAdEvent("InitiateCheckout", product).catch(() => undefined);
     setBuying(true);
     try {
       const token = await getToken();
@@ -246,7 +248,7 @@ export default function MarketplaceProductPage() {
       if (payload.purchase?.reference) {
         const paidProduct = { ...product, price: Number(payload.purchase.amount || product.price) };
         trackMarketplacePurchase(product.seller.adPixels, paidProduct, payload.purchase.reference, paidProduct.price);
-        if (token) void trackPlugsyMarketplaceAdEvent("CompleteRegistration", paidProduct, token, payload.purchase.reference).catch(() => undefined);
+        if (token) void trackPlugsyMarketplaceAdEvent("Purchase", paidProduct, token, payload.purchase.reference).catch(() => undefined);
       }
       clearMarketplaceAttempt(localStorage, userId, product.id);
       toast.success("Purchase complete. Your product is now in My library.");

@@ -8,6 +8,8 @@ type Range = "7d" | "30d" | "90d";
 type Settings = { tiktokPixelId: string; tiktokTokenConnected: boolean; enabled: boolean; updatedAt: string | null };
 type Analytics = {
   views: number;
+  addToCarts: number;
+  checkouts: number;
   uniqueVisitors: number;
   buttonClicks: number;
   contacts: number;
@@ -22,7 +24,7 @@ type Analytics = {
 };
 type Payload = { analytics: Analytics; settings: Settings; publishedPortfolios: Array<{ id: string; slug: string; name: string }>; updatedAt: string };
 
-const emptyAnalytics: Analytics = { views: 0, uniqueVisitors: 0, buttonClicks: 0, contacts: 0, registrations: 0, purchases: 0, conversionRate: 0, tiktokSent: 0, tiktokFailed: 0, daily: [], campaigns: [], portfolios: [] };
+const emptyAnalytics: Analytics = { views: 0, addToCarts: 0, checkouts: 0, uniqueVisitors: 0, buttonClicks: 0, contacts: 0, registrations: 0, purchases: 0, conversionRate: 0, tiktokSent: 0, tiktokFailed: 0, daily: [], campaigns: [], portfolios: [] };
 
 export function TikTokAdsPanel({ getToken }: { getToken: () => Promise<string | null> }) {
   const [range, setRange] = useState<Range>("7d");
@@ -115,7 +117,7 @@ export function TikTokAdsPanel({ getToken }: { getToken: () => Promise<string | 
     <div className="grid gap-6 xl:grid-cols-[1.35fr_.65fr]">
       <section className="card-premium p-6 md:p-8"><div className="flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-widest text-brand-accent">Daily traffic</p><h3 className="mt-2 text-xl font-black">Portfolio views</h3></div><button onClick={()=>void load()} className="rounded-xl border border-brand-border p-3 text-brand-text-secondary" aria-label="Refresh TikTok analytics"><RefreshCw size={16} className={loading?'animate-spin':''}/></button></div><div className="mt-8 flex h-56 items-end gap-1.5 sm:gap-3">{analytics.daily.map((item)=><div key={item.date} className="group flex h-full flex-1 flex-col justify-end"><div title={`${item.date}: ${item.views} views`} style={{height:`${Math.max(item.views?8:2,(item.views/maxDaily)*100)}%`}} className="min-h-0 rounded-t-lg bg-gradient-to-t from-brand-accent to-cyan-300 transition-opacity group-hover:opacity-80"/><span className="mt-2 hidden truncate text-center text-[8px] text-brand-text-secondary sm:block">{new Date(`${item.date}T00:00:00Z`).toLocaleDateString('en-NG',{day:'numeric',month:'short'})}</span></div>)}</div></section>
       <section className="card-premium p-6 md:p-8"><p className="text-[10px] font-black uppercase tracking-widest text-brand-accent">Funnel</p><h3 className="mt-2 text-xl font-black">What visitors did</h3><div className="mt-7 space-y-5">{[
-        ['Viewed portfolio',analytics.views],['Clicked a button',analytics.buttonClicks],['Contacted creator',analytics.contacts],['Registered',analytics.registrations],['Purchased',analytics.purchases]
+        ['Viewed content',analytics.views],['Added to cart',analytics.addToCarts],['Started checkout',analytics.checkouts],['Clicked a button',analytics.buttonClicks],['Contacted creator',analytics.contacts],['Registered',analytics.registrations],['Purchased',analytics.purchases]
       ].map(([label,value],index)=>{const numeric=Number(value);const width=analytics.views?Math.max(numeric?5:0,(numeric/analytics.views)*100):0;return <div key={String(label)}><div className="mb-2 flex justify-between text-xs"><span className="font-bold">{label}</span><span className="font-black">{numeric.toLocaleString()}</span></div><div className="h-2 overflow-hidden rounded-full bg-brand-text/[.05]"><div style={{width:`${width}%`}} className={cn("h-full rounded-full",index===0?'bg-brand-accent':index===2?'bg-emerald-400':'bg-violet-400')}/></div></div>})}</div></section>
     </div>
 

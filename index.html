@@ -16,7 +16,8 @@
     <!-- Verification Portfolio Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'" />
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet" /></noscript>
     
     <meta name="keywords" content="Digital products, creator portfolios, Plugsy marketplace, creator tools" />
     
@@ -34,7 +35,11 @@
 
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div role="status" aria-label="Opening Plugsy" style="min-height:100vh;display:grid;place-items:center;background:#05070d;color:#f8fafc;font-family:Inter,system-ui,sans-serif">
+        <div style="text-align:center"><img src="/logo.svg" alt="" width="64" height="64" style="border-radius:999px;background:#000;padding:6px"/><div style="margin-top:14px;font-weight:800">Plugsy<span style="color:#1677ff">.</span></div><div style="margin-top:8px;color:#94a3b8;font-size:13px">Opening your space…</div></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

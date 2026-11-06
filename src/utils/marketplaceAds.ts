@@ -90,21 +90,31 @@ export function trackMarketplaceProductView(pixels: MarketplaceAdPixels | null |
   }
   if (pixels?.tiktokPixelId) {
     ensureTikTok(pixels.tiktokPixelId);
-    window.ttq?.instance?.(pixels.tiktokPixelId)?.track?.("ViewContent", { content_id: product.id, content_name: product.title, content_category: product.category, content_type: "product", value: product.price, currency: product.currency || "NGN" });
+    window.ttq?.instance?.(pixels.tiktokPixelId)?.track?.("ViewContent", { content_ids: [product.id], contents: [{ content_id: product.id, content_name: product.title, quantity: 1, price: product.price }], description: product.title, content_type: "product", quantity: 1, value: product.price, currency: product.currency || "NGN" });
+  }
+}
+
+export function trackMarketplaceAddToCart(pixels: MarketplaceAdPixels | null | undefined, product: MarketplaceAdProduct) {
+  if (!getMarketingConsent()) return;
+  const properties = { content_ids: [product.id], content_name: product.title, content_type: "product", value: product.price, currency: product.currency || "NGN" };
+  if (pixels?.metaPixelId) { ensureMeta(pixels.metaPixelId); window.fbq?.("track", "AddToCart", properties); }
+  if (pixels?.tiktokPixelId) {
+    ensureTikTok(pixels.tiktokPixelId);
+    window.ttq?.instance?.(pixels.tiktokPixelId)?.track?.("AddToCart", { content_ids: [product.id], contents: [{ content_id: product.id, content_name: product.title, quantity: 1, price: product.price }], description: product.title, content_type: "product", quantity: 1, value: product.price, currency: product.currency || "NGN" });
   }
 }
 
 export function trackMarketplaceCheckout(pixels: MarketplaceAdPixels | null | undefined, product: MarketplaceAdProduct) {
   if (!getMarketingConsent()) return;
   if (pixels?.metaPixelId) { ensureMeta(pixels.metaPixelId); window.fbq?.("track", "InitiateCheckout", { content_ids: [product.id], content_name: product.title, value: product.price, currency: product.currency || "NGN" }); }
-  if (pixels?.tiktokPixelId) { ensureTikTok(pixels.tiktokPixelId); window.ttq?.instance?.(pixels.tiktokPixelId)?.track?.("InitiateCheckout", { content_id: product.id, content_name: product.title, value: product.price, currency: product.currency || "NGN" }); }
+  if (pixels?.tiktokPixelId) { ensureTikTok(pixels.tiktokPixelId); window.ttq?.instance?.(pixels.tiktokPixelId)?.track?.("InitiateCheckout", { content_ids: [product.id], contents: [{ content_id: product.id, content_name: product.title, quantity: 1, price: product.price }], description: product.title, content_type: "product", quantity: 1, value: product.price, currency: product.currency || "NGN" }); }
 }
 
 export function trackMarketplacePurchase(pixels: MarketplaceAdPixels | null | undefined, product: MarketplaceAdProduct, eventId: string, value = product.price) {
   if (!eventId || !getMarketingConsent()) return;
   const amount = Number(value || 0);
   if (pixels?.metaPixelId) { ensureMeta(pixels.metaPixelId); window.fbq?.("track", "Purchase", { content_ids: [product.id], content_name: product.title, content_type: "product", value: amount, currency: product.currency || "NGN" }, { eventID: eventId }); }
-  if (pixels?.tiktokPixelId) { ensureTikTok(pixels.tiktokPixelId); window.ttq?.instance?.(pixels.tiktokPixelId)?.track?.("Purchase", { content_id: product.id, content_name: product.title, content_type: "product", value: amount, currency: product.currency || "NGN" }, { event_id: eventId }); }
+  if (pixels?.tiktokPixelId) { ensureTikTok(pixels.tiktokPixelId); window.ttq?.instance?.(pixels.tiktokPixelId)?.track?.("Purchase", { content_ids: [product.id], contents: [{ content_id: product.id, content_name: product.title, quantity: 1, price: amount }], description: product.title, content_type: "product", quantity: 1, value: amount, currency: product.currency || "NGN" }, { event_id: eventId }); }
 }
 
 export function marketplaceMarketingConsent() { return getMarketingConsent(); }

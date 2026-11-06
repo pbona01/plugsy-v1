@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { LiquidGlass } from './ui/LiquidGlass';
 import { AlertCircle, RotateCcw } from 'lucide-react';
+import { recoverStaleDeployment } from '../utils/deploymentRecovery';
 
 interface Props {
   children?: ReactNode;
@@ -30,11 +30,7 @@ export class GlobalErrorBoundary extends React.Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-brand-bg flex items-center justify-center p-6">
-          <LiquidGlass 
-            className="w-full max-w-lg p-8 rounded-3xl border border-white/10 flex flex-col items-center justify-center text-center space-y-6"
-            blur={20}
-            chromaticAberration={2}
-          >
+          <section className="w-full max-w-lg rounded-3xl border border-brand-border bg-brand-surface p-8 text-center shadow-2xl">
             <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 border border-red-500/20 mb-2">
               <AlertCircle size={32} />
             </div>
@@ -54,19 +50,17 @@ export class GlobalErrorBoundary extends React.Component<Props, State> {
               </div>
             )}
             
-            <LiquidGlass 
-              button
-              color="white"
-              onClick={() => {
+            <button
+              onClick={async () => {
                 this.setState({ hasError: false, error: null });
-                window.location.reload();
+                if (!await recoverStaleDeployment("boundary")) window.location.reload();
               }}
-              className="mt-4 px-6 py-3 rounded-full flex items-center gap-2"
+              className="mx-auto mt-6 flex items-center gap-2 rounded-full bg-brand-accent px-6 py-3 text-white"
             >
               <RotateCcw size={16} />
               <span className="uppercase text-xs tracking-widest font-bold">Reset Interface</span>
-            </LiquidGlass>
-          </LiquidGlass>
+            </button>
+          </section>
         </div>
       );
     }

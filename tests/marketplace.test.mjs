@@ -299,7 +299,10 @@ test('marketplace ad measurement is consent gated, encrypted and wired to both p
   assert.match(ads, /aes-256-gcm/);
   assert.match(ads, /graph\.facebook\.com/);
   assert.match(ads, /business-api\.tiktok\.com/);
+  assert.match(ads, /portfolio_ad_settings_v1/);
+  assert.match(ads, /Plugsy TikTok Events API/);
   assert.match(productPage, /trackMarketplaceProductView/);
+  assert.match(productPage, /trackMarketplaceAddToCart/);
   assert.match(productPage, /trackMarketplaceCheckout/);
   assert.match(productPage, /trackMarketplacePurchase/);
 });

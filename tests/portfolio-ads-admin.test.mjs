@@ -114,14 +114,18 @@ test("confirmed portfolio purchases fire the configured CompleteRegistration con
   assert.match(api, /providerDeliveryStatus/);
 });
 
-test("Plugsy main pixel tracks marketplace product views and confirmed wallet purchases", () => {
+test("Plugsy main pixel tracks the complete marketplace funnel", () => {
   const product = read("src/pages/MarketplaceProductPage.tsx");
   const client = read("src/utils/portfolioAds.ts");
   const api = read("api-handlers/portfolio-ads.js");
   assert.match(product, /trackPlugsyMarketplaceAdEvent\("ViewContent", product\)/);
+  assert.match(product, /trackPlugsyMarketplaceAdEvent\("AddToCart", product\)/);
   assert.match(product, /trackPlugsyMarketplaceAdEvent\("InitiateCheckout", product\)/);
-  assert.match(product, /trackPlugsyMarketplaceAdEvent\("CompleteRegistration", paidProduct, token, payload\.purchase\.reference\)/);
+  assert.match(product, /trackPlugsyMarketplaceAdEvent\("Purchase", paidProduct, token, payload\.purchase\.reference\)/);
+  assert.match(client, /"ViewContent" \| "AddToCart" \| "InitiateCheckout" \| "Purchase"/);
+  assert.match(client, /contents: \[\{ content_id: contentId/);
   assert.match(client, /"plugsy-marketplace"/);
+  assert.match(api, /"AddToCart"/);
   assert.match(api, /MARKETPLACE_SLUG = "plugsy-marketplace"/);
   assert.match(api, /from\("marketplace_orders"\)/);
   assert.match(api, /eq\("payment_status", "paid"\)/);

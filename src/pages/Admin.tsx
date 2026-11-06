@@ -201,12 +201,11 @@ export default function Admin() {
     fetchMyProfile();
   }, [userId, getToken]);
   
-  const [activeTab, setActiveTab] = useState(tabParam || 'overview');
+  const [activeTab, setActiveTab] = useState(tabParam && tabParam !== 'pending' ? tabParam : 'overview');
   const activeTabRef = useRef(activeTab);
   const [withdrawalSubTab, setWithdrawalSubTab] = useState<'pending' | 'history'>('pending');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [loginsInput, setLoginsInput] = useState<Record<string, string>>({});
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -443,20 +442,10 @@ export default function Admin() {
     if (colMap[id]) setFetchErrors(prev => ({ ...prev, [colMap[id]]: false }));
   };
 
-  // Derived Pending Queue
-  const pendingQueue = orders.filter((o: any) => {
-    const status = o.payment_status || o.status;
-    const dStatus = o.delivery_status;
-    const isValidStatus = status === 'paid' || status === 'pending';
-    const isNotDelivered = dStatus !== 'login_sent' && dStatus !== 'delivered';
-    const isMedal = o.product_name?.toLowerCase().includes("medal");
-    return isValidStatus && isNotDelivered && !isMedal;
-  });
-  
   // Real-time handling is already managed by fetchAll which updates orders
   useEffect(() => {
     if (tabParam) {
-      setActiveTab(tabParam);
+      setActiveTab(tabParam === 'pending' ? 'overview' : tabParam);
     }
   }, [tabParam]);
 
@@ -583,14 +572,14 @@ export default function Admin() {
         portfolioData,
         configData
       ] = await Promise.all([
-        fetchAdminData('profiles', 500),
+        fetchAdminData('profiles'),
         fetchAdminData('orders'),
-        fetchAdminData('subscriptions', 1000), // 1s delay
-        fetchAdminData('chats', 500),
-        fetchAdminData('plans', 500),
-        tabParam !== 'pending' ? fetchAdminData('withdrawals', 1500) : Promise.resolve(null),
-        tabParam !== 'pending' ? fetchAdminData('portfolio_purchases', 1000) : Promise.resolve(null),
-        tabParam !== 'pending' ? fetchAdminData('site_settings', 500) : Promise.resolve(null)
+        fetchAdminData('subscriptions'),
+        fetchAdminData('chats'),
+        fetchAdminData('plans'),
+        fetchAdminData('withdrawals'),
+        fetchAdminData('portfolio_purchases'),
+        fetchAdminData('site_settings')
       ]);
 
       if (usersData) setUsers(usersData);
@@ -602,16 +591,17 @@ export default function Admin() {
       if (withdrawalsData !== null && withdrawalsData !== undefined) setWithdrawals(withdrawalsData);
       
       if (configData !== null && configData !== undefined) {
-        const isKeyValPattern = configData.length > 0 && 'setting_key' in configData[0];
+        const configRows = safeArray(configData);
+        const isKeyValPattern = configRows.length > 0 && 'setting_key' in configRows[0];
         if (isKeyValPattern) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const settingsObj = configData.reduce((acc: any, item: any) => {
+          const settingsObj = configRows.reduce((acc: any, item: any) => {
             acc[item.setting_key] = item.setting_value;
             return acc;
           }, {});
           setSiteSettings(settingsObj);
-        } else if (configData.length > 0) {
-          setSiteSettings(configData[0]);
+        } else if (configRows.length > 0) {
+          setSiteSettings(configRows[0]);
         }
       }
     } catch (e) {
@@ -628,8 +618,13 @@ export default function Admin() {
     fetchAll();
 
       const uniqueSuffix = `${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+      let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+      const scheduleRefresh = () => {
+        if (refreshTimer) clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(() => { void fetchAll(); }, 300);
+      };
 
-      // Real-time listener specifically for the orders table to sync Pending Queue
+      // Keep orders current without exposing the retired manual-delivery queue.
       const ordersChannel = supabase.channel(`orders-sync-${uniqueSuffix}`)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload: any) => {
            console.log('🔔 Realtime Order Update', payload);
@@ -659,7 +654,7 @@ export default function Admin() {
              }
            }
            
-           fetchAll();
+           scheduleRefresh();
         })
         .subscribe((status) => {
           if (status !== 'SUBSCRIBED') {
@@ -670,10 +665,10 @@ export default function Admin() {
       const channel = supabase.channel(`admin-broadcast-${uniqueSuffix}`)
         .on('broadcast', { event: 'new_message' }, () => {
            console.log('Admin broadcast new_message');
-           fetchAll();
+           scheduleRefresh();
         })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'chats' }, () => {
-           fetchAll();
+           scheduleRefresh();
         })
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'marketplace_premium_payments' }, (payload: any) => {
            const newSub = payload.new;
@@ -682,7 +677,7 @@ export default function Admin() {
              duration: 7000,
              position: 'top-right'
            });
-           fetchAll();
+           scheduleRefresh();
         })
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'portfolio_purchases' }, (payload: any) => {
            const newPurchase = payload.new;
@@ -691,7 +686,7 @@ export default function Admin() {
              duration: 6000,
              position: 'top-right'
            });
-           fetchAll();
+           scheduleRefresh();
         })
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
@@ -701,13 +696,15 @@ export default function Admin() {
           }
         });
 
-      // Polling Fallback (Every 30 seconds)
+      // Realtime is primary; the fallback is deliberately infrequent so the
+      // admin screen does not continuously reload every table.
       const pollingInterval = setInterval(() => {
-        if (activeTabRef.current !== 'users') fetchAll();
-      }, 30000);
+        if (document.visibilityState === 'visible' && activeTabRef.current !== 'users') scheduleRefresh();
+      }, 120000);
       
       return () => {
         clearInterval(pollingInterval);
+        if (refreshTimer) clearTimeout(refreshTimer);
         if (channel) supabase.removeChannel(channel).catch(() => {});
         if (ordersChannel) supabase.removeChannel(ordersChannel).catch(() => {});
       };
@@ -952,48 +949,6 @@ export default function Admin() {
     }
   };
 
-
-  const [sendingLogins, setSendingLogins] = useState<Record<string, boolean>>({});
-
-  const handleSendLogins = async (order: any) => {
-    const text = loginsInput[order.id];
-    if (!text) {
-      toast.error("Please enter logins.");
-      return;
-    }
-    
-    setSendingLogins(prev => ({ ...prev, [order.id]: true }));
-
-    try {
-      const token = await getToken();
-      if (!token) throw new Error("Admin authentication is required.");
-      const res = await fetch("/api/admin?action=send-login-email", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          orderId: order.id,
-          loginDetails: text,
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Failed to process login delivery");
-      }
-
-      setOrders(prev => prev.filter(o => o.id !== order.id));
-      toast.success("Delivery details sent to " + (order.user_name || order.user_email));
-      setLoginsInput(prev => ({ ...prev, [order.id]: '' }));
-    } catch (err: any) {
-      console.error("[sendLogin] error:", err);
-      toast.error("Failed to send login: " + err.message);
-    } finally {
-      setSendingLogins(prev => ({ ...prev, [order.id]: false }));
-    }
-  };
 
   const handleSendBroadcast = async () => {
     if (!broadcastSubject || !broadcastContent) {
@@ -1262,7 +1217,6 @@ export default function Admin() {
   const sidebarLinks = [
     { id: 'overview', icon: LayoutDashboard, label: 'Overview' },
     { id: 'portfolio-ads', icon: BarChart3, label: 'TikTok Ads' },
-    { id: 'pending', icon: Clock, label: 'Pending Queue' },
     { id: 'users', icon: UsersIcon, label: 'Users' },
     { id: 'onelinks', icon: Globe, label: 'One Links' },
     { id: 'orders', icon: CreditCard, label: 'Orders' },
@@ -1409,136 +1363,6 @@ export default function Admin() {
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.3 }}
           >
-            {activeTab === 'pending' && (
-              <div className="space-y-8">
-                <header>
-                  <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">Pending Queue</h2>
-                  <p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs flex items-center gap-2">
-                    Awaiting Fulfillment (logins delivery)
-                    <button onClick={fetchAll} className="hover:text-brand-accent p-1 transition-colors"><RefreshCw size={14}/></button>
-                  </p>
-                </header>
-
-                <div className="overflow-x-auto rounded-[2rem] border border-brand-border bg-brand-surface shadow-xl">
-                  <table className="w-full text-left">
-                    <thead className="border-b border-brand-border bg-brand-text/5 text-brand-text-secondary">
-                      <tr className="text-[10px] font-black uppercase tracking-widest">
-                        <th className="p-6">User</th>
-                        <th className="p-6">Product</th>
-                        <th className="p-6">Status</th>
-                        <th className="p-6 text-right">Fulfillment Protocol</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-brand-border">
-                      {(() => {
-                        if (loading && orders.length === 0) {
-                          return (
-                            <tr>
-                              <td colSpan={6} className="p-20 text-center">
-                                <div className="flex flex-col items-center gap-4 opacity-70">
-                                  <Loader2 size={48} className="animate-spin text-brand-accent mb-2" />
-                                  <p className="uppercase font-black tracking-widest text-sm">Loading pending orders...</p>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        }
-                        if (fetchErrors['admin_all_orders'] || fetchErrors['orders']) {
-                          return (
-                            <tr>
-                              <td colSpan={6} className="p-20 text-center">
-                                <div className="flex flex-col items-center gap-4 text-red-500">
-                                  <AlertCircle size={48} className="mb-2" />
-                                  <p className="uppercase font-black tracking-widest text-sm">Error Loading Queue</p>
-                                  <p className="text-xs opacity-80">Failed to sync with orders node.</p>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        }
-                        const queue = safeArray(pendingQueue);
-                        if (queue.length === 0) {
-                          return (
-                            <tr>
-                              <td colSpan={6} className="p-20 text-center">
-                                <div className="flex flex-col items-center gap-4 opacity-40">
-                                  <Clock size={48} className="text-brand-text-secondary mb-2" />
-                                  <p className="text-brand-text-secondary uppercase font-black tracking-widest text-sm">No pending logins yet.</p>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        }
-                        return queue.sort((a,b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()).map(order => (
-                          <React.Fragment key={order.id}>
-                            <tr className="hover:bg-brand-text/5 transition-colors">
-                              <td className="p-6">
-                                <div className="font-bold text-sm">{order.user_email || 'N/A'}</div>
-                                {order.purchase_code_used && (
-                                  <div className="text-[10px] text-brand-accent mt-1">Code: {order.purchase_code_used}</div>
-                                )}
-                                <div className="text-[10px] text-brand-text-secondary mt-1 tracking-widest">{formatDate(order.created_at)}</div>
-                              </td>
-                              <td className="p-6">
-                                <div className="text-xs font-black uppercase opacity-60">{order.product_name || 'Premium Plan'}</div>
-                                <div className="text-[10px] font-medium text-brand-text-secondary">{order.plan_duration || 'Duration'}</div>
-                                <div className="text-[10px] font-bold mt-1 text-green-500">{formatCurrency(order.amount)}</div>
-                              </td>
-                              <td className="p-6">
-                                <div className="flex flex-col gap-1 items-start">
-                                  <span className="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-green-500/10 text-green-500">
-                                    {formatStatus(order.payment_status || order.status || 'PAID')}
-                                  </span>
-                                  <span className="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-orange-500/10 text-orange-500">
-                                    {formatStatus(order.delivery_status || 'PENDING LOGINS')}
-                                  </span>
-                                </div>
-                              </td>
-                              <td className="p-6 text-right">
-                                {order.paystack_ref || order.order_reference ? (
-                                  <div className="text-[9px] font-mono text-brand-text-secondary mb-2">Ref: {order.paystack_ref || order.order_reference}</div>
-                                ) : null}
-                                <Link to={supportChatHref(order.user_id)} className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-brand-accent hover:underline">
-                                  Open Chat <ChevronRight size={14} />
-                                </Link>
-                              </td>
-                            </tr>
-                            <tr className="bg-brand-accent/5">
-                              <td colSpan={4} className="p-4 pl-6">
-                                <label className="block text-[10px] font-black uppercase tracking-widest text-brand-text-secondary mb-2">
-                                  Send {order.product_name || "Product"} Delivery Details
-                                </label>
-                                <div className="flex flex-col gap-2">
-                                  <div className="flex gap-4">
-                                    <textarea 
-                                      placeholder={`Paste ${order.product_name || "Product"} login/access details here...`}
-                                      className="flex-1 bg-brand-surface border border-brand-border rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-brand-accent transition-all resize-y min-h-[48px]"
-                                      value={loginsInput[order.id] || ''}
-                                      onChange={(e) => setLoginsInput({...loginsInput, [order.id]: e.target.value})}
-                                      rows={2}
-                                    />
-                                    <ScaleButton 
-                                      onClick={() => handleSendLogins(order)}
-                                      disabled={sendingLogins[order.id]}
-                                      className={`px-8 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all shadow-lg whitespace-nowrap self-stretch flex items-center justify-center ${sendingLogins[order.id] ? 'bg-brand-text/10 text-brand-text-secondary cursor-not-allowed' : 'bg-brand-accent text-white hover:scale-105 active:scale-95 shadow-brand-accent/20'}`}
-                                    >
-                                      {sendingLogins[order.id] ? '🚀 Sending...' : 'Send Login'}
-                                    </ScaleButton>
-                                  </div>
-                                  <p className="text-[10px] font-medium text-brand-text-secondary opacity-70">
-                                    This sends the delivery details to the customer’s chat and updates the historical order record.
-                                  </p>
-                                </div>
-                              </td>
-                            </tr>
-                          </React.Fragment>
-                        ));
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
             {activeTab === 'overview' && (
               <div className="space-y-12">
                 <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
@@ -2702,7 +2526,7 @@ export default function Admin() {
                   <button 
                     onClick={() => setWithdrawalSubTab('pending')}
                     className={`px-8 py-3 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${withdrawalSubTab === 'pending' ? 'bg-brand-text text-brand-surface shadow-sm' : 'text-brand-text-secondary hover:text-brand-text'}`}
-                  >Pending Queue</button>
+                  >Pending withdrawals</button>
                   <button 
                     onClick={() => setWithdrawalSubTab('history')}
                     className={`px-8 py-3 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${withdrawalSubTab === 'history' ? 'bg-brand-text text-brand-surface shadow-sm' : 'text-brand-text-secondary hover:text-brand-text'}`}

@@ -1637,6 +1637,8 @@ export async function handlePortfolioAds(req, res, dependencies = {}) {
     const uniqueViewSessions = new Set();
     const conversionSessions = new Set();
     let views = 0;
+    let addToCarts = 0;
+    let checkouts = 0;
     let buttonClicks = 0;
     let contacts = 0;
     let registrations = 0;
@@ -1656,7 +1658,9 @@ export async function handlePortfolioAds(req, res, dependencies = {}) {
         views += 1; campaignRow.views += 1; portfolioRow.views += 1;
         uniqueViewSessions.add(event.session_id_hash);
         if (day) day.views += 1;
-      } else if (event.event_name === "ClickButton") buttonClicks += 1;
+      } else if (event.event_name === "AddToCart") addToCarts += 1;
+      else if (event.event_name === "InitiateCheckout") checkouts += 1;
+      else if (event.event_name === "ClickButton") buttonClicks += 1;
       else if (event.event_name === "Contact" || event.event_name === "SubmitForm") {
         contacts += 1; campaignRow.contacts += 1; portfolioRow.contacts += 1;
         conversionSessions.add(event.session_id_hash);
@@ -1680,6 +1684,8 @@ export async function handlePortfolioAds(req, res, dependencies = {}) {
       range,
       analytics: {
         views,
+        addToCarts,
+        checkouts,
         uniqueVisitors: uniqueViewSessions.size,
         buttonClicks,
         contacts,
