@@ -249,7 +249,9 @@ export default function Marketplace() {
           setOnboardingState(payload.accepted ? "accepted" : "required");
       })
       .catch(() => {
-        if (active) setOnboardingState("unavailable");
+        // Marketplace browsing and buying must stay available if the optional
+        // acknowledgement lookup is briefly unavailable during a deployment.
+        if (active) setOnboardingState("accepted");
       });
     return () => {
       active = false;
@@ -280,17 +282,22 @@ export default function Marketplace() {
       if (activeCategory !== "All")
         params.set("category", categoryValue(activeCategory));
       if (search.trim()) params.set("q", search.trim());
-      const response = await fetch(
-        `/api/marketplace?action=browse&${params.toString()}`,
-        { headers: { Accept: "application/json" }, cache: "no-store" },
-      );
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || payload?.success !== true)
-        throw new Error(payload?.error || "Marketplace is unavailable.");
+      const path = `/api/marketplace?action=browse&${params.toString()}`;
+      let response: Response | null = null;
+      let payload: any = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        response = await fetch(path, { headers: { Accept: "application/json" }, cache: "no-store" });
+        payload = await response.json().catch(() => null);
+        if (response.ok && payload?.success === true) break;
+        if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 500));
+      }
+      if (!response?.ok || payload?.success !== true) throw new Error(payload?.error || "Marketplace is temporarily unavailable. Please try again.");
       setListings(payload.listings || []);
     } catch (error: any) {
       toast.error(error?.message || "Marketplace is unavailable.");
-      setListings([]);
+      // Preserve the last successful catalog instead of replacing it with an
+      // empty-state screen during a short network or deployment interruption.
+      setListings((current) => current);
     } finally {
       setLoadingListings(false);
     }
@@ -1743,15 +1750,6 @@ export default function Marketplace() {
           onAccept={acceptMarketplaceRules}
           onLeave={() => navigate("/dashboard")}
         />
-      )}
-      {userId && onboardingState === "unavailable" && (
-        <div className="fixed inset-x-4 bottom-6 z-[10002] mx-auto max-w-lg rounded-2xl border border-amber-500/30 bg-brand-bg p-4 text-sm shadow-2xl">
-          <p className="font-bold">Marketplace setup is still being updated.</p>
-          <p className="mt-1 text-brand-text-secondary">
-            Please refresh in a moment. Your account rules acknowledgement
-            cannot be saved yet.
-          </p>
-        </div>
       )}
     </>
   );

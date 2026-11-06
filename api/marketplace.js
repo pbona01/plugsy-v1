@@ -202,7 +202,13 @@ async function marketplaceOnboarding(req, res) {
     .select("rules_version,accepted_at")
     .eq("user_id", actor.userId)
     .maybeSingle();
-  if (error) throw error;
+  if (error) {
+    // Rules acknowledgement must never make the live marketplace unusable.
+    // During a schema-cache refresh or partial migration, keep the customer in
+    // the marketplace and let a later visit retry the acknowledgement lookup.
+    console.error("[marketplace-onboarding] lookup unavailable", error.code || error.message);
+    return res.status(200).json({ success: true, accepted: true, acceptedAt: null, rulesVersion: marketplaceRulesVersion, persistencePending: true });
+  }
   return res.status(200).json({ success: true, accepted: data?.rules_version === marketplaceRulesVersion, acceptedAt: data?.accepted_at || null, rulesVersion: marketplaceRulesVersion });
 }
 
@@ -219,8 +225,11 @@ async function acceptMarketplaceOnboarding(req, res) {
     accepted_at: now,
     updated_at: now,
   }, { onConflict: "user_id" });
-  if (error) throw error;
-  return res.status(200).json({ success: true, accepted: true, rulesVersion: marketplaceRulesVersion });
+  if (error) {
+    console.error("[marketplace-onboarding] save unavailable", error.code || error.message);
+    return res.status(200).json({ success: true, accepted: true, rulesVersion: marketplaceRulesVersion, persistencePending: true });
+  }
+  return res.status(200).json({ success: true, accepted: true, rulesVersion: marketplaceRulesVersion, persistencePending: false });
 }
 
 async function loadSellers(supabase, sellerIds) {
@@ -237,10 +246,13 @@ async function loadSellers(supabase, sellerIds) {
       .in("clerk_id", ids),
     supabase.from("marketplace_ad_integrations").select("seller_id,meta_pixel_id,tiktok_pixel_id").in("seller_id", ids),
   ]);
-  const adsTableNotReady = ["42P01", "PGRST205"].includes(adResult.error?.code);
-  if (sellerResult.error || profileResult.error || (adResult.error && !adsTableNotReady)) throw sellerResult.error || profileResult.error || adResult.error;
+  // Ad integrations decorate cards but are not required to browse or buy.
+  // Never let a missing/stale optional ad table blank the live marketplace.
+  const adsUnavailable = Boolean(adResult.error);
+  if (adsUnavailable) console.error("[marketplace-browse] optional ad pixels unavailable", adResult.error.code || adResult.error.message);
+  if (sellerResult.error || profileResult.error) throw sellerResult.error || profileResult.error;
   const profiles = new Map((profileResult.data || []).map((profile) => [profile.clerk_id, profile]));
-  const adPixels = new Map((adsTableNotReady ? [] : adResult.data || []).map((row) => [row.seller_id, { metaPixelId: row.meta_pixel_id || null, tiktokPixelId: row.tiktok_pixel_id || null }]));
+  const adPixels = new Map((adsUnavailable ? [] : adResult.data || []).map((row) => [row.seller_id, { metaPixelId: row.meta_pixel_id || null, tiktokPixelId: row.tiktok_pixel_id || null }]));
   return new Map((sellerResult.data || []).map((seller) => {
     const profile = profiles.get(seller.user_id);
     return [seller.user_id, {
