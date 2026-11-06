@@ -27,7 +27,7 @@ export default function LUTs() {
             <span>Premium Color Grading</span>
           </motion.div>
           <h1 className="text-3xl md:text-5xl font-bold mb-6 tracking-tight">Professional <span className="text-blue-500">LUT Packages.</span></h1>
-          <p className="text-[var(--brand-text-secondary)] text-md font-medium leading-relaxed">Download professional grade LUTs used by top creators to get the cinematic look in seconds. Compatible with CapCut, Premiere Pro, and more.</p>
+          <p className="text-[var(--brand-text-secondary)] text-md font-medium leading-relaxed">Download professional-grade LUTs used by creators to achieve a cinematic look in seconds. Compatible with popular desktop and mobile editors.</p>
         </div>
         <div className="card-premium p-6 flex items-center gap-4 bg-[var(--brand-surface)]">
           <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-500">

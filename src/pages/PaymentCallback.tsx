@@ -82,8 +82,8 @@ export default function PaymentCallback() {
           <div className="flex flex-col items-center">
             <span className="mb-5 grid h-14 w-14 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-500"><CheckCircle2 size={30} aria-hidden="true" /></span>
             <h1 className="text-2xl font-black">Payment confirmed</h1>
-            <p className="mt-3 text-sm leading-6 text-brand-text-secondary">{deliveryPath.startsWith('/medals')?'Your medal is ready to view.':'Your order is saved. Open Plugsy Chat for your CapCut login details and delivery updates.'}</p>
-            <button onClick={() => navigate(deliveryPath, { replace: true })} className="btn-primary mt-6 flex h-12 w-full items-center justify-center gap-2 text-sm font-bold">{deliveryPath.startsWith('/medals')?'View your medal':'Open Plugsy Chat'} <ArrowRight size={17}/></button>
+            <p className="mt-3 text-sm leading-6 text-brand-text-secondary">{deliveryPath.startsWith('/medals')?'Your medal is ready to view.':'Your order has been saved. Open your dashboard to continue.'}</p>
+            <button onClick={() => navigate(deliveryPath, { replace: true })} className="btn-primary mt-6 flex h-12 w-full items-center justify-center gap-2 text-sm font-bold">{deliveryPath.startsWith('/medals')?'View your medal':'Continue'} <ArrowRight size={17}/></button>
           </div>
         )}
         

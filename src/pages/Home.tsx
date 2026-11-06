@@ -1,7 +1,7 @@
 import { LiquidGlass } from "../components/ui/LiquidGlass";
-import React, { useEffect } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, Shield, Clock, MousePointer2, RefreshCw, Video, Palette, Tv, Briefcase } from 'lucide-react';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Shield, ShoppingBag, Briefcase, Award, Link2, Wallet, MessageCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import { PortfolioSecretAccess } from '../components/ui/PortfolioSecretAccess';
 import { Helmet } from 'react-helmet-async';
@@ -20,8 +20,6 @@ const FAQItem: React.FC<{ faq: { q: string, a: string } }> = ({ faq }) => {
 };
 
 export default function Home() {
-  const [searchParams] = useSearchParams();
-
   const fadeUp = {
     hidden: { opacity: 0, y: 20 },
     visible: { opacity: 1, y: 0, transition: { duration: 0.5 } }
@@ -56,9 +54,9 @@ export default function Home() {
             animate="visible"
             variants={staggerContainer}>
                        <motion.h1 variants={fadeUp} className="font-bold tracking-[-0.04em] mb-10 md:mb-12 leading-[1.1] md:leading-[0.85] text-brand-text font-display">
-              GET PREMIUM ACCESS <br className="hidden sm:block" />
-              <span className="text-brand-text-secondary opacity-20">WITHOUT THE</span> <br className="hidden sm:block" />
-              <span className="text-brand-accent">PREMIUM PRICE.</span>
+              BUILT FOR WHAT <br className="hidden sm:block" />
+              <span className="text-brand-text-secondary opacity-20">YOU ACTUALLY</span> <br className="hidden sm:block" />
+              <span className="text-brand-accent">NEED.</span>
             </motion.h1>
             
             <motion.p variants={fadeUp} className="text-2xl md:text-3xl font-bold tracking-tight text-brand-text mb-6 max-w-3xl mx-auto leading-tight font-sans">
@@ -66,21 +64,21 @@ export default function Home() {
             </motion.p>
             
             <motion.p variants={fadeUp} className="text-base md:text-lg text-brand-text-secondary mb-10 md:mb-12 leading-relaxed max-w-xl mx-auto font-medium">
-              The smartest way to plug into your favorite digital tools. Experience premium access with ease.
+              Sell digital products, build a trusted portfolio, and connect with clients in one clear workspace.
             </motion.p>
             
             <motion.div variants={fadeUp} className="flex flex-col sm:flex-row justify-center gap-4 mb-8 md:mb-12">
-              <LiquidGlass component={Link} button chromaticAberration={2} to="/products" className="btn-primary text-center flex items-center justify-center gap-2 text-base md:text-lg h-14 md:h-16 px-8 md:px-10">
-                Browse All Products
+              <LiquidGlass component={Link} button chromaticAberration={2} to="/marketplace" className="btn-primary text-center flex items-center justify-center gap-2 text-base md:text-lg h-14 md:h-16 px-8 md:px-10">
+                Explore Marketplace
               </LiquidGlass>
-              <LiquidGlass component={Link} button chromaticAberration={2} to="/#how-it-works" className="btn-secondary text-center flex items-center justify-center gap-2 text-base md:text-lg h-14 md:h-16 px-8 md:px-10">
-                How it Works
+              <LiquidGlass component={Link} button chromaticAberration={2} to="/portfolio" className="btn-secondary text-center flex items-center justify-center gap-2 text-base md:text-lg h-14 md:h-16 px-8 md:px-10">
+                Build Portfolio
               </LiquidGlass>
             </motion.div>
             
             <motion.div variants={fadeUp} className="flex items-center justify-center gap-3 text-brand-text-secondary/60 text-sm font-bold uppercase tracking-widest">
               <Shield size={20} className="text-brand-accent" />
-              <span>Simple plans. Guided support. Easy renewal tracking.</span>
+              <span>Protected checkout. Verified sellers. Human support.</span>
             </motion.div>
           </motion.div>
 
@@ -92,24 +90,24 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 lg:px-8">
           <div className="text-center mb-24">
             <h2 className="font-bold mb-6 tracking-[-0.04em] uppercase font-display leading-[1.1] md:leading-[0.85] text-brand-text">
-              Premium Solutions for <br className="hidden sm:block" /><span className="text-brand-accent">Everyone</span>
+              Everything you need to <br className="hidden sm:block" /><span className="text-brand-accent">create and grow</span>
             </h2>
-            <p className="text-xl text-brand-text-secondary font-medium max-w-2xl mx-auto">Unlock premium capabilities for your personal projects, learning, and productivity.</p>
+            <p className="text-xl text-brand-text-secondary font-medium max-w-2xl mx-auto">A practical home for digital products, portfolios, trusted profiles, and customer conversations.</p>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {/* CapCut Card */}
+            {/* Marketplace Card */}
             <div className="card-premium p-8 flex flex-col group hover:-translate-y-2 transition-all relative border-brand-accent/50 ring-1 ring-brand-accent/20">
                 <div className="absolute top-4 right-4 bg-brand-accent text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full shadow-lg">
                     Popular
                 </div>
                 <div className="w-14 h-14 rounded-2xl bg-brand-accent/10 flex items-center justify-center mb-6">
-                  <Video size={28} className="text-brand-accent" />
+                  <ShoppingBag size={28} className="text-brand-accent" />
                 </div>
-                <h3 className="text-xl font-black uppercase tracking-tighter mb-4">CapCut Pro Max</h3>
-                <p className="text-brand-text-secondary text-sm mb-8 flex-1">Advanced video editing tools, simplified.</p>
-                <LiquidGlass component={Link} button chromaticAberration={2} to="/products" className="btn-primary !py-3 text-center font-black uppercase tracking-widest text-[10px]">
-                  View Plans
+                <h3 className="text-xl font-black uppercase tracking-tighter mb-4">Digital Marketplace</h3>
+                <p className="text-brand-text-secondary text-sm mb-8 flex-1">Buy and sell courses, eBooks, templates, guides, and other digital products.</p>
+                <LiquidGlass component={Link} button chromaticAberration={2} to="/marketplace" className="btn-primary !py-3 text-center font-black uppercase tracking-widest text-[10px]">
+                  Explore Products
                 </LiquidGlass>
             </div>
             
@@ -132,34 +130,24 @@ export default function Home() {
                 </div>
             </div>
             
-            {/* Learn with Plugsy Card (Disabled) */}
-            <div className="card-premium p-8 flex flex-col relative opacity-60 grayscale cursor-not-allowed border-brand-border">
-                <div className="absolute inset-0 z-10 flex items-center justify-center">
-                    <span className="bg-brand-surface border border-brand-border text-brand-text font-black uppercase tracking-widest px-4 py-2 text-xs rounded-full">Coming Soon</span>
+            {/* Medals Card */}
+            <div className="card-premium p-8 flex flex-col group hover:-translate-y-2 transition-all border-brand-border">
+                <div className="w-14 h-14 rounded-2xl bg-brand-accent/10 flex items-center justify-center mb-6">
+                  <Award size={28} className="text-brand-accent" />
                 </div>
-                <div className="w-14 h-14 rounded-2xl bg-brand-surface border border-brand-border flex items-center justify-center mb-6">
-                  <Palette size={28} className="text-brand-text-secondary" />
-                </div>
-                <h3 className="text-xl font-black uppercase tracking-tighter mb-4">Learn with Plugsy</h3>
-                <p className="text-brand-text-secondary text-sm mb-8 flex-1">Master new skills with our premium course library.</p>
-                <div className="btn-secondary !py-3 text-center font-black uppercase tracking-widest text-[10px] opacity-50">
-                  Coming Soon
-                </div>
+                <h3 className="text-xl font-black uppercase tracking-tighter mb-4">Plugsy Medals</h3>
+                <p className="text-brand-text-secondary text-sm mb-8 flex-1">Unlock creator benefits and savings with a verified Plugsy medal.</p>
+                <LiquidGlass component={Link} button chromaticAberration={2} to="/medals" className="btn-secondary !py-3 text-center font-black uppercase tracking-widest text-[10px]">View Medals</LiquidGlass>
             </div>
 
-            {/* LUTs Card (Disabled) */}
-            <div className="card-premium p-8 flex flex-col relative opacity-60 grayscale cursor-not-allowed border-brand-border">
-                <div className="absolute inset-0 z-10 flex items-center justify-center">
-                    <span className="bg-brand-surface border border-brand-border text-brand-text font-black uppercase tracking-widest px-4 py-2 text-xs rounded-full">Coming Soon</span>
+            {/* One Link Card */}
+            <div className="card-premium p-8 flex flex-col group hover:-translate-y-2 transition-all border-brand-border">
+                <div className="w-14 h-14 rounded-2xl bg-brand-accent/10 flex items-center justify-center mb-6">
+                  <Link2 size={28} className="text-brand-accent" />
                 </div>
-                <div className="w-14 h-14 rounded-2xl bg-brand-surface border border-brand-border flex items-center justify-center mb-6">
-                  <Tv size={28} className="text-brand-text-secondary" />
-                </div>
-                <h3 className="text-xl font-black uppercase tracking-tighter mb-4">Color Grading LUTs</h3>
-                <p className="text-brand-text-secondary text-sm mb-8 flex-1">Professional cinematic aesthetics for all your videos.</p>
-                <div className="btn-secondary !py-3 text-center font-black uppercase tracking-widest text-[10px] opacity-50">
-                  Coming Soon
-                </div>
+                <h3 className="text-xl font-black uppercase tracking-tighter mb-4">One Link</h3>
+                <p className="text-brand-text-secondary text-sm mb-8 flex-1">Share your work, products, profiles, and contact points from one page.</p>
+                <LiquidGlass component={Link} button chromaticAberration={2} to="/onelink" className="btn-secondary !py-3 text-center font-black uppercase tracking-widest text-[10px]">Create One Link</LiquidGlass>
             </div>
           </div>
         </div>
@@ -177,10 +165,10 @@ export default function Home() {
               
               <div className="space-y-12">
                 {[
-                  { icon: MousePointer2, title: 'Choose your plan', desc: 'Select your preferred CapCut pro plan.' },
-                  { icon: RefreshCw, title: 'Pay from your wallet', desc: 'Fund your Plugsy Wallet, then pay for your plan.' },
-                  { icon: Clock, title: 'Get delivery updates', desc: 'Your order appears in Plugsy Chat while your access is prepared.' },
-                  { icon: CheckCircle2, title: 'Confirm & Track', desc: 'Track your premium subscription countdown in the dashboard.' },
+                  { icon: ShoppingBag, title: 'Find what you need', desc: 'Browse seller-created courses, guides, templates, and digital resources.' },
+                  { icon: Wallet, title: 'Pay securely', desc: 'Use protected checkout with clear pricing and a record of every purchase.' },
+                  { icon: Shield, title: 'Keep access', desc: 'Purchased products stay in your library and seller updates appear automatically.' },
+                  { icon: MessageCircle, title: 'Get support', desc: 'Reach Plugsy support through the same customer and admin chat experience.' },
                 ].map((item, i) => (
                   <div key={i} className="flex gap-6 group">
                     <div className="w-16 h-16 rounded-[2rem] bg-brand-surface border border-brand-border flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
@@ -201,12 +189,12 @@ export default function Home() {
                   <div className="absolute top-12 left-12 right-12 bottom-32 card-premium p-8 flex flex-col bg-brand-bg shadow-2xl">
                     <div className="flex-1 flex flex-col justify-end space-y-6">
                       <div className="self-end bg-brand-accent text-white p-4 rounded-3xl rounded-tr-sm text-sm font-bold shadow-xl">
-                        Receipt for 1yr Access
+                        Digital product purchased
                       </div>
                       <div className="flex items-end gap-3">
                          <div className="w-8 h-8 rounded-full bg-brand-text/10 shrink-0"></div>
                          <div className="liquid-glass border border-brand-border p-4 rounded-3xl rounded-tl-sm text-sm font-bold text-brand-text-secondary">
-                          Payment received. Tracker active.
+                          Payment confirmed. Product added to your library.
                          </div>
                       </div>
                     </div>
@@ -231,17 +219,13 @@ export default function Home() {
           
           <div className="grid grid-cols-1 gap-6">
               {[
-                { q: 'Does the CapCut pro logs work for iPhone or android or even my pc?', a: 'Yes, the CapCut Pro logs work on iPhone, Android, and even PC with full access. Please note: • We only allow 1 device login per user. • Any additional device login will require purchasing a new log. This procedure helps avoid CapCut security restrictions and keeps the accounts stable.' },
-                { q: 'Is Learn With Plugsy available?', a: 'Not yet. It’s still in development and will launch soon. It will be an online platform where you can learn digital skills from home at affordable prices, including graphic design, software development, video editing, UI/UX design, and digital marketing. The goal is to make practical, in-demand skills easy and accessible for everyone.' },
-                { q: 'What is Plugsy Portfolio Creation?', a: 'Plugsy Portfolio Creation is coming soon. This feature will allow freelancers and anyone to build a clear, professional profile of their work, helping them showcase their skills and stand out to clients or employers.' },
-                { q: 'How do I login after getting pro access?', a: 'Login through TikTok first, wait for the login code from us, and then log into CapCut using TikTok. You can watch the tutorial here: https://youtu.be/eRENvc0DB8A' },
-                { q: 'What is Plugsy?', a: 'Plugsy is an online platform built to help people connect to affordable services and experiences in a smarter and easier way while still maintaining full value and quality.' },
-                { q: 'How do I get CapCut pro access?', a: 'Choose a plan, pay from your Plugsy Wallet and open Plugsy Chat for your login details and delivery updates.' },
-                { q: 'How does confirmation work?', a: 'Plugsy confirms your wallet purchase and records the order. Our team then prepares your premium login.' },
-                { q: 'When does my subscription countdown start?', a: 'Your subscription countdown begins as soon as our team activates your premium logins.' },
-                { q: 'Will I get a renewal reminder?', a: 'Yes, you will get reminders to renew your plan before it expires to ensure no interruption.' },
-                { q: 'Can I renew before my plan expires?', a: 'Yes, you can initiate a renewal before your current plan expires for seamless access.' },
-                { q: 'What happens if my payment fails?', a: 'If an issue arises, you can retry or reach out to our support team via the chat portal.' },
+                { q: 'What can I buy on Plugsy?', a: 'Sellers can offer digital courses, eBooks, templates, guides, creator resources, and other approved digital products.' },
+                { q: 'How are purchases delivered?', a: 'After successful payment, the product appears in My Library. Guest buyers receive a secure delivery link by email.' },
+                { q: 'What is Marketplace Premium?', a: 'Marketplace Premium allows verified sellers to publish products publicly with lower marketplace fees. Sellers control whether their plan renews.' },
+                { q: 'What is Plugsy Portfolio?', a: 'Plugsy Portfolio helps creators and professionals present their skills, projects, experience, and contact details to potential clients.' },
+                { q: 'Are buyers protected?', a: 'Yes. Eligible Marketplace orders include a buyer-protection window before seller funds are released.' },
+                { q: 'Can sellers update a product after purchase?', a: 'Yes. Buyers keep access to the seller’s latest product version, including updated files and course lessons.' },
+                { q: 'How do I get help?', a: 'Open Plugsy Support or Chats from your dashboard. The customer and admin chat system remains available for account and purchase support.' },
               ].map((faq, i) => (
                 <FAQItem key={i} faq={faq} />
             ))}

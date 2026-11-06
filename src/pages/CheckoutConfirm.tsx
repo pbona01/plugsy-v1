@@ -86,6 +86,13 @@ export default function CheckoutConfirm() {
           .eq("is_active", true)
           .single();
         if (error) throw error;
+        const productType = String(data?.wallet_product_type || "").toLowerCase();
+        const productName = String(data?.name || data?.product_name || "").toLowerCase();
+        if (productType === "capcut" || /cap\s*cut.*pro|capcut.*max/.test(productName)) {
+          toast.error("This product is no longer sold by Plugsy.");
+          navigate("/products", { replace: true });
+          return;
+        }
         setPlan(data);
       } catch (err) {
         console.error("Plan fetch error:", err);
@@ -315,7 +322,7 @@ export default function CheckoutConfirm() {
             <h1 className="text-3xl font-black uppercase tracking-tight text-brand-text">
               Checkout <span className="text-brand-accent">Confirm</span>
             </h1>
-            <p className="text-sm text-brand-text-secondary">Review your plan, pay from your wallet, then find your CapCut access in Plugsy Chat.</p>
+            <p className="text-sm text-brand-text-secondary">Review your selection and pay securely from your Plugsy Wallet.</p>
           </header>
 
           <motion.div
@@ -442,7 +449,7 @@ export default function CheckoutConfirm() {
 
                 return (
                   <div>
-                    {/* CapCut purchases are charged from the Plugsy wallet. */}
+                    {/* Plugsy-owned products are charged from the Plugsy Wallet. */}
                     <div className="space-y-2 mb-4">
                       <label className="block text-[10px] font-mono uppercase tracking-[0.2em] text-brand-text-secondary">
                         Payment Method
@@ -524,7 +531,7 @@ export default function CheckoutConfirm() {
           </div>
 
           <footer className="pt-12 text-center space-y-4">
-            <p className="text-xs leading-5 text-brand-text-secondary">After payment: open Plugsy Chat to receive your login details. Keep your order reference if you need help.</p>
+            <p className="text-xs leading-5 text-brand-text-secondary">After payment, your order record will show where to access the product. Keep your reference if you need support.</p>
             <div className="flex items-center justify-center gap-8 text-brand-text/50">
               <Shield size={14} />
               <CheckCircle2 size={14} />

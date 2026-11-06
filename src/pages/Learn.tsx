@@ -57,7 +57,7 @@ export default function Learn() {
          <div className="flex flex-col sm:flex-row items-center gap-6">
             <div className="flex items-center gap-3 px-6 py-4 rounded-2xl bg-brand-surface border border-brand-border shadow-sm">
                 <BookOpen size={20} className="text-brand-accent" />
-                <span className="text-sm font-bold opacity-60 italic">Course: CapCut Mastery</span>
+                <span className="text-sm font-bold opacity-60 italic">Course: Mobile Video Editing</span>
             </div>
             <div className="flex items-center gap-3 px-6 py-4 rounded-2xl bg-brand-surface border border-brand-border shadow-sm">
                 <Stars size={20} className="text-brand-accent" />

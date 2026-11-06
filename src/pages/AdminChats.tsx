@@ -793,7 +793,7 @@ export default function AdminChats() {
     const optimisticMessageId = `temp-sys-${nowMs}`;
     let systemMessageInserted = false;
     const confirmMessage =
-      "Payment Confirmed! 🚀 We are currently preparing your login details. Please stay active; they will be sent here shortly.";
+      "Payment confirmed. We are preparing the delivery details and will send them here shortly.";
 
     // Optimistic UI updates
     setActiveOrder((prev: any) =>
@@ -872,7 +872,7 @@ export default function AdminChats() {
         data: {
           user_id: activeOrder.user_id,
           order_id: activeOrder.id,
-          product_name: activeOrder.product_name || "CapCut Max Pro",
+          product_name: activeOrder.product_name || "Digital product",
           plan_duration: activeOrder.plan_duration,
           starts_at: now,
           ends_at: ends_at_iso,
@@ -913,7 +913,7 @@ export default function AdminChats() {
         console.warn("Email failed", err);
       }
 
-      toast.success("Payment Confirmed and Subscription provisioned.");
+      toast.success("Payment confirmed and delivery record updated.");
     } catch (error: any) {
       if (!systemMessageInserted) {
         setMessages((prev) =>

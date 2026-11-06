@@ -63,6 +63,12 @@ import {
   parseAdminUsersResponse,
 } from '../../shared/admin-users.js';
 
+const isRetiredCapCutPlan = (plan: any) => {
+  const type = String(plan?.wallet_product_type || '').toLowerCase();
+  const name = String(plan?.name || plan?.product_name || '').toLowerCase();
+  return type === 'capcut' || /cap\s*cut.*pro|capcut.*max/.test(name);
+};
+
 export default function Admin() {
   const navigate = useNavigate();
   const { isUserOnline, onlineSignedInCount, presenceUpdatedAt, presenceStatus } = useOnlinePresence();
@@ -91,6 +97,7 @@ export default function Admin() {
   const [fetchErrors, setFetchErrors] = useState<Record<string, string | null>>({});
   const [adminSubscriptions, setAdminSubscriptions] = useState<any[]>([]);
   const [adminSubsLoading, setAdminSubsLoading] = useState(false);
+  const [adminSubscriptionMetrics, setAdminSubscriptionMetrics] = useState<any>(null);
   const [overviewMetrics, setOverviewMetrics] = useState<any>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState<string | null>(null);
@@ -365,21 +372,26 @@ export default function Admin() {
     if (activeTab === 'subscriptions') {
       const fetchAdminSubs = async () => {
         setAdminSubsLoading(true);
-        const { data: subscriptionsData, error } = await supabase
-          .from("orders")
-          .select("*")
-          .eq("delivery_status", "login_sent")
-          .order("created_at", { ascending: false });
-
-        console.log("[subscriptions] data:", subscriptionsData, error);
-        if (!error) {
-           setAdminSubscriptions(subscriptionsData || []);
+        try {
+          const token = await getToken();
+          const response = await fetch('/api/admin?action=list-marketplace-subscriptions', {
+            headers: { Accept: 'application/json', Authorization: `Bearer ${token || ''}` },
+            cache: 'no-store',
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok || payload?.success !== true) throw new Error(payload?.error || 'Marketplace subscriptions are unavailable.');
+          setAdminSubscriptions(payload.subscriptions || []);
+          setSubscriptions(payload.subscriptions || []);
+          setAdminSubscriptionMetrics(payload.metrics || null);
+        } catch (error: any) {
+          toast.error(error?.message || 'Could not load Marketplace subscriptions.');
+        } finally {
+          setAdminSubsLoading(false);
         }
-        setAdminSubsLoading(false);
       };
-      fetchAdminSubs();
+      void fetchAdminSubs();
     }
-  }, [activeTab]);
+  }, [activeTab, getToken]);
 
   const [withdrawalsLoading, setWithdrawalsLoading] = useState(false);
 
@@ -585,7 +597,7 @@ export default function Admin() {
       if (ordersData) setOrders(ordersData);
       if (subsData) setSubscriptions(subsData);
       if (chatsData) setChats(chatsData);
-      if (plansData) setPlans(plansData);
+      if (plansData) setPlans(safeArray(plansData).filter((plan: any) => !isRetiredCapCutPlan(plan)));
       if (portfolioData) setPortfolioPurchases(portfolioData);
       if (withdrawalsData !== null && withdrawalsData !== undefined) setWithdrawals(withdrawalsData);
       
@@ -663,9 +675,9 @@ export default function Admin() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'chats' }, () => {
            fetchAll();
         })
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'subscriptions' }, (payload: any) => {
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'marketplace_premium_payments' }, (payload: any) => {
            const newSub = payload.new;
-           toast.success(`NEW SUBSCRIPTION: ${newSub.product_name || 'Premium Plan'} active for ${newSub.user_email || 'a user'}`, {
+           toast.success(`MARKETPLACE PREMIUM: ${newSub.plan_code || 'Monthly'} plan activated`, {
              icon: '👑',
              duration: 7000,
              position: 'top-right'
@@ -973,7 +985,7 @@ export default function Admin() {
       }
 
       setOrders(prev => prev.filter(o => o.id !== order.id));
-      toast.success("Login details sent to " + (order.user_name || order.user_email));
+      toast.success("Delivery details sent to " + (order.user_name || order.user_email));
       setLoginsInput(prev => ({ ...prev, [order.id]: '' }));
     } catch (err: any) {
       console.error("[sendLogin] error:", err);
@@ -1494,7 +1506,7 @@ export default function Admin() {
                             <tr className="bg-brand-accent/5">
                               <td colSpan={4} className="p-4 pl-6">
                                 <label className="block text-[10px] font-black uppercase tracking-widest text-brand-text-secondary mb-2">
-                                  Send {order.product_name || "Product"} Login Details
+                                  Send {order.product_name || "Product"} Delivery Details
                                 </label>
                                 <div className="flex flex-col gap-2">
                                   <div className="flex gap-4">
@@ -1514,7 +1526,7 @@ export default function Admin() {
                                     </ScaleButton>
                                   </div>
                                   <p className="text-[10px] font-medium text-brand-text-secondary opacity-70">
-                                    This will send the login details to the user’s chat and activate their subscription.
+                                    This sends the delivery details to the customer’s chat and updates the historical order record.
                                   </p>
                                 </div>
                               </td>
@@ -1542,7 +1554,7 @@ export default function Admin() {
                       { icon: CreditCard, label: `Successful payments · ${analytics.label}`, val: analytics.loaded ? analytics.successfulPayments.toLocaleString() : '—', color: 'text-blue-400', change: analytics.loaded && analytics.comparisonAvailable ? analytics.orderChange : undefined },
                       { icon: TrendingUp, label: 'Average order value', val: analytics.loaded ? formatCurrency(analytics.averageOrder) : '—', color: 'text-violet-400' },
                       { icon: UsersIcon, label: 'Registered users', val: overviewMetrics ? Number(dbStats.registeredUsers).toLocaleString() : '—', color: 'text-cyan-400' },
-                      { icon: Crown, label: 'Active subscriptions', val: overviewMetrics ? Number(dbStats.activeSubscriptions).toLocaleString() : '—', color: 'text-brand-accent', tab: 'subscriptions' },
+                      { icon: Crown, label: 'Marketplace Premium', val: Number(adminSubscriptionMetrics?.active ?? subscriptions.filter((item) => item.status === 'active').length).toLocaleString(), color: 'text-brand-accent', tab: 'subscriptions' },
                       { icon: Clock, label: `Payments processing · ${analytics.label}`, val: analytics.loaded ? analytics.pendingPayments.toLocaleString() : '—', color: 'text-amber-400' },
                       { icon: MessageSquare, label: 'Action required', val: overviewMetrics ? Number(dbStats.actionRequiredChats).toLocaleString() : '—', color: 'text-rose-400', tab: 'chats' },
                       { icon: UsersIcon, label: 'Online now', val: Math.max(onlineSignedInCount, Number(overviewMetrics?.recentlyActiveUsers || 0)).toLocaleString(), color: 'text-teal-400' }
@@ -1637,7 +1649,7 @@ export default function Admin() {
 
                   <section className="card-premium p-6 md:p-8 xl:col-span-2"><div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-accent">Product performance</p><h3 className="mt-2 text-xl font-black tracking-tight">Top products</h3><p className="mt-1 text-xs text-brand-text-secondary">Confirmed purchases · {analytics.label}</p></div><Award className="text-brand-accent" size={20} /></div>{!analytics.loaded ? <div className="mt-8 rounded-2xl border border-dashed border-brand-border p-10 text-center text-sm text-brand-text-secondary">Loading verified product data…</div> : analytics.topProducts.length ? (() => { const maxOrders = Math.max(1, ...analytics.topProducts.map(([, data]: any) => Number(data.orders || 0))); return <div className="mt-8 space-y-5">{analytics.topProducts.map(([name, data]: any, index: number) => <div key={name} className="group"><div className="mb-2 flex items-center justify-between gap-4"><div className="flex min-w-0 items-center gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-accent/10 text-[10px] font-black text-brand-accent">{index + 1}</span><span className="truncate text-xs font-black">{name}</span></div><span className="shrink-0 text-[11px] font-bold text-brand-text-secondary">{data.orders} purchases · {formatCurrency(data.revenue)}</span></div><div className="h-3 overflow-hidden rounded-full border border-brand-border bg-brand-text/[.035]"><motion.div initial={{ width: 0 }} animate={{ width: `${Math.max(5, (Number(data.orders || 0) / maxOrders) * 100)}%` }} transition={{ duration: .5, delay: index * .06 }} className="h-full rounded-full bg-gradient-to-r from-brand-accent via-blue-400 to-cyan-300 shadow-[0_0_16px_rgba(22,119,255,.32)]" /></div></div>)}</div>; })() : <div className="mt-8 rounded-2xl border border-dashed border-brand-border p-10 text-center text-sm text-brand-text-secondary">No confirmed product sales in this period.</div>}</section>
 
-                  <section className="card-premium p-6 md:p-8"><p className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-accent">Operations</p><h3 className="mt-2 text-xl font-black tracking-tight">Live snapshot</h3><div className="mt-7 space-y-4">{[{ label: 'Active subscriptions', value: overviewMetrics?.activeSubscriptions || 0, color: 'bg-violet-400' }, { label: 'Pending orders', value: overviewMetrics?.pendingOrders || 0, color: 'bg-amber-400' }, { label: 'Open support chats', value: overviewMetrics?.openSupportChats || 0, color: 'bg-cyan-400' }].map((item) => <div key={item.label} className="flex items-center justify-between rounded-xl border border-brand-border bg-brand-text/[.025] px-4 py-3"><span className="flex items-center gap-2 text-xs font-bold"><span className={cn('h-2 w-2 rounded-full', item.color)} />{item.label}</span><span className="text-sm font-black">{Number(item.value).toLocaleString()}</span></div>)}</div></section>
+                  <section className="card-premium p-6 md:p-8"><p className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-accent">Operations</p><h3 className="mt-2 text-xl font-black tracking-tight">Live snapshot</h3><div className="mt-7 space-y-4">{[{ label: 'Marketplace Premium', value: adminSubscriptionMetrics?.active ?? subscriptions.filter((item) => item.status === 'active').length, color: 'bg-violet-400' }, { label: 'Pending orders', value: overviewMetrics?.pendingOrders || 0, color: 'bg-amber-400' }, { label: 'Open support chats', value: overviewMetrics?.openSupportChats || 0, color: 'bg-cyan-400' }].map((item) => <div key={item.label} className="flex items-center justify-between rounded-xl border border-brand-border bg-brand-text/[.025] px-4 py-3"><span className="flex items-center gap-2 text-xs font-bold"><span className={cn('h-2 w-2 rounded-full', item.color)} />{item.label}</span><span className="text-sm font-black">{Number(item.value).toLocaleString()}</span></div>)}</div></section>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
@@ -1668,7 +1680,7 @@ export default function Admin() {
                   
                   <div className="card-premium p-8">
                     <div className="flex items-center justify-between mb-8">
-                      <h3 className="text-xs font-black uppercase tracking-widest">Active Subscriptions</h3>
+                      <h3 className="text-xs font-black uppercase tracking-widest">Active Marketplace Premium</h3>
                       <button onClick={() => handleTabChange('subscriptions')} className="text-[10px] font-black text-brand-accent uppercase tracking-widest hover:underline">View All</button>
                     </div>
                     <div className="space-y-4">
@@ -1677,7 +1689,7 @@ export default function Admin() {
                         return (
                         <div key={s.id} className="flex items-center justify-between p-4 bg-brand-text/5 rounded-2xl border border-brand-border">
                           <div>
-                            <p className="text-xs font-black uppercase">{relatedOrder?.product_name || 'Premium Plan'}</p>
+                            <p className="text-xs font-black uppercase">{s.user_name || relatedOrder?.product_name || 'Plugsy seller'}</p>
                             <p className="text-[10px] text-brand-text-secondary">Expires: {new Date(s.ends_at).toLocaleDateString()}</p>
                           </div>
                           <Clock size={14} className="text-brand-accent" />
@@ -2354,30 +2366,47 @@ export default function Admin() {
             {activeTab === 'subscriptions' && (
               <div className="space-y-12">
                 <header>
-                  <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">Subscriptions</h2>
-                  <p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">Provisioned Authority Monitoring</p>
+                  <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2">Marketplace Premium</h2>
+                  <p className="text-brand-text-secondary font-bold uppercase tracking-widest text-xs">Trials, paid plans, renewals and expiry monitoring</p>
                 </header>
+                {adminSubscriptionMetrics && (
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+                    {[
+                      ['Active', adminSubscriptionMetrics.active, 'text-emerald-500'],
+                      ['Free trials', adminSubscriptionMetrics.trials, 'text-blue-500'],
+                      ['Auto-renew on', adminSubscriptionMetrics.autoRenew, 'text-violet-500'],
+                      ['Failed renewals', adminSubscriptionMetrics.failedRenewals, 'text-amber-500'],
+                      ['Expired', adminSubscriptionMetrics.expired, 'text-red-500'],
+                      ['All sellers', adminSubscriptionMetrics.total, 'text-brand-accent'],
+                    ].map(([label, value, color]) => (
+                      <div key={String(label)} className="card-premium p-5">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-brand-text-secondary">{label}</p>
+                        <p className={cn('mt-2 text-3xl font-black', String(color))}>{Number(value || 0).toLocaleString()}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {adminSubsLoading ? (
                   <div className="card-premium p-20 text-center flex flex-col items-center justify-center gap-6">
                     <Loader2 size={48} className="text-brand-accent animate-spin" />
-                    <p className="font-black uppercase tracking-widest text-sm text-brand-text">Loading Subscriptions...</p>
+                    <p className="font-black uppercase tracking-widest text-sm text-brand-text">Loading Marketplace subscriptions...</p>
                   </div>
                 ) : adminSubscriptions.length === 0 ? (
                   <div className="card-premium p-20 text-center border-dashed">
                     <div className="flex flex-col items-center gap-4 opacity-40">
                       <Crown size={48} className="text-brand-text-secondary mb-2" />
-                      <p className="text-brand-text-secondary uppercase font-black tracking-widest text-sm">No active subscriptions.</p>
-                      <p className="text-[10px] font-bold text-brand-text-secondary max-w-xs uppercase">Subscriptions will appear here once orders are confirmed.</p>
+                      <p className="text-brand-text-secondary uppercase font-black tracking-widest text-sm">No Marketplace subscriptions yet.</p>
+                      <p className="text-[10px] font-bold text-brand-text-secondary max-w-xs uppercase">Trials and paid Marketplace Premium plans will appear here.</p>
                     </div>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                     {adminSubscriptions.map(sub => {
                       const daysLeft = Math.ceil(
-                        (new Date(sub.subscription_expires_at).getTime() - Date.now()) / 
+                        (new Date(sub.ends_at || 0).getTime() - Date.now()) /
                         (1000 * 60 * 60 * 24)
                       );
-                      const isActive = daysLeft > 0;
+                      const isActive = sub.status === 'active' && daysLeft > 0;
                       
                       return (
                         <div key={sub.id} className="card-premium p-10 relative overflow-hidden group">
@@ -2391,39 +2420,43 @@ export default function Admin() {
                                      <div className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
                                      {isActive ? 'ACTIVE' : 'EXPIRED'}
                                   </div>
-                                  <h4 className="text-2xl font-black uppercase tracking-tighter mb-1 truncate max-w-[200px]">{sub.product_name || 'Premium Plan'}</h4>
+                                  <h4 className="text-2xl font-black uppercase tracking-tighter mb-1 truncate max-w-[220px]">{sub.user_name || 'Plugsy seller'}</h4>
+                                  <p className="text-[10px] font-bold text-brand-text-secondary">{sub.trial ? 'Free trial' : `${sub.plan_code || 'monthly'} plan`}</p>
                                </div>
                             </div>
                             
                             <div className="space-y-4 pt-6 border-t border-brand-border">
                                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-brand-text-secondary">
                                   <span>Holder</span>
-                                  <span className="text-brand-text font-black truncate max-w-[140px]">{sub.user_email || 'Unknown'}</span>
+                                  <span className="text-brand-text font-black truncate max-w-[160px]">{sub.user_email || 'Unknown'}</span>
                                </div>
                                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-brand-text-secondary">
-                                  <span>Duration</span>
-                                  <span className="text-brand-text font-black">{sub.plan_duration || 'N/A'}</span>
+                                  <span>Plan</span>
+                                  <span className="text-brand-text font-black">{sub.trial ? '1 month free' : sub.plan_code || 'Monthly'}</span>
                                </div>
                                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-brand-text-secondary">
                                   <span>Amount</span>
-                                  <span className="text-brand-accent font-black">₦{Number(sub.amount || 0).toLocaleString()}</span>
+                                  <span className="text-brand-accent font-black">{sub.trial ? 'Free' : `₦${Number(sub.amount || 0).toLocaleString()}`}</span>
                                </div>
                                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-brand-text-secondary">
                                   <span>Activation</span>
-                                  <span className="text-brand-text font-black">{formatDate(sub.subscription_started_at)}</span>
+                                  <span className="text-brand-text font-black">{formatDate(sub.starts_at)}</span>
                                </div>
                                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-brand-text-secondary">
                                   <span>Expiry</span>
-                                  <span className="font-black">{formatDate(sub.subscription_expires_at)}</span>
+                                  <span className="font-black">{formatDate(sub.ends_at)}</span>
                                </div>
                                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-brand-text-secondary">
                                   <span>Days Left</span>
-                                  <span className="font-black">{daysLeft}</span>
+                                  <span className="font-black">{Math.max(0, daysLeft)}</span>
                                </div>
                                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-brand-text-secondary">
-                                  <span>Ref</span>
-                                  <span className="text-brand-text font-mono truncate max-w-[120px]">{sub.order_reference}</span>
+                                  <span>Auto-renew</span>
+                                  <span className={sub.auto_renew ? 'font-black text-emerald-500' : 'font-black text-brand-text-secondary'}>{sub.auto_renew ? 'On' : 'Off'}</span>
                                </div>
+                               {sub.last_renewal_attempt_at && <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-brand-text-secondary"><span>Last attempt</span><span className="text-brand-text font-black">{formatDate(sub.last_renewal_attempt_at)}</span></div>}
+                               {sub.renewal_failure && <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-[10px] font-bold text-amber-500">Renewal failed: {String(sub.renewal_failure).replace(/_/g, ' ')}</div>}
+                               {sub.reference && <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-brand-text-secondary"><span>Reference</span><span className="max-w-[140px] truncate font-mono text-brand-text">{sub.reference}</span></div>}
                             </div>
                           </div>
                         </div>

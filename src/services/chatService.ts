@@ -168,11 +168,11 @@ export const CHAT_BOT_RULES = {
     "Our team is notified once your Paystack payment is successful. If you just paid, please hold while we prepare your logins.",
   RECEIPT_RECEIVED: "Logins are being prepared. This usually takes 5-15 mins.",
   ABOUT_PAYMENT:
-    "Once you select a plan and complete your Paystack payment, your premium logins will be prepared. No manual work is needed from your end.",
+    "Once a supported purchase is confirmed, its delivery information appears in your Plugsy account or messages.",
   TIME_CONFIRMATION:
     "Logins are usually prepared and sent here in the chat as soon as possible. Please stay tuned.",
   DURATION:
-    "Your subscription countdown starts as soon as we send your premium logins.",
+    "Marketplace Premium dates and renewal preferences are shown in the seller workspace.",
   HUMAN_SUPPORT:
     "I’ll notify the team so they can send your logins or assist you further.",
 };

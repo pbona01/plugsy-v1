@@ -19,10 +19,10 @@ interface Message {
 }
 
 const FAQS = [
-  { q: "How do I pay?", a: "Choose a CapCut plan and pay from your Plugsy Wallet. If needed, fund your wallet first, then return to checkout." },
-  { q: "How long is confirmation?", a: "Your wallet purchase is recorded when payment succeeds. Check Plugsy Chat for delivery updates and your login details." },
-  { q: "Is this automatic?", a: "Payment verification is automatic. Our team then prepares and sends your premium logins within minutes." },
-  { q: "What is CapCut Max Pro?", a: "It's the ultimate toolkit for creators, removing watermarks and providing all premium features." }
+  { q: "How do I buy a product?", a: "Choose a Marketplace product and pay from your Plugsy Wallet, or use the guest checkout where available." },
+  { q: "Where is my purchase?", a: "Successful account purchases appear in My Library. Guest buyers receive a secure delivery email." },
+  { q: "How does buyer protection work?", a: "Eligible Marketplace orders include a protection window before seller funds are released." },
+  { q: "How do I contact support?", a: "Open Support or Chats from your dashboard to speak with the Plugsy team." }
 ];
 
 export default function ChatWidget() {

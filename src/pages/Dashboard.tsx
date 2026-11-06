@@ -20,10 +20,6 @@ import {
   parseOneLinkProfileBio,
 } from "../../shared/onelink.js";
 import { clearDefaultPurchaseCode, loadSavedPurchaseCode, saveDefaultPurchaseCode } from '../lib/purchaseCodeProfile';
-import { WhatsappIcon } from '../utils/onelinkPlatforms';
-
-const CAPCUT_WHATSAPP_CAMPAIGN_END_AT = Date.parse('2026-11-16T23:59:59+01:00');
-const CAPCUT_WHATSAPP_URL = 'https://wa.me/message/NJ3G74ENJ2KHD1';
 
 export default function Dashboard() {
   const { userId, getToken } = useAuth();
@@ -34,7 +30,6 @@ export default function Dashboard() {
   
   const { profile: hookProfile, loading: profileLoading } = useProfile(userId || undefined);
   const [localProfile, setLocalProfile] = useState<any>(null);
-  const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   
   // Modals & Menu Overlay
@@ -92,7 +87,6 @@ export default function Dashboard() {
   const currentProfile = localProfile || hookProfile;
   const greetingName = currentProfile?.fullName?.split(' ')[0] || user?.firstName || 'Chief';
   const purchaseCode = currentProfile?.purchase_code || '...';
-  const showCapCutWhatsAppCampaign = Date.now() < CAPCUT_WHATSAPP_CAMPAIGN_END_AT;
 
   // Fetch Referral Stats
   const fetchReferralStats = async () => {
@@ -176,8 +170,7 @@ export default function Dashboard() {
         queryStr += `,user_email.eq.${userEmail}`;
       }
 
-      const [subRes, orderRes, profileRes] = await Promise.all([
-        supabase.from('subscriptions').select('*').eq('user_id', userId).eq('status', 'active'),
+      const [orderRes, profileRes] = await Promise.all([
         supabase.from('orders').select('*').or(queryStr).in('status', ['paid', 'confirmed', 'completed', 'success', 'active', 'pending']).order('created_at', { ascending: false }),
         supabase.from('profiles').select().eq('clerk_id', userId).maybeSingle()
       ]);
@@ -186,21 +179,7 @@ export default function Dashboard() {
         setLocalProfile(profileRes.data);
       }
 
-      const subData = subRes.data || [];
       const orderData = orderRes.data || [];
-
-      const activeOrdersAsSubs = orderData
-        .filter((o: any) => o.status === 'completed' && o.delivery_status === 'login_sent')
-        .map((o: any) => ({
-          id: o.id,
-          product_name: o.product_name || 'Premium Plan',
-          plan_duration: o.plan_duration || `${o.plan_months || 1} Month(s)`,
-          ends_at: o.subscription_expires_at || null,
-          started_at: o.subscription_started_at || null,
-          status: 'active'
-        }));
-
-      setSubscriptions([...subData, ...activeOrdersAsSubs]);
       setOrders(orderData.filter((o: any) => !(o.status === 'completed' && o.delivery_status === 'login_sent') && o.delivery_status !== 'delivered' && o.delivery_status !== 'sent'));
 
       try {
@@ -324,36 +303,6 @@ export default function Dashboard() {
       className="min-h-screen bg-brand-bg text-brand-text flex flex-col pt-12 md:pt-24 pb-[calc(9rem+env(safe-area-inset-bottom))]"
     >
       <div className="w-full max-w-[480px] mx-auto px-4 flex-grow flex flex-col justify-start">
-        {showCapCutWhatsAppCampaign && (
-          <motion.a
-            href={CAPCUT_WHATSAPP_URL}
-            target="_blank"
-            rel="noreferrer"
-            initial={{ opacity: 0, y: -12, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ type: 'spring', stiffness: 340, damping: 28, delay: 0.08 }}
-            whileTap={{ scale: 0.985 }}
-            aria-label="Buy CapCut Pro through Plugsy on WhatsApp"
-            className="group relative mt-4 overflow-hidden rounded-[24px] border border-emerald-400/35 bg-gradient-to-br from-emerald-500 via-[#18b967] to-[#087b48] p-[1px] text-white shadow-[0_18px_42px_rgba(16,185,129,0.28)] focus:outline-none focus:ring-2 focus:ring-emerald-400/60 focus:ring-offset-2 focus:ring-offset-brand-bg"
-          >
-            <span className="absolute -right-8 -top-12 h-32 w-32 rounded-full bg-white/15 blur-2xl transition-transform duration-500 group-hover:scale-125" />
-            <span className="relative flex items-center gap-3 rounded-[23px] bg-black/10 px-4 py-4 backdrop-blur-sm">
-              <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-[#16a765] shadow-lg shadow-black/10">
-                <WhatsappIcon size={27} />
-                <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-[#18b967] bg-white motion-safe:animate-pulse" />
-              </span>
-              <span className="min-w-0 flex-1 text-left">
-                <span className="block text-[9px] font-black uppercase tracking-[0.2em] text-white/75">Available for a limited time</span>
-                <span className="mt-0.5 block text-[15px] font-black leading-tight">Need CapCut Pro?</span>
-                <span className="mt-1 block text-[11px] font-semibold leading-snug text-white/85">Tap here to subscribe through Plugsy on WhatsApp.</span>
-              </span>
-              <span className="flex h-9 shrink-0 items-center rounded-full bg-white px-3 text-[10px] font-black uppercase tracking-wider text-[#087b48] shadow-sm transition-transform duration-200 group-hover:translate-x-0.5">
-                Chat now
-              </span>
-            </span>
-          </motion.a>
-        )}
-        
         {/* Subtle Greeting */}
         <div className="pt-6 px-4 pb-4 select-none text-left flex justify-between items-center">
           <div>

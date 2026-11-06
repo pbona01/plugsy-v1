@@ -69,7 +69,7 @@ export default function RealtimeNotifications() {
 
     // Portfolio view inserts are not reactions and must not alert every user.
 
-    // Channel 2: CapCut Logins (orders table)
+    // Channel 2: legacy Plugsy-owned product delivery updates (orders table)
     const orderChannel = supabase
       .channel('orders_updates_' + uniqueSuffix)
       .on(
@@ -82,7 +82,7 @@ export default function RealtimeNotifications() {
                 <Film className="text-brand-accent" size={20} />
                 <div>
                   <p className="font-bold text-sm">Access Ready! 🎬</p>
-                  <p className="text-xs text-gray-500">Your premium login is active.</p>
+                  <p className="text-xs text-gray-500">Your delivery update is ready.</p>
                 </div>
               </div>,
               {

@@ -24,6 +24,12 @@ import { PaymentModeBanner } from "../components/PaymentModeBanner";
 import MarketplaceCookieConsent from "../components/marketplace/MarketplaceCookieConsent";
 import { trackPortfolioAdEvent } from "../utils/portfolioAds";
 
+const isRetiredCapCutPlan = (plan: any) => {
+  const type = String(plan?.wallet_product_type || "").toLowerCase();
+  const name = String(plan?.name || plan?.product_name || "").toLowerCase();
+  return type === "capcut" || /cap\s*cut.*pro|capcut.*max/.test(name);
+};
+
 const CountdownTimer = ({ expiresAt }: { expiresAt?: string }) => {
   const [timeLeft, setTimeLeft] = useState({ hours: 0, minutes: 0, seconds: 0 });
 
@@ -145,7 +151,7 @@ export default function Products() {
           console.error("Supabase plans error:", error);
           if (isMounted) setErrorMessage(`Connection issue: ${error.message}`);
         } else if (isMounted) {
-          setPlans(data || []);
+          setPlans((data || []).filter((plan) => !isRetiredCapCutPlan(plan)));
         }
       } catch (err) {
         clearTimeout(timeoutId);
@@ -227,7 +233,7 @@ export default function Products() {
     <div className="relative min-h-screen bg-brand-bg px-3 py-20 sm:px-4">
       <Helmet>
         <title>Plugsy - Products</title>
-        <meta name="description" content="Explore affordable premium digital products including CapCut Pro max, UI/UX courses, and LUTs for creators on Plugsy." />
+        <meta name="description" content="Explore Plugsy portfolios, creator medals, and tools built for digital professionals." />
       </Helmet>
       
       <div className="max-w-7xl mx-auto">

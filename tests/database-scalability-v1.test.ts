@@ -20,6 +20,14 @@ const readyCandidates = [
   "idx_status_views_viewer_status",
 ];
 
+// This index was deployed for the former order-backed subscription screen.
+// Marketplace Premium now has its own source of truth, so keep the harmless
+// production index recorded without requiring the retired query in runtime UI.
+const legacyCandidates = new Set([
+  "idx_orders_delivery_created_at",
+  "idx_subscriptions_user_status",
+]);
+
 const sourceContracts: Record<string, { source: string; markers: string[] }> = {
   idx_messages_chat_created_id: {
     source: "../src/pages/PersonalChat.tsx",
@@ -96,6 +104,7 @@ test("production rollout documentation records the verified result", () => {
 
 test("every ready candidate maps to a specific repository query shape", async () => {
   for (const indexName of readyCandidates) {
+    if (legacyCandidates.has(indexName)) continue;
     const contract = sourceContracts[indexName];
     assert.ok(contract, `missing query contract for ${indexName}`);
     const source = await readFile(new URL(contract.source, import.meta.url), "utf8");

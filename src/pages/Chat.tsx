@@ -691,7 +691,7 @@ export default function Chat() {
 
         const initialMessageText = isPaymentSuccess
           ? "Hello, here are your logins..."
-          : "Hello! Welcome to Plugsy Support. Once your Paystack payment is successful, our team is notified and we prepare your premium logins shortly. How can we help you today?";
+          : "Hello! Welcome to Plugsy Support. We can help with your account, Marketplace purchases, seller workspace, wallet, or portfolio. How can we help today?";
 
         await chatService.sendMessage(
           chat.id!,
@@ -1062,7 +1062,7 @@ export default function Chat() {
                                 <Key size={16} />
                               </div>
                               <span className="font-bold text-blue-600 dark:text-blue-400 text-xs sm:text-sm uppercase tracking-wider">
-                                Your CapCut Login Details
+                                Your Delivery Details
                               </span>
                             </div>
                             <div className="whitespace-pre-wrap font-mono text-xs sm:text-sm bg-black/5 dark:bg-black/40 p-4 rounded-xl border border-black/10 dark:border-white/5 mb-3 select-all text-slate-900 dark:text-white/90">

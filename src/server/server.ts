@@ -261,7 +261,7 @@ async function startServer() {
           await resend.emails.send({
             from: "Plugsy <hello@plugsy.ng>",
             to: email,
-            subject: "Your Premium Logins are Ready! 🗝️",
+            subject: "Your Plugsy Delivery Is Ready",
             html: html,
           });
         }
@@ -316,7 +316,7 @@ async function startServer() {
             await sendLocalPush(
               profile.clerk_id,
               "🔑 Your Login is Ready!",
-              `Your ${productName || "Premium"} login details have been sent. Check your messages.`,
+              `Your ${productName || "product"} delivery details have been sent. Check your messages.`,
               "/dashboard/messages"
             );
           }
@@ -1653,7 +1653,7 @@ async function startServer() {
       await sendLocalPush(
         userId,
         "✅ Payment Confirmed!",
-        `Your payment for ${productName} was received. Login details coming soon.`,
+        `Your payment for ${productName} was received. Delivery updates will appear in your account.`,
         "/dashboard"
       );
       console.log("[PAYMENT] Push notification triggered");

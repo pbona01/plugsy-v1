@@ -463,6 +463,21 @@ export async function handleWalletProductPurchase(req, res) {
   const supabase = getWalletServiceClient(res);
   if (!supabase) return;
 
+  // Plugsy no longer sells the legacy CapCut Pro subscription. Keep old
+  // orders intact for support/history, but reject every new purchase server-
+  // side so a stale browser or shared checkout URL cannot bypass the UI.
+  const { data: selectedPlan, error: selectedPlanError } = await supabase
+    .from("plans")
+    .select("id,name,wallet_product_type")
+    .eq("id", planId)
+    .maybeSingle();
+  if (selectedPlanError) return send(res, 503, "PRODUCT_LOOKUP_FAILED", "This product could not be checked. Please try again.");
+  const selectedType = text(selectedPlan?.wallet_product_type).toLowerCase();
+  const selectedName = text(selectedPlan?.name).toLowerCase();
+  if (selectedType === "capcut" || /cap\s*cut.*pro|capcut.*max/.test(selectedName)) {
+    return send(res, 410, "PRODUCT_RETIRED", "This product is no longer sold by Plugsy.");
+  }
+
   let referral;
   try {
     referral = await resolvePurchaseCodeForPurchase(

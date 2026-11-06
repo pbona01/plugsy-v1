@@ -651,7 +651,7 @@ async function handleSendLoginEmail(req, res) {
       const { error: summaryError } = await supabase
         .from("chats")
         .update({
-          last_message: "Login details sent",
+          last_message: "Delivery details sent",
           last_message_at: new Date().toISOString(),
           needs_admin_attention: false
         })
@@ -695,14 +695,14 @@ async function handleSendLoginEmail(req, res) {
           body: JSON.stringify({
             from: "Plugsy <noreply@plugsy.ng>",
             to: order.user_email,
-            subject: "🔑 Your " + (order.product_name || "CapCut Pro") + 
+            subject: "Your " + (order.product_name || "digital product") +
               " login is ready!",
             html: 
               "<div style='font-family: sans-serif; padding: 20px;'>" +
-              "<h2>Your login details are ready</h2>" +
+              "<h2>Your delivery details are ready</h2>" +
               "<p>Hi there,</p>" +
-              "<p>Your " + (order.product_name || "CapCut Pro") + 
-              " subscription has been activated. Here are your details:</p>" +
+              "<p>Your " + (order.product_name || "digital product") +
+              " delivery is ready. Here are your details:</p>" +
               "<div style='background: #f5f5f5; padding: 16px; border-radius: 8px; margin: 16px 0;'>" +
               "<pre style='white-space: pre-wrap; font-family: monospace;'>" + 
               loginDetails + "</pre>" +
@@ -745,7 +745,7 @@ async function handleSendLoginEmail(req, res) {
             body: JSON.stringify({
               chat_id: telegramChatId,
               text: "✅ Login sent to: " + order.user_email + 
-                "\nProduct: " + (order.product_name || "CapCut Pro")
+                "\nProduct: " + (order.product_name || "Digital product")
             })
           }
         )
@@ -769,7 +769,7 @@ async function handleSendLoginEmail(req, res) {
     // STEP 5: OneSignal push notification (isolated)
     try {
       const recipient = await resolveCanonicalClerkId(supabase, order.user_id, order.user_email);
-      if (recipient) await sendOneSignal({ title: "Your login is ready", body: "Your login details are ready. Check your Plugsy messages.", url: "/dashboard/messages", targeting: { include_aliases: { external_id: [recipient] } }, requestKey: deterministicEventUuid("login-ready", order.id) });
+      if (recipient) await sendOneSignal({ title: "Your delivery is ready", body: "Your delivery details are ready. Check your Plugsy messages.", url: "/dashboard/messages", targeting: { include_aliases: { external_id: [recipient] } }, requestKey: deterministicEventUuid("delivery-ready", order.id) });
       else console.warn("[send-login] push skipped", { code: "RECIPIENT_UNRESOLVED" });
     } catch {
       console.warn("[send-login] push delivery failed", { code: "PUSH_SECONDARY_EFFECT_FAILED" })
@@ -1141,22 +1141,82 @@ async function handleDelete(req, res) {
   return res.status(405).json({ error: "ADMIN_DELETE_DISABLED" });
 }
 
-async function handleListSubscriptions(req, res) {
+async function handleListMarketplaceSubscriptions(req, res) {
   try {
     const supabase = getClient();
     const writer = await requireVerifiedAdmin(req, res, supabase);
     if (!writer) return;
 
-    const { data: subscriptions, error } = await supabase
-      .from("subscriptions")
-      .select("*")
-      .order("created_at", { ascending: false })
+    const { data: sellers, error: sellerError } = await supabase
+      .from("marketplace_seller_profiles")
+      .select("user_id,verification_status,public_selling_enabled,public_plan_expires_at,created_at,updated_at")
+      .order("updated_at", { ascending: false })
       .limit(ADMIN_DASHBOARD_PAGE_SIZE);
+    if (sellerError) throw sellerError;
 
-    if (error) throw error;
-    return res.status(200).json({ success: true, subscriptions });
-  } catch {
-    return res.status(500).json({ success: false, error: "LIST_SUBSCRIPTIONS_FAILED" });
+    const userIds = (sellers || []).map((row) => row.user_id).filter(Boolean);
+    const [profileResult, paymentResult, billingResult] = await Promise.all([
+      userIds.length
+        ? supabase.from("profiles").select("clerk_id,email,full_name,username").in("clerk_id", userIds)
+        : Promise.resolve({ data: [], error: null }),
+      userIds.length
+        ? supabase.from("marketplace_premium_payments").select("id,user_id,amount,reference,starts_at,expires_at,created_at").in("user_id", userIds).order("created_at", { ascending: false }).limit(ADMIN_DASHBOARD_PAGE_SIZE)
+        : Promise.resolve({ data: [], error: null }),
+      userIds.length
+        ? supabase.from("marketplace_seller_profiles").select("user_id,premium_trial_claimed_at,premium_auto_renew,premium_plan_code,premium_last_renewal_attempt_at,premium_renewal_failure").in("user_id", userIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (profileResult.error || paymentResult.error) throw profileResult.error || paymentResult.error;
+
+    const profiles = new Map((profileResult.data || []).map((row) => [row.clerk_id, row]));
+    const billing = new Map((billingResult.error ? [] : billingResult.data || []).map((row) => [row.user_id, row]));
+    const latestPayments = new Map();
+    for (const payment of paymentResult.data || []) if (!latestPayments.has(payment.user_id)) latestPayments.set(payment.user_id, payment);
+    const now = Date.now();
+    const subscriptions = (sellers || []).map((seller) => {
+      const profile = profiles.get(seller.user_id) || {};
+      const preferences = billing.get(seller.user_id) || {};
+      const payment = latestPayments.get(seller.user_id) || null;
+      const expiry = seller.public_plan_expires_at || payment?.expires_at || null;
+      const active = seller.public_selling_enabled === true && Date.parse(expiry || "") > now;
+      const trial = Boolean(preferences.premium_trial_claimed_at && !payment);
+      return {
+        id: seller.user_id,
+        user_id: seller.user_id,
+        user_email: profile.email || "",
+        user_name: profile.full_name || profile.username || "Plugsy seller",
+        verification_status: seller.verification_status,
+        status: active ? "active" : "expired",
+        trial,
+        plan_code: preferences.premium_plan_code || (Number(payment?.amount) === 13500 ? "yearly" : "monthly"),
+        amount: Number(payment?.amount || 0),
+        starts_at: payment?.starts_at || preferences.premium_trial_claimed_at || seller.created_at,
+        ends_at: expiry,
+        auto_renew: preferences.premium_auto_renew === true,
+        last_renewal_attempt_at: preferences.premium_last_renewal_attempt_at || null,
+        renewal_failure: preferences.premium_renewal_failure || null,
+        reference: payment?.reference || null,
+        updated_at: seller.updated_at,
+        billing_features_ready: !billingResult.error,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      subscriptions,
+      metrics: {
+        total: subscriptions.length,
+        active: subscriptions.filter((row) => row.status === "active").length,
+        trials: subscriptions.filter((row) => row.trial && row.status === "active").length,
+        autoRenew: subscriptions.filter((row) => row.auto_renew).length,
+        failedRenewals: subscriptions.filter((row) => row.renewal_failure).length,
+        expired: subscriptions.filter((row) => row.status === "expired").length,
+      },
+      billingFeaturesReady: !billingResult.error,
+    });
+  } catch (error) {
+    console.error("[admin-marketplace-subscriptions] list failed", error?.message || error);
+    return res.status(500).json({ success: false, error: "LIST_MARKETPLACE_SUBSCRIPTIONS_FAILED" });
   }
 }
 
@@ -1900,7 +1960,7 @@ export default async function handler(req, res) {
 
   if (action === "financial-dashboard") return await handleFinancialDashboard(req, res)
   if (action === "list-orders") return await handleListOrders(req, res)
-  if (action === "list-subscriptions") return await handleListSubscriptions(req, res)
+  if (action === "list-subscriptions" || action === "list-marketplace-subscriptions") return await handleListMarketplaceSubscriptions(req, res)
   if (action === "list-profiles") return await handleListProfiles(req, res)
   if (action === "overview-metrics") return await handleOverviewMetrics(req, res)
   if (action === "analytics") return await handleAnalytics(req, res)
