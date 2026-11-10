@@ -18,6 +18,9 @@ export const THEMES: Record<string, { name: string, bg: string, text: string, ac
   rose_studio: { name: "Rose Studio", bg: "#1b0b18", text: "#fff1f7", accent: "#fb7185", cardBg: "#2a1024", borderColor: "#582240" },
   solar_flare: { name: "Solar Flare", bg: "#160d04", text: "#fff7e6", accent: "#fbbf24", cardBg: "#291707", borderColor: "#5b3510" },
   midnight_chrome: { name: "Midnight Chrome", bg: "#080c14", text: "#f0f6ff", accent: "#a5b4fc", cardBg: "#121927", borderColor: "#334155" }
+  ,paper: { name: "Paper", bg: "#fbfaf7", text: "#171717", accent: "#1463ff", cardBg: "#ffffff", borderColor: "#e2dfd8" }
+  ,gallery: { name: "Gallery", bg: "#eff5ff", text: "#0b1b36", accent: "#155eef", cardBg: "#ffffff", borderColor: "#cddbef" }
+  ,studio: { name: "Studio", bg: "#fff5ef", text: "#2d1711", accent: "#c94e2f", cardBg: "#fffaf7", borderColor: "#edd2c5" }
 };
 
 export const FONT_PAIRINGS = {

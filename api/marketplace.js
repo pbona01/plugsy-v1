@@ -143,6 +143,35 @@ export const publicListing = (listing, seller) => ({
   } : { trustScore: null, verified: false, completedOrders: 0 },
 });
 
+const publicContactMethods = (row) => ({
+  plugsyInbox: row?.plugsy_inbox_enabled !== false,
+  whatsappUrl: text(row?.whatsapp_url) || null,
+  telegramUrl: text(row?.telegram_url) || null,
+});
+
+async function loadSellerContactPreferences(supabase, sellerId) {
+  const { data, error } = await supabase.from('marketplace_seller_contact_preferences')
+    .select('plugsy_inbox_enabled,whatsapp_url,telegram_url,updated_at')
+    .eq('seller_id', sellerId).maybeSingle();
+  // The marketplace remains available until this additive migration has run.
+  if (error && !['42P01', 'PGRST205'].includes(error.code)) throw error;
+  return publicContactMethods(data);
+}
+
+async function loadRelatedProducts(supabase, listing, seller) {
+  const { data: links, error } = await supabase.from('marketplace_listing_related_products')
+    .select('related_listing_id,sort_order').eq('listing_id', listing.id)
+    .order('sort_order', { ascending: true }).limit(2);
+  if (error && !['42P01', 'PGRST205'].includes(error.code)) throw error;
+  const ids = (links || []).map((row) => row.related_listing_id).filter(Boolean);
+  if (!ids.length) return [];
+  const { data: listings, error: listingError } = await supabase.from('marketplace_listings').select(listingFields)
+    .in('id', ids).eq('seller_id', listing.seller_id).eq('visibility', 'public').eq('status', 'published');
+  if (listingError) throw listingError;
+  const byId = new Map((listings || []).map((item) => [item.id, item]));
+  return ids.map((id) => byId.get(id)).filter(Boolean).map((item) => publicListing(item, seller));
+}
+
 export const allowedListingPayload = (body) => {
   const title = text(body.title);
   const summary = text(body.summary);
@@ -416,7 +445,9 @@ async function productReviews(req, res) {
     return { id: review.id, rating: review.rating, body: review.body, sellerResponse: review.seller_response || null, createdAt: review.created_at, buyer: { name: buyer?.full_name || buyer?.username || "Verified buyer", avatar: buyer?.profile_pic_url || buyer?.image_url || null } };
   });
   const average = reviews.length ? reviews.reduce((sum, review) => sum + Number(review.rating), 0) / reviews.length : null;
-  return res.status(200).json({ success: true, reviews, summary: { count: reviews.length, average } });
+  const ratings = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  reviews.forEach((review) => { ratings[review.rating]++; });
+  return res.status(200).json({ success: true, reviews, summary: { count: reviews.length, average, ratings } });
 }
 
 async function submitProductReview(req, res, guest = false) {
@@ -491,7 +522,9 @@ async function privateListing(req, res) {
   if (error) throw error;
   if (!listing) return send(res, 404, "PRIVATE_LISTING_NOT_FOUND", "This private product link is unavailable.");
   const sellers = await loadSellers(supabase, [listing.seller_id]);
-  return res.status(200).json({ success: true, listing: { ...publicListing(listing, sellers.get(listing.seller_id)), privateAccessToken: accessToken } });
+  const seller = sellers.get(listing.seller_id);
+  const contactMethods = await loadSellerContactPreferences(supabase, listing.seller_id);
+  return res.status(200).json({ success: true, listing: { ...publicListing(listing, seller), privateAccessToken: accessToken, contactMethods } });
 }
 
 async function productListing(req,res) {
@@ -502,8 +535,13 @@ async function productListing(req,res) {
   const {data,error}=await supabase.from('marketplace_listings').select(listingFields).eq('id',id).eq('visibility','public').eq('status','published').maybeSingle(); if(error) throw error;
   if(!data) return send(res,404,'PRODUCT_NOT_FOUND','This product is unavailable.');
   const sellers=await loadSellers(supabase,[data.seller_id]);
-  if(!canPublishPublicly(sellers.get(data.seller_id))) return send(res,404,'PRODUCT_NOT_FOUND','This product is unavailable.');
-  return res.status(200).json({success:true,listing:publicListing(data,sellers.get(data.seller_id))});
+  const seller = sellers.get(data.seller_id);
+  if(!canPublishPublicly(seller)) return send(res,404,'PRODUCT_NOT_FOUND','This product is unavailable.');
+  const [contactMethods, relatedProducts] = await Promise.all([
+    loadSellerContactPreferences(supabase, data.seller_id),
+    loadRelatedProducts(supabase, data, seller),
+  ]);
+  return res.status(200).json({success:true,listing:{ ...publicListing(data, seller), contactMethods, relatedProducts }});
 }
 
 async function sellerWorkspace(req, res) {
@@ -557,13 +595,31 @@ async function sellerWorkspace(req, res) {
   }));
   const allSales = [...safeSales, ...safeGuestSales].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const sellerListings = (listings || []).filter((listing) => listing.status !== 'archived');
-  const deliveryResults = await Promise.all(sellerListings.map((listing) => loadListingDeliveries(supabase, listing.id)));
-  const listingsWithDeliveries = sellerListings.map((listing, index) => ({ ...listing, delivery_items: deliveryResults[index] || [] }));
+  const relatedProductsPromise = sellerListings.length
+    ? supabase.from('marketplace_listing_related_products').select('listing_id,related_listing_id,sort_order').in('listing_id', sellerListings.map((listing) => listing.id))
+    : Promise.resolve({ data: [], error: null });
+  const [deliveryResults, contactPreferencesResult, relatedResult] = await Promise.all([
+    Promise.all(sellerListings.map((listing) => loadListingDeliveries(supabase, listing.id))),
+    loadSellerContactPreferences(supabase, actor.userId),
+    relatedProductsPromise,
+  ]);
+  if (relatedResult.error && !['42P01', 'PGRST205'].includes(relatedResult.error.code)) throw relatedResult.error;
+  const relatedByListing = new Map();
+  for (const row of relatedResult.data || []) {
+    const list = relatedByListing.get(row.listing_id) || [];
+    list.push(row);
+    relatedByListing.set(row.listing_id, list);
+  }
+  const listingsWithDeliveries = sellerListings.map((listing, index) => ({
+    ...listing,
+    delivery_items: deliveryResults[index] || [],
+    related_listing_ids: (relatedByListing.get(listing.id) || []).sort((a, b) => a.sort_order - b.sort_order).map((row) => row.related_listing_id),
+  }));
   const pendingSince = Date.parse(seller?.updated_at || '');
   const verificationRetryAvailable = seller?.verification_status === 'pending'
     && ['prembly', 'prembly_widget'].includes(seller?.verification_provider)
     && (!Number.isFinite(pendingSince) || pendingSince <= Date.now() - 5 * 60_000);
-  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), ...sellerBilling, verification_retry_available: verificationRetryAvailable, trust_score: trustScoreForSeller(seller) }, listings: listingsWithDeliveries, sales: allSales });
+  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), ...sellerBilling, contact_preferences: contactPreferencesResult, verification_retry_available: verificationRetryAvailable, trust_score: trustScoreForSeller(seller) }, listings: listingsWithDeliveries, sales: allSales });
 }
 
 async function sellerAdIntegrations(req, res, method) {
@@ -615,6 +671,60 @@ async function updateSellerFeePolicy(req, res) {
     .single();
   if (error) throw error;
   return res.status(200).json({ success: true, feePaidBy: data.marketplace_fee_paid_by });
+}
+
+async function updateSellerContactPreferences(req, res) {
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const body = readBody(req);
+  const plugsyInbox = body.plugsyInbox !== false;
+  const whatsappUrl = text(body.whatsappUrl);
+  const telegramUrl = text(body.telegramUrl);
+  const validWhatsapp = !whatsappUrl || /^https:\/\/(wa\.me|api\.whatsapp\.com|chat\.whatsapp\.com)\//i.test(whatsappUrl);
+  const validTelegram = !telegramUrl || /^https:\/\/(t\.me|telegram\.me)\//i.test(telegramUrl);
+  if (!validWhatsapp || !validTelegram || whatsappUrl.length > 2048 || telegramUrl.length > 2048) {
+    return send(res, 400, 'CONTACT_METHOD_INVALID', 'Use a valid WhatsApp or Telegram link, or leave it blank.');
+  }
+  if (!plugsyInbox && !whatsappUrl && !telegramUrl) {
+    return send(res, 400, 'CONTACT_METHOD_REQUIRED', 'Keep Plugsy Inbox on or add at least one contact link.');
+  }
+  const supabase = getClient();
+  const { data, error } = await supabase.from('marketplace_seller_contact_preferences').upsert({
+    seller_id: actor.userId,
+    plugsy_inbox_enabled: plugsyInbox,
+    whatsapp_url: whatsappUrl || null,
+    telegram_url: telegramUrl || null,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'seller_id' }).select('plugsy_inbox_enabled,whatsapp_url,telegram_url,updated_at').single();
+  if (error) throw error;
+  return res.status(200).json({ success: true, preferences: publicContactMethods(data) });
+}
+
+async function setRelatedProducts(req, res) {
+  const actor = await requireActor(req, res);
+  if (!actor) return;
+  const body = readBody(req);
+  const listingId = text(body.listingId);
+  const relatedIds = [...new Set((Array.isArray(body.relatedListingIds) ? body.relatedListingIds : []).map(text).filter(Boolean))];
+  if (!/^[0-9a-f-]{36}$/i.test(listingId) || relatedIds.length > 2 || relatedIds.some((id) => !/^[0-9a-f-]{36}$/i.test(id) || id === listingId)) {
+    return send(res, 400, 'RELATED_PRODUCTS_INVALID', 'Choose up to two other products from your library.');
+  }
+  const supabase = getClient();
+  const { data: ownerListing, error: ownerError } = await supabase.from('marketplace_listings').select('id').eq('id', listingId).eq('seller_id', actor.userId).maybeSingle();
+  if (ownerError) throw ownerError;
+  if (!ownerListing) return send(res, 404, 'LISTING_NOT_FOUND', 'That product was not found.');
+  if (relatedIds.length) {
+    const { data: related, error: relatedError } = await supabase.from('marketplace_listings').select('id').eq('seller_id', actor.userId).in('id', relatedIds);
+    if (relatedError) throw relatedError;
+    if ((related || []).length !== relatedIds.length) return send(res, 400, 'RELATED_PRODUCTS_INVALID', 'Related products must belong to your own library.');
+  }
+  const { error: clearError } = await supabase.from('marketplace_listing_related_products').delete().eq('listing_id', listingId);
+  if (clearError && !['42P01', 'PGRST205'].includes(clearError.code)) throw clearError;
+  if (relatedIds.length) {
+    const { error: insertError } = await supabase.from('marketplace_listing_related_products').insert(relatedIds.map((relatedListingId, sortOrder) => ({ listing_id: listingId, related_listing_id: relatedListingId, sort_order: sortOrder })));
+    if (insertError) throw insertError;
+  }
+  return res.status(200).json({ success: true, relatedListingIds: relatedIds });
 }
 
 async function createListing(req, res) {
@@ -1804,6 +1914,8 @@ export default async function handler(req, res) {
     if ((req.method === "GET" || req.method === "POST") && action === "verify-guest-checkout") return await verifyGuestCheckout(req, res);
     if (req.method === "POST" && action === "create-listing") return await createListing(req, res);
     if (req.method === "POST" && action === "update-fee-policy") return await updateSellerFeePolicy(req, res);
+    if (req.method === "POST" && action === "seller-contact-preferences") return await updateSellerContactPreferences(req, res);
+    if (req.method === "POST" && action === "set-related-products") return await setRelatedProducts(req, res);
     if (req.method === "PATCH" && action === "update-listing") return await updateListing(req, res);
     if (req.method === "POST" && action === "publish") return await publishListing(req, res);
     if (req.method === "POST" && action === "purchase") return await purchase(req, res);

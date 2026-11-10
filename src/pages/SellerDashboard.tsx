@@ -23,6 +23,7 @@ const emptyForm = {
   visibility: "private",
   resalePolicy: "not_allowed",
   resaleCommissionPercent: "",
+  relatedListingIds: [] as string[],
 };
 const categories = ["templates", "courses", "ebooks", "design", "video", "comics", "social_media", "business", "creator_tools"];
 
@@ -167,6 +168,7 @@ export default function SellerDashboard() {
             visibility: item.visibility,
             resalePolicy: item.resale_policy,
             resaleCommissionPercent: item.resale_commission_percent == null ? "" : String(item.resale_commission_percent),
+            relatedListingIds: item.related_listing_ids || [],
           }
         : emptyForm,
     );
@@ -250,6 +252,7 @@ export default function SellerDashboard() {
         body: JSON.stringify({ ...form, listingId: editing?.id }),
       });
       const listingId = result.listing.id;
+      await request("set-related-products", { method: "POST", body: JSON.stringify({ listingId, relatedListingIds: form.relatedListingIds || [] }) });
       setFileProgress((current) => ({
         ...current,
         ...Object.fromEntries(productFiles.map((item) => [item.id, { percent: 0, phase: "Waiting to upload" }])),
@@ -484,7 +487,7 @@ export default function SellerDashboard() {
           {tab === "integrations" && <AdIntegrations request={request} />}
           {tab === "setup" && (
             <div className="mt-6">
-              <Setup seller={data?.seller} listings={listings} />
+              <Setup seller={data?.seller} listings={listings} request={request} onSaved={load} />
               <div id="seller-verification" className="scroll-mt-6">
                 <SellerVerification seller={data?.seller} onComplete={load} />
               </div>
@@ -514,7 +517,7 @@ export default function SellerDashboard() {
           </div>
         </div>
       )}
-      <Wizard open={open} step={step} setStep={setStep} form={form} setForm={setForm} editing={editing} busy={busy === "save"} coverBusy={coverBusy} uploadCover={uploadCover} productFiles={productFiles} setProductFiles={setProductFiles} fileProgress={fileProgress} deliveryLinks={deliveryLinks} setDeliveryLinks={setDeliveryLinks} setRemovedDeliveryIds={setRemovedDeliveryIds} close={() => setOpen(false)} save={save} />
+      <Wizard open={open} step={step} setStep={setStep} form={form} setForm={setForm} editing={editing} listings={listings} busy={busy === "save"} coverBusy={coverBusy} uploadCover={uploadCover} productFiles={productFiles} setProductFiles={setProductFiles} fileProgress={fileProgress} deliveryLinks={deliveryLinks} setDeliveryLinks={setDeliveryLinks} setRemovedDeliveryIds={setRemovedDeliveryIds} close={() => setOpen(false)} save={save} />
     </main>
   );
 }
@@ -898,7 +901,11 @@ function OrderList({ orders, query, setQuery, support, filter, setFilter }: any)
     </section>
   );
 }
-function Setup({ seller, listings }: any) {
+function Setup({ seller, listings, request, onSaved }: any) {
+  const [inbox, setInbox] = useState(seller?.contact_preferences?.plugsyInbox !== false);
+  const [whatsappUrl, setWhatsappUrl] = useState(seller?.contact_preferences?.whatsappUrl || "");
+  const [telegramUrl, setTelegramUrl] = useState(seller?.contact_preferences?.telegramUrl || "");
+  const [saving, setSaving] = useState(false);
   const steps = [
     { text: "Create product", done: listings.length > 0 },
     {
@@ -922,11 +929,18 @@ function Setup({ seller, listings }: any) {
           </div>
         ))}
       </div>
+      <section className="mt-6 rounded-2xl border border-brand-border bg-brand-bg p-5">
+        <h3 className="text-sm font-black">Buyer contact options</h3>
+        <p className="mt-1 text-xs leading-5 text-brand-text-secondary">Choose how buyers can reach you from your product page. Plugsy Inbox keeps the conversation in Plugsy.</p>
+        <label className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-brand-border p-3 text-sm font-bold"><span>Plugsy Inbox</span><input type="checkbox" checked={inbox} onChange={(event) => setInbox(event.target.checked)} className="h-4 w-4 accent-blue-500" /></label>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs font-bold">WhatsApp link<input value={whatsappUrl} onChange={(event) => setWhatsappUrl(event.target.value)} placeholder="https://wa.me/..." className="mt-2 h-11 w-full rounded-xl border border-brand-border bg-brand-surface px-3 text-sm font-normal outline-none focus:border-brand-accent" /></label><label className="text-xs font-bold">Telegram link<input value={telegramUrl} onChange={(event) => setTelegramUrl(event.target.value)} placeholder="https://t.me/..." className="mt-2 h-11 w-full rounded-xl border border-brand-border bg-brand-surface px-3 text-sm font-normal outline-none focus:border-brand-accent" /></label></div>
+        <button disabled={saving} onClick={async () => { setSaving(true); try { await request("seller-contact-preferences", { method: "POST", body: JSON.stringify({ plugsyInbox: inbox, whatsappUrl, telegramUrl }) }); await onSaved(); toast.success("Buyer contact options saved."); } catch (error: any) { toast.error(error.message || "Contact options could not be saved."); } finally { setSaving(false); } }} className="btn-primary mt-4 h-11 px-4 text-xs font-black disabled:opacity-50">{saving ? "Saving…" : "Save contact options"}</button>
+      </section>
     </section>
   );
 }
 
-function Wizard({ open, step, setStep, form, setForm, editing, busy, coverBusy, uploadCover, productFiles, setProductFiles, fileProgress, deliveryLinks, setDeliveryLinks, setRemovedDeliveryIds, close, save }: any) {
+function Wizard({ open, step, setStep, form, setForm, editing, listings, busy, coverBusy, uploadCover, productFiles, setProductFiles, fileProgress, deliveryLinks, setDeliveryLinks, setRemovedDeliveryIds, close, save }: any) {
   const put = (key: string, value: string) => setForm((f: any) => ({ ...f, [key]: value }));
   const valid = form.title.trim().length >= 3 && Number(form.price) >= 100;
   const presets = ["Open product", "Download files", "Start course", "View resource"];
@@ -1181,6 +1195,10 @@ function Wizard({ open, step, setStep, form, setForm, editing, busy, coverBusy, 
                       <input type="number" min="1" max="80" value={form.resaleCommissionPercent} onChange={(e) => put("resaleCommissionPercent", e.target.value)} />
                     </Field>
                   )}
+                  <div className="rounded-2xl border border-brand-border bg-brand-surface p-5">
+                    <div className="flex items-start justify-between gap-4"><div><h3 className="text-sm font-black">Related products</h3><p className="mt-1 text-xs leading-5 text-brand-text-secondary">Show up to two other products from your library on this product page. No re-uploading needed.</p></div><span className="shrink-0 text-xs font-black text-brand-accent">{form.relatedListingIds?.length || 0}/2</span></div>
+                    <div className="mt-4 space-y-2">{listings.filter((item: any) => item.id !== editing?.id && item.status !== "archived").length ? listings.filter((item: any) => item.id !== editing?.id && item.status !== "archived").map((item: any) => { const selected = (form.relatedListingIds || []).includes(item.id); return <label key={item.id} className={`flex cursor-pointer items-center justify-between gap-3 rounded-xl border p-3 ${selected ? "border-brand-accent bg-brand-accent/[.06]" : "border-brand-border"}`}><span className="min-w-0"><strong className="block truncate text-xs">{item.title}</strong><span className="mt-1 block text-[10px] text-brand-text-secondary">{money(item.price)} · {item.visibility === "public" ? "Public" : "Private"}</span></span><input type="checkbox" checked={selected} disabled={!selected && (form.relatedListingIds || []).length >= 2} onChange={() => setForm((current: any) => ({ ...current, relatedListingIds: selected ? current.relatedListingIds.filter((id: string) => id !== item.id) : [...(current.relatedListingIds || []), item.id] }))} className="h-4 w-4 accent-blue-500" /></label>; }) : <p className="rounded-xl bg-brand-bg p-3 text-xs text-brand-text-secondary">Save another product first, then return here to link it.</p>}</div>
+                  </div>
                   <div className="rounded-2xl bg-brand-surface p-5">
                     <p className="text-xs text-brand-text-secondary">Ready to save</p>
                     <h3 className="mt-2 text-lg font-black">{form.title || "Untitled product"}</h3>
