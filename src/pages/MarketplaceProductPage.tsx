@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "@clerk/clerk-react";
-import { ArrowLeft, BadgePercent, CheckCircle2, Copy, ExternalLink, Loader2, LockKeyhole, Mail, MessageCircle, Send, ShieldCheck, Star, Store, UserMinus, UserPlus, UserRound, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, BadgePercent, CheckCircle2, Copy, ExternalLink, Loader2, LockKeyhole, Mail, MessageCircle, Send, ShieldCheck, Star, Store, UserMinus, UserPlus, UserRound, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { MarketplaceMark } from "../components/icons/MarketplaceMark";
 import { marketplaceAttempt, clearMarketplaceAttempt } from "../utils/marketplaceAttempt.js";
