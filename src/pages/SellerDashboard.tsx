@@ -8,6 +8,7 @@ import SellerPremiumPlan from "../components/marketplace/SellerPremiumPlan";
 import SellerVerification from "../components/marketplace/SellerVerification";
 import ResaleWorkspace from "../components/marketplace/ResaleWorkspace";
 import { compressAndUpload } from "../utils/uploadMedia";
+import { PlugsyOrb } from "../components/mascot/PlugsyOrb";
 
 type Tab = "home" | "products" | "orders" | "affiliate" | "setup" | "integrations";
 const money = (n: number) => `₦${Number(n || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 })}`;
@@ -703,7 +704,7 @@ function Home({ listings, sales, metrics, top, create, products, viewOrders }: a
               <ArrowRight size={17} />
             </button>
           </div>
-          <Store className="absolute -bottom-12 -right-8 h-64 w-64 text-white/10" />
+          <PlugsyOrb mood="thinking" className="pointer-events-none absolute -bottom-16 -right-5 w-44 opacity-90 sm:right-4 sm:w-56" />
         </section>
       ) : (
         <section className="rounded-[30px] border border-brand-border bg-brand-surface p-7">
@@ -770,7 +771,7 @@ function ProductList({ listings, busy, create, edit, status, copyLink, publishPu
   if (!listings.length)
     return (
       <div className="mt-6 rounded-3xl border border-dashed border-brand-border bg-brand-surface p-12 text-center">
-        <PackagePlus className="mx-auto text-brand-accent" size={40} />
+        <PlugsyOrb mood="thinking" className="mx-auto w-24" />
         <h2 className="mt-5 text-2xl font-black">No products yet</h2>
         <p className="mt-2 text-sm text-brand-text-secondary">Create one in three simple steps.</p>
         <button onClick={create} className="btn-primary mt-6 h-11 px-5">

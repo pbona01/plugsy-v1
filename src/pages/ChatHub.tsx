@@ -16,6 +16,7 @@ import StatusHub from "../components/chat/StatusHub";
 import toast from "react-hot-toast";
 import { useOnlinePresence } from "../contexts/OnlinePresenceContext";
 import plugsyLogo from "../assets/images/plugsy_icon.svg";
+import { PlugsyOrb } from "../components/mascot/PlugsyOrb";
 import { getCanonicalOneLinkUrl } from "../utils/onelink";
 import { syncClerkUserToSupabase } from "../lib/authUtils";
 import { createRefreshCoordinator, shouldScheduleChatHubRefresh } from "../utils/chatScalability";
@@ -827,9 +828,7 @@ export default function ChatHub({ defaultTab }: ChatHubProps = {}) {
                   </div>
                 ) : dms.length === 0 ? (
                   <div className="flex flex-col items-center justify-center text-center py-16 bg-white/[0.01] border border-white/5 rounded-3xl p-8">
-                    <div className="w-16 h-16 bg-blue-500/10 rounded-full flex items-center justify-center text-[#3B82F6] mb-4 border border-blue-500/10">
-                      <MessageCircle size={28} />
-                    </div>
+                    <PlugsyOrb mood="help" className="mb-4 w-20" />
                     <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">No conversations yet</h3>
                     <p className="text-sm text-slate-400 max-w-sm mb-6">
                       Start a direct chat with creative designers, template authors, or friends. Click the green button to begin!

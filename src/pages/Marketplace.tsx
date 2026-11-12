@@ -15,6 +15,7 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
+import { PlugsyOrb } from "../components/mascot/PlugsyOrb";
 import {
   AlertCircle,
   ArrowRight,
@@ -877,10 +878,7 @@ export default function Marketplace() {
                   ))
                 ) : (
                   <div className="col-span-full rounded-3xl border border-dashed border-brand-border bg-brand-surface p-12 text-center">
-                    <MarketplaceMark
-                      className="mx-auto text-brand-accent"
-                      size={42}
-                    />
+                    <PlugsyOrb mood="calm" className="mx-auto w-24" />
                     <h3 className="mt-5 text-xl font-black">
                       {mode === "following"
                         ? "Follow creators to fill this feed"
