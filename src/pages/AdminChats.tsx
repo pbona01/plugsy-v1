@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 19114)
-Total output lines: 1751
-
 import { LiquidGlass } from "../components/ui/LiquidGlass";
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -187,7 +184,7 @@ export default function AdminChats() {
       const executeFetch = async () => {
         const { data, error } = await supabase
           .from("chats")
-          .select("*")
+          .select("id,chat_id,order_id,user_id,sender_role,content,attachment_url,attachment_type,audio_url,message_type,read_by_admin,created_at")
           .order("created_at", { ascending: false });
         if (error) throw error;
         if (
@@ -378,7 +375,7 @@ export default function AdminChats() {
   // Load all orders for filtering
   useEffect(() => {
     const fetchOrders = async () => {
-      const { data } = await supabase.from("orders").select("*");
+      const { data } = await supabase.from("orders").select("id,chat_id,order_id,user_id,sender_role,content,attachment_url,attachment_type,audio_url,message_type,read_by_admin,created_at");
 
       // HTML Protection
       if (typeof data === "string" && (data as string).includes("<!doctype"))
@@ -438,9 +435,6 @@ export default function AdminChats() {
     let pollingInterval: NodeJS.Timeout;
 
     const fetchMessages = async () => {
-      // Realtime normally delivers messages immediately. This guard prevents a
-      // realtime event and the fallback poll from rendering the same large chat
-      // history at the same time, which was the main cause of scroll jank.
       if (isFetchingMessagesRef.current) return;
       isFetchingMessagesRef.current = true;
       try {
@@ -506,11 +500,8 @@ export default function AdminChats() {
           return prev;
         });
 
-        // Do not write to Supabase every time the fallback poll runs. Mark only
-        // actual unread customer messages, once they are on screen.
         const unreadCustomerMessages = rawRows.filter((row: any) =>
-          !["admin", "system", "bot", "assistant"].includes(String(row.sender_role || "").toLowerCase()) &&
-          row.read_by_admin !== true,
+          !["admin", "system", "bot", "assistant"].includes(String(row.sender_role || "").toLowerCase()) && row.read_by_admin !== true,
         );
         if (unreadCustomerMessages.length) {
           const readResults = await Promise.all([
@@ -526,7 +517,7 @@ export default function AdminChats() {
     };
 
     fetchMessages();
-    pollingInterval = setInterval(fetchMessages, 15000); // Realtime is primary; polling is only a safety net.
+    pollingInterval = setInterval(fetchMessages, 15000);
 
     const channelId = `chat-presence:${activeChatId}`;
     let msgChannel = supabase
@@ -565,7 +556,826 @@ export default function AdminChats() {
             username: "Support",
             full_name: "Support Team",
             is_typing: false,
-      …9114 tokens truncated…iv
+          });
+        }
+        if (status === "CHANNEL_ERROR") {
+          console.log("Messages channel unavailable, falling back to polling.");
+          // Fallback to more frequent polling
+          clearInterval(pollingInterval);
+          pollingInterval = setInterval(fetchMessages, 8000);
+        }
+      });
+
+    presenceChannelRef.current = msgChannel;
+
+    return () => {
+      clearInterval(pollingInterval);
+      if (msgChannel) {
+        supabase.removeChannel(msgChannel).catch(() => {});
+      }
+      presenceChannelRef.current = null;
+    };
+  }, [
+    activeChatId,
+    activeHistoryChatIdsKey,
+    activeHistoryIsSupport,
+    activeHistoryOwnerUserId,
+  ]);
+
+  useEffect(() => {
+    if (!activeChatId) return;
+    const activeChat = chats.find((c) => c.id === activeChatId);
+    if (activeChat) {
+      const userOrders = orders
+        .filter((o) => o.user_id === activeChat.userId)
+        .sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        );
+      if (userOrders.length > 0) {
+        setActiveOrder(userOrders[0]);
+      } else {
+        supabase
+          .from("orders")
+          .select("id,chat_id,order_id,user_id,sender_role,content,attachment_url,attachment_type,audio_url,message_type,read_by_admin,created_at")
+          .eq("user_id", activeChat.userId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+          .then(({ data }) => {
+            if (data) setActiveOrder(data);
+            else setActiveOrder(null);
+          });
+      }
+    }
+  }, [activeChatId, chats, orders]);
+
+  useEffect(() => {
+    lastRenderedMessageIdRef.current = null;
+    shouldStickToBottomRef.current = true;
+  }, [activeChatId]);
+
+  useEffect(() => {
+    const latestMessageId = messages[messages.length - 1]?.id || null;
+    if (!latestMessageId || latestMessageId === lastRenderedMessageIdRef.current) return;
+    const isInitialLoad = lastRenderedMessageIdRef.current === null;
+    lastRenderedMessageIdRef.current = latestMessageId;
+    if (!shouldStickToBottomRef.current) return;
+    requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ behavior: isInitialLoad ? "auto" : "smooth", block: "end" }));
+  }, [messages]);
+
+  useEffect(() => {
+    const isFulfill = searchParams.get("fulfill");
+    const planName = searchParams.get("plan") || "Premium Plan";
+    if (isFulfill && activeChatId) {
+      setInputText(
+        `Hello! Here are your logins for ${planName}.\nEmail: [ ]\nPassword: [ ]\nEnjoy!`,
+      );
+      // Remove query param so it doesn't repeatedly set
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete("fulfill");
+      newParams.delete("plan");
+      setSearchParams(newParams, { replace: true });
+    }
+  }, [searchParams, activeChatId, setSearchParams]);
+
+  const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputText(e.target.value);
+    
+    if (presenceChannelRef.current) {
+      if (e.target.value.trim()) {
+        presenceChannelRef.current.track({
+          user_id: "admin",
+          username: "Support",
+          full_name: "Support Team",
+          is_typing: true,
+        });
+
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => {
+          presenceChannelRef.current.track({
+            user_id: "admin",
+            username: "Support",
+            full_name: "Support Team",
+            is_typing: false,
+          });
+        }, 3000);
+      } else {
+        presenceChannelRef.current.track({
+          user_id: "admin",
+          username: "Support",
+          full_name: "Support Team",
+          is_typing: false,
+        });
+      }
+    }
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputText.trim() || !activeChatId) return;
+
+    const msg = inputText.trim();
+    const activeChat = chats.find((c) => c.id === activeChatId);
+    if (!activeChat) return;
+
+    const optimisticMsg: ChatMessage = {
+      id: `temp-${Date.now()}`,
+      chatId: activeChatId,
+      orderId: activeOrder?.id || "",
+      senderRole: "admin",
+      message: msg,
+      senderId: userId || "",
+      senderName: user?.fullName || "Admin Support",
+      createdAt: Date.now(),
+      status: "pending",
+    };
+
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setInputText("");
+    if (presenceChannelRef.current) {
+       presenceChannelRef.current.track({
+         user_id: "admin",
+         username: "Support",
+         full_name: "Support Team",
+         is_typing: false,
+       });
+    }
+
+    try {
+      await setSupabaseAuth(getToken, true);
+      const insertedId = await chatService.sendMessage(
+        activeChatId,
+        {
+          senderRole: "admin",
+          message: msg,
+          senderId: userId || "",
+          senderName: user?.fullName || "Admin Support",
+          orderId: activeOrder?.id || undefined,
+          userId: activeChat.userId,
+        },
+        getToken,
+      );
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === optimisticMsg.id
+            ? { ...m, id: insertedId, status: "sent" }
+            : m
+        )
+      );
+      // Success
+      // Update admin attention flag
+      await adminOp("update", {
+        collection: "chats",
+        id: activeChatId,
+        data: {
+          needs_admin_attention: false,
+          updated_at: new Date().toISOString(),
+        },
+      });
+    } catch {
+      console.error("Admin support message send failed", {
+        chatId: activeChatId,
+        senderRole: "admin",
+      });
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === optimisticMsg.id ? { ...m, status: "failed" } : m,
+        ),
+      );
+    }
+  };
+
+  const adminOp = async (op: string, payload: any = {}) => {
+    try {
+      const { collection, id, data } = payload;
+      let result;
+      switch (op) {
+        case "add":
+          result = await supabase
+            .from(collection)
+            .insert(data)
+            .select()
+            .single();
+          if (result.error) throw result.error;
+          return result.data;
+        case "update":
+          result = await supabase
+            .from(collection)
+            .update(data)
+            .eq("id", id)
+            .select()
+            .single();
+          if (result.error) throw result.error;
+          return result.data;
+        case "delete":
+          result = await supabase.from(collection).delete().eq("id", id);
+          if (result.error) throw result.error;
+          return { success: true };
+        default:
+          throw new Error("Unknown admin op: " + op);
+      }
+    } catch (err: any) {
+      console.error("Admin Op Error:", err);
+      throw err;
+    }
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!activeOrder || !activeChatId) return;
+    const activeChat = chats.find((chat) => chat.id === activeChatId);
+    if (!activeChat?.userId) return;
+    const safeAmount = Number(activeOrder.amount || 0);
+    if (
+      !window.confirm(
+        `Confirm payment of ₦${safeAmount.toLocaleString()} for ${activeOrder.user_email || "User"}?`,
+      )
+    )
+      return;
+
+    const now = new Date().toISOString();
+    const nowMs = Date.now();
+    const optimisticMessageId = `temp-sys-${nowMs}`;
+    let systemMessageInserted = false;
+    const confirmMessage =
+      "Payment confirmed. We are preparing the delivery details and will send them here shortly.";
+
+    // Optimistic UI updates
+    setActiveOrder((prev: any) =>
+      prev ? { ...prev, status: "confirmed", confirmed_at: now } : prev,
+    );
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === activeOrder.id
+          ? { ...o, status: "confirmed", confirmed_at: now }
+          : o,
+      ),
+    );
+
+    // Optimistic Message
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: optimisticMessageId,
+        chatId: activeChatId,
+        orderId: activeOrder.id,
+        senderRole: "system",
+        message: confirmMessage,
+        senderId: userId || "",
+        senderName: "System Protocol",
+        createdAt: nowMs,
+        status: "pending",
+      },
+    ]);
+
+    try {
+      // Update order
+      await adminOp("update", {
+        collection: "orders",
+        id: activeOrder.id,
+        data: {
+          status: "confirmed",
+          confirmed_by: user?.primaryEmailAddress?.emailAddress,
+          confirmed_at: now,
+          updated_at: now,
+        },
+      });
+
+      // Send automated message
+      const insertedMessageId = await chatService.sendMessage(
+        activeChatId,
+        {
+          senderRole: "system",
+          message: confirmMessage,
+          senderName: "System Protocol",
+          orderId: activeOrder.id,
+          userId: activeChat.userId,
+        },
+        getToken,
+      );
+      systemMessageInserted = true;
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === optimisticMessageId
+            ? {
+                ...message,
+                id: insertedMessageId,
+                status: "sent",
+              }
+            : message,
+        ),
+      );
+
+      // Create subscription
+      const months = activeOrder.plan_months || 1;
+      const ends_at_iso = new Date(
+        nowMs + months * 29 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+
+      await adminOp("add", {
+        collection: "subscriptions",
+        data: {
+          user_id: activeOrder.user_id,
+          order_id: activeOrder.id,
+          product_name: activeOrder.product_name || "Digital product",
+          plan_duration: activeOrder.plan_duration,
+          starts_at: now,
+          ends_at: ends_at_iso,
+          status: "active",
+          created_at: now,
+          updated_at: now,
+        },
+      });
+
+      await adminOp("update", {
+        collection: "chats",
+        id: activeChatId,
+        data: {
+          needs_admin_attention: false,
+          updated_at: now,
+        },
+      });
+
+      // Send email to user
+      try {
+        const token =
+          typeof window !== "undefined" && (window as any).Clerk
+            ? await (window as any).Clerk.session?.getToken()
+            : null;
+        await fetch("/api/email/trigger", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            user_id: activeOrder.user_id,
+            email: activeOrder.user_email,
+            type: "payment_confirmed",
+          }),
+        });
+      } catch (err) {
+        console.warn("Email failed", err);
+      }
+
+      toast.success("Payment confirmed and delivery record updated.");
+    } catch (error: any) {
+      if (!systemMessageInserted) {
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === optimisticMessageId
+              ? { ...message, status: "failed" }
+              : message,
+          ),
+        );
+      }
+      console.error("Confirm payment error:", error);
+      toast.error(
+        `Confirm payment failed: ${error.message || "Unknown error"}`,
+      );
+    }
+  };
+
+  const filteredChats = chats.filter((c: any) => {
+    if (filter === "open") return c.status === "open";
+    if (filter === "closed") return c.status === "closed";
+    if (filter === "needs_attention") return c.needs_admin_attention;
+    return true;
+  });
+
+  return (
+    <div className="w-full h-full min-h-0 md:p-6 bg-brand-bg flex items-center justify-center overflow-hidden">
+      <LiquidGlass
+        chromaticAberration={2}
+        className="w-full h-full max-w-[1800px] flex overflow-hidden md:rounded-[2rem] border border-white/5 shadow-2xl relative"
+        style={{
+          background:
+            "linear-gradient(135deg, rgba(255,255,255,0.02), rgba(255,255,255,0.005))",
+          backdropFilter: "blur(40px) saturate(1.8)",
+        }}
+      >
+        {/* Search & List */}
+        <div
+          className={`
+          ${showMobileList ? "flex" : "hidden md:flex"}
+          w-full md:w-80 lg:w-96 border-r border-white/5 flex-col shrink-0 overflow-hidden z-20
+        `}
+        >
+          <div className="p-6 md:p-4 border-b border-white/5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <LiquidGlass
+                  button
+                  chromaticAberration={2}
+                  component="button"
+                  onClick={() => navigate("/admin")}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-brand-text/5 text-brand-text border border-white/10"
+                >
+                  <ChevronRight className="rotate-180" size={16} />
+                </LiquidGlass>
+                <h2 className="text-xl font-black uppercase tracking-[0.05em] text-brand-text drop-shadow-md">
+                  Transmissions
+                </h2>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <LiquidGlass
+                button
+                chromaticAberration={2}
+                component="button"
+                onClick={() => setFilter("all")}
+                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest border ${filter === "all" ? "bg-brand-accent/20 border-brand-accent/50 text-white shadow-lg shadow-brand-accent/20" : "bg-white/5 border-white/10 text-brand-text-secondary hover:text-white"}`}
+                title="All Transmissions"
+              >
+                <Filter size={14} />
+                <span className="hidden lg:inline">All</span>
+              </LiquidGlass>
+              <LiquidGlass
+                button
+                chromaticAberration={2}
+                component="button"
+                onClick={() => setFilter("open")}
+                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest border ${filter === "open" ? "bg-green-500/20 border-green-500/50 text-green-400 shadow-lg shadow-green-500/20" : "bg-white/5 border-white/10 text-brand-text-secondary hover:text-white"}`}
+                title="Open Channels"
+              >
+                <MessageSquare size={14} />
+                <span className="hidden lg:inline">Open</span>
+              </LiquidGlass>
+              <LiquidGlass
+                button
+                chromaticAberration={2}
+                component="button"
+                onClick={() => setFilter("needs_attention")}
+                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest border ${filter === "needs_attention" ? "bg-red-500/20 border-red-500/50 text-red-400 shadow-lg shadow-red-500/20" : "bg-white/5 border-white/10 text-brand-text-secondary hover:text-white"}`}
+                title="Needs Admin Attention"
+              >
+                <AlertTriangle size={14} />
+                <span className="hidden lg:inline">Alerts</span>
+              </LiquidGlass>
+              <LiquidGlass
+                button
+                chromaticAberration={2}
+                component="button"
+                onClick={() => setFilter("closed")}
+                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest border ${filter === "closed" ? "bg-white/20 border-white/40 text-white" : "bg-white/5 border-white/10 text-brand-text-secondary hover:text-white"}`}
+                title="Closed Channels"
+              >
+                <XCircle size={14} />
+                <span className="hidden lg:inline">Closed</span>
+              </LiquidGlass>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex gap-2 p-1 border border-brand-border bg-brand-surface rounded-xl">
+                <button
+                  onClick={() => setChatTypeFilter("support")}
+                  className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                    chatTypeFilter === "support"
+                      ? "bg-brand-accent text-white shadow-sm"
+                      : "text-brand-text-secondary hover:text-brand-text"
+                  }`}
+                >
+                  Support
+                </button>
+                <button
+                  onClick={() => setChatTypeFilter("group")}
+                  className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                    chatTypeFilter === "group"
+                      ? "bg-brand-accent text-white shadow-sm"
+                      : "text-brand-text-secondary hover:text-brand-text"
+                  }`}
+                >
+                  Communities
+                </button>
+                <button
+                  onClick={() => setChatTypeFilter("channel")}
+                  className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                    chatTypeFilter === "channel"
+                      ? "bg-brand-accent text-white shadow-sm"
+                      : "text-brand-text-secondary hover:text-brand-text"
+                  }`}
+                >
+                  Channels
+                </button>
+                <button
+                  onClick={() => setChatTypeFilter("all")}
+                  className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                    chatTypeFilter === "all"
+                      ? "bg-brand-accent text-white shadow-sm"
+                      : "text-brand-text-secondary hover:text-brand-text"
+                  }`}
+                >
+                  All
+                </button>
+              </div>
+              <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-text-secondary w-4 h-4" />
+              <input
+                type="text"
+                placeholder="Search..."
+                className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 py-2.5 text-xs font-medium focus:ring-1 focus:ring-brand-accent text-white placeholder-brand-text-secondary outline-none transition-all"
+              />
+            </div>
+          </div>
+        </div>
+
+          <div className="flex-1 overflow-y-auto scrollbar-hide">
+            {loading ? (
+              <div className="space-y-2.5 p-3">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 animate-pulse"
+                  >
+                    <div className="w-9 h-9 rounded-full bg-white/5 shrink-0" />
+                    <div className="flex-grow space-y-1.5 min-w-0">
+                      <div className="w-20 h-3 bg-white/10 rounded" />
+                      <div className="w-2/3 h-2.5 bg-white/5 rounded" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : filteredChats.length === 0 ? (
+              <div className="p-12 text-center text-xs font-black uppercase tracking-widest text-brand-text-secondary opacity-40">
+                No active transmissions
+              </div>
+            ) : (
+              filteredChats.map((chat) => {
+                const now = new Date();
+                const time = new Date(chat.lastMessageAt || chat.createdAt);
+                const diff = now.getTime() - time.getTime();
+                const mins = Math.floor(diff / 60000);
+                const hours = Math.floor(diff / 3600000);
+                const days = Math.floor(diff / 86400000);
+
+                let timeStr = "now";
+                if (mins >= 1 && mins < 60) timeStr = mins + "m";
+                else if (hours >= 1 && hours < 24) timeStr = hours + "h";
+                else if (days >= 1 && days < 7) timeStr = days + "d";
+                else if (days >= 7) timeStr = time.toLocaleDateString();
+
+                const chatProfile = profiles.find((p) => p.clerk_id === chat.userId);
+                const isOnline = chatProfile && isUserOnline(chatProfile.clerk_id || chatProfile.id, chatProfile.last_login_at);
+
+                return (
+                  <button
+                    key={chat.id}
+                    style={{
+                      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                      background:
+                        activeChatId === chat.id
+                          ? "linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02))"
+                          : "transparent",
+                    }}
+                    onClick={() => selectChat(chat.id!)}
+                    className={`w-full p-5 md:p-4 text-left border-b border-white/5 relative group hover:bg-white/5 ${activeChatId === chat.id ? "border border-white/20 shadow-lg !border-b-white/20 z-10 scale-[1.01] rounded-xl" : ""}`}
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-[12px] bg-brand-accent/20 border border-brand-accent/30 flex items-center justify-center font-black text-xs text-brand-accent uppercase relative shadow-[inset_0_0_12px_rgba(255,255,255,0.1)] overflow-hidden">
+                          {chat.coverImageUrl ? (
+                            <img src={chat.coverImageUrl} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            (chat.name || chat.userEmail || "User").charAt(0)
+                          )}
+                          {chat.needsAdminAttention && (
+                            <span
+                              className="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-red-500 border-2 border-brand-bg animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.6)]"
+                              title="Needs attention"
+                            />
+                          )}
+                          {isOnline && (
+                            <span
+                              className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-brand-bg shadow-[0_0_8px_rgba(16,185,129,0.7)] animate-pulse z-10"
+                              title="Online"
+                            />
+                          )}
+                        </div>
+                        <span className="text-[13px] font-black truncate max-w-[140px] tracking-wide text-brand-text drop-shadow-sm">
+                          {chat.name || chat.userEmail || "Unknown"}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-black uppercase text-brand-text-secondary opacity-80 mt-1">
+                        {timeStr}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center mt-1">
+                      <p className="text-[11px] font-medium text-brand-text-secondary truncate max-w-[80%] pr-2 group-hover:text-brand-text transition-colors opacity-80">
+                        {chat.lastMessage?.length > 40
+                          ? chat.lastMessage.slice(0, 40) + "..."
+                          : chat.lastMessage || "Channel established..."}
+                      </p>
+                      {chat.unreadCount ? (
+                        <div className="bg-brand-accent text-white rounded-full min-w-[20px] h-5 text-[10px] font-black flex items-center justify-center px-1.5 shadow-[0_0_10px_rgba(0,71,255,0.4)]">
+                          {chat.unreadCount}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-3">
+                      <span
+                        className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${chat.status === "open" ? "text-green-400 border-green-500/30 bg-green-500/10" : "text-brand-text-secondary opacity-60 border-white/10 bg-white/5"}`}
+                      >
+                        {chat.status}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Chat Area */}
+        <div
+          className={`
+        ${!showMobileList ? "flex" : "hidden md:flex"}
+        flex-1 flex flex-col z-10 w-full relative
+      `}
+        >
+          {activeChatId ? (
+            <div className="flex flex-col h-full bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.03),transparent_70%)] relative">
+              <header className="px-6 md:px-8 py-4 border-b border-white/5 flex justify-between items-center shrink-0 z-10 shadow-sm sticky top-0 bg-brand-bg/50 backdrop-blur-xl">
+                <div className="flex items-center gap-4">
+                  <LiquidGlass
+                    button
+                    chromaticAberration={2}
+                    component="button"
+                    onClick={() => setShowMobileList(true)}
+                    className="md:hidden w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 text-white shadow-md border border-white/10"
+                  >
+                    <ChevronRight className="rotate-180" size={20} />
+                  </LiquidGlass>
+                  <div className="w-10 h-10 rounded-[12px] bg-brand-accent/20 border border-brand-accent/30 flex items-center justify-center text-brand-accent font-black text-sm shadow-[inset_0_0_12px_rgba(255,255,255,0.1)] overflow-hidden">
+                    {chats.find((c) => c.id === activeChatId)?.coverImageUrl ? (
+                      <img src={chats.find((c) => c.id === activeChatId)?.coverImageUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      (
+                        chats.find((c) => c.id === activeChatId)?.name ||
+                        chats.find((c) => c.id === activeChatId)?.userEmail ||
+                        "User"
+                      )
+                        .charAt(0)
+                        .toUpperCase()
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-[13px] font-black uppercase tracking-[0.05em] truncate max-w-[180px] sm:max-w-none text-white drop-shadow-sm">
+                      {chats.find((c) => c.id === activeChatId)?.name ||
+                        chats.find((c) => c.id === activeChatId)?.userEmail ||
+                        "Unknown"}
+                    </h3>
+                    {chats.find((c) => c.id === activeChatId)
+                      ?.needsAdminAttention && (
+                      <span
+                        className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse ml-2 shadow-[0_0_8px_rgba(239,68,68,0.8)]"
+                        title="Needs attention"
+                      />
+                    )}
+                    <div className="text-[9px] font-black text-brand-text-secondary uppercase tracking-widest flex items-center gap-1.5 opacity-80 mt-1">
+                      <span className={`w-1.5 h-1.5 rounded-full shadow-[0_0_6px_rgba(74,222,128,0.6)] ${activeOrder ? 'bg-green-400' : 'bg-blue-400'}`} />
+                      {chats.find(c => c.id === activeChatId)?.chatType === 'group' ? 'Community Protocol' : 
+                       chats.find(c => c.id === activeChatId)?.chatType === 'channel' ? 'Broadcast Channel' : 
+                       activeOrder ? `ID: ${activeOrder.order_reference}` : 'General Support'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  {chats.find(c => c.id === activeChatId)?.chatType === 'group' || chats.find(c => c.id === activeChatId)?.chatType === 'channel' ? (
+                     <div className="flex items-center gap-2 px-4 py-1.5 rounded-full border shadow-sm backdrop-blur-md bg-indigo-500/10 text-indigo-400 border-indigo-500/30">
+                        <Users size={14} />
+                        <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">
+                          {chats.find(c => c.id === activeChatId)?.chatType}
+                        </span>
+                     </div>
+                  ) : activeOrder && (
+                    <div
+                      className={`flex items-center gap-2 px-4 py-1.5 rounded-full border shadow-sm backdrop-blur-md ${
+                        activeOrder.delivery_status === "delivered"
+                          ? "bg-green-500/10 text-green-400 border-green-500/30"
+                          : activeOrder.delivery_status === "pending_login"
+                            ? "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse"
+                            : "bg-white/5 text-brand-text-secondary border-white/10"
+                      }`}
+                    >
+                      {activeOrder.delivery_status === "delivered" ? (
+                        <>
+                          <CheckCircle2 size={14} />{" "}
+                          <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">
+                            ✅ Active
+                          </span>
+                        </>
+                      ) : activeOrder.delivery_status === "pending_login" ? (
+                        <>
+                          <Clock size={14} className="animate-spin-slow" />{" "}
+                          <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">
+                            ⏳ Awaiting Delivery
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-[10px] font-black uppercase tracking-widest">
+                          Support
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {chats.find((c) => c.id === activeChatId)?.status ===
+                    "open" && (
+                    <LiquidGlass
+                      button
+                      chromaticAberration={2}
+                      component="button"
+                      onClick={() =>
+                        adminOp("update", {
+                          collection: "chats",
+                          id: activeChatId,
+                          data: { status: "closed", updated_at: Date.now() },
+                        })
+                      }
+                      className="px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.1em] border border-white/10 shadow-lg text-white hover:border-white/30 transition-all hidden md:flex items-center justify-center bg-white/5"
+                    >
+                      Close
+                    </LiquidGlass>
+                  )}
+                </div>
+              </header>
+
+              <div
+                ref={messageViewportRef}
+                onScroll={(event) => {
+                  const viewport = event.currentTarget;
+                  shouldStickToBottomRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80;
+                }}
+                className="flex-1 overflow-y-auto p-6 md:p-10 space-y-6 md:space-y-8 scrollbar-hide"
+              >
+                <AnimatePresence initial={false}>
+                  {messages
+                    .filter((msg, index, self) => msg && index === self.findIndex((m) => m && m.id === msg.id))
+                    .map((msg, index) => {
+                      const isSelf =
+                        msg.senderRole === "admin" ||
+                        msg.senderRole === "system" ||
+                        msg.senderRole === "bot";
+                      const isSystem = msg.senderRole === "system";
+
+                      if (isSystem)
+                        return (
+                          <div key={msg.id} className="flex justify-center">
+                            <span className="px-3 py-1 bg-brand-text/5 border border-brand-border rounded-full text-[9px] font-black text-brand-text-secondary uppercase tracking-widest">
+                              {msg.message}
+                            </span>
+                          </div>
+                        );
+
+                    const prevMsg = index > 0 ? messages[index - 1] : null;
+                    const nextMsg = index < messages.length - 1 ? messages[index + 1] : null;
+
+                    const getSenderGroup = (m: any) => {
+                      if (!m) return null;
+                      if (m.senderRole === "system") return "system";
+                      const isMself = m.senderRole === "admin" || m.senderRole === "bot" || m.senderRole === "assistant";
+                      return isMself ? "admin" : "user";
+                    };
+
+                    const senderGroup = getSenderGroup(msg);
+                    const prevSenderGroup = getSenderGroup(prevMsg);
+                    const nextSenderGroup = getSenderGroup(nextMsg);
+
+                    const isPrevSameSender = prevSenderGroup === senderGroup;
+                    const isNextSameSender = nextSenderGroup === senderGroup;
+
+                    const light = typeof document !== 'undefined' && document?.documentElement?.classList?.contains("light");
+                    const bubbleGlassStyle = isSelf
+                      ? {
+                          background: light
+                            ? "linear-gradient(135deg, rgba(0, 102, 255, 0.16), rgba(0, 102, 255, 0.05))"
+                            : "linear-gradient(135deg, rgba(0, 102, 255, 0.22), rgba(0, 102, 255, 0.08))",
+                          boxShadow: light
+                            ? "inset 0 1px 1.5px 0px rgba(255, 255, 255, 0.4)"
+                            : "inset 0 1px 1px 0px rgba(255, 255, 255, 0.15)",
+                          color: light ? "#0f172a" : "#ffffff",
+                          borderColor: "rgba(255, 255, 255, 0.1)",
+                        }
+                      : {
+                          background: light
+                            ? "linear-gradient(135deg, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0.45))"
+                            : "linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02))",
+                          boxShadow: light
+                            ? "inset 0 1px 1.5px 0px rgba(255, 255, 255, 0.7)"
+                            : "inset 0 1px 1px 0px rgba(255, 255, 255, 0.15)",
+                          color: light ? "#1e293b" : "#e2e8f0",
+                          borderColor: "rgba(255, 255, 255, 0.1)",
+                        };
+
+                    return (
+                      <motion.div
+                        key={msg.id}
+                        initial={{ opacity: 0, y: 30 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3, ease: "easeOut" }}
+                        className={`flex ${isSelf ? "justify-end" : "justify-start"} ${isPrevSameSender ? "mt-1 md:mt-1.5 !mt-1.5" : "mt-6 md:mt-8 !mt-8"}`}
+                      >
+                        <div
                           className={`max-w-[85%] sm:max-w-[70%] flex gap-2 md:gap-3 ${isSelf ? "flex-row-reverse" : ""}`}
                         >
                           {!isNextSameSender ? (
@@ -930,4 +1740,3 @@ export default function AdminChats() {
     </div>
   );
 }
-
