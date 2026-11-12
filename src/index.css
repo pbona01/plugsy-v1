@@ -94,23 +94,23 @@
     --brand-accent: #0066ff;
     --brand-card: #ffffff;
     --brand-border: rgba(17, 18, 22, 0.09);
-    --brand-shadow: 0 1px 2px rgba(17, 18, 22, 0.03), 0 10px 30px rgba(17, 18, 22, 0.06);
-    --brand-shadow-hover: 0 2px 4px rgba(17, 18, 22, 0.04), 0 16px 40px rgba(17, 18, 22, 0.09);
+    --brand-shadow: 0 1px 2px rgba(17, 18, 22, 0.03), 0 12px 34px rgba(17, 18, 22, 0.07);
+    --brand-shadow-hover: 0 3px 6px rgba(17, 18, 22, 0.05), 0 20px 46px rgba(17, 18, 22, 0.12);
     --motion-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
     --motion-fast: 140ms;
     --motion-standard: 220ms;
   }
 
   .dark {
-    --brand-bg: #08090b;
-    --brand-surface: #121317;
+    --brand-bg: #07080c;
+    --brand-surface: #11131a;
     --brand-text: #f5f6f8;
     --brand-text-secondary: #9da1aa;
     --brand-accent: #0066ff;
     --brand-card: #121317;
     --brand-border: rgba(255, 255, 255, 0.1);
-    --brand-shadow: 0 1px 1px rgba(0, 0, 0, 0.25), 0 14px 36px rgba(0, 0, 0, 0.28);
-    --brand-shadow-hover: 0 2px 3px rgba(0, 0, 0, 0.32), 0 20px 48px rgba(0, 0, 0, 0.42);
+    --brand-shadow: 0 1px 1px rgba(0, 0, 0, 0.3), 0 16px 40px rgba(0, 0, 0, 0.33), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    --brand-shadow-hover: 0 3px 5px rgba(0, 0, 0, 0.38), 0 24px 54px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.055);
   }
 
   html,
@@ -297,9 +297,9 @@
   }
 
   .btn-primary {
-    background-color: var(--brand-accent);
+    background: linear-gradient(145deg, #1d7cff 0%, var(--brand-accent) 52%, #0054d6 100%);
     color: #ffffff !important;
-    @apply px-8 py-4 rounded-full font-black uppercase tracking-widest text-xs shadow-[0_8px_24px_rgba(0,102,255,0.22)] hover:shadow-[0_12px_32px_rgba(0,102,255,0.3)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+    @apply px-8 py-4 rounded-full font-black uppercase tracking-widest text-xs shadow-[0_10px_26px_rgba(0,102,255,0.28),inset_0_1px_0_rgba(255,255,255,0.32)] hover:shadow-[0_15px_36px_rgba(0,102,255,0.38),inset_0_1px_0_rgba(255,255,255,0.38)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-primary:focus-visible,
