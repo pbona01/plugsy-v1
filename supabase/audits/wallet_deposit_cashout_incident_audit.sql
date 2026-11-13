@@ -34,9 +34,12 @@ with target as (
   from public.withdrawals w
   join target p on p.clerk_id = w.user_id
 )
-select 'profile' as record_type, to_jsonb(target) as record from target
-union all
-select 'wallet_transaction', to_jsonb(ledger) from ledger
-union all
-select 'withdrawal', to_jsonb(withdrawal_attempts) from withdrawal_attempts
-order by record_type, record->>'created_at';
+select record_type, record
+from (
+  select 'profile' as record_type, to_jsonb(target) as record from target
+  union all
+  select 'wallet_transaction', to_jsonb(ledger) from ledger
+  union all
+  select 'withdrawal', to_jsonb(withdrawal_attempts) from withdrawal_attempts
+) audit
+order by coalesce(audit.record->>'created_at', audit.record->>'updated_at') nulls last, audit.record_type;
