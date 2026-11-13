@@ -1,7 +1,6 @@
 import {
   getWalletServiceClient,
   handleListBanks,
-  handleMoveFundingToWithdrawable,
   handleP2PTransfer,
   handleResolveBankAccount,
   handleResolveUsername,
@@ -282,7 +281,13 @@ export default async function handler(req, res) {
   }
 
   if (action === "move-to-withdrawable") {
-    return handleMoveFundingToWithdrawable(req, res)
+    // Deposits are spend-only wallet funds. They must never be converted into
+    // money that can be sent to a bank account.
+    return res.status(410).json({
+      success: false,
+      code: "DEPOSIT_WITHDRAWAL_DISABLED",
+      error: "Wallet deposits can only be used for purchases and transfers on Plugsy. They cannot be withdrawn to a bank account.",
+    })
   }
 
   if (action === "resolve-account") {

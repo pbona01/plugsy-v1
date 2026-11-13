@@ -1649,41 +1649,6 @@ export async function handleRequestPinReset(req, res) {
   return res.status(200).json({ success: true, message: "A secure PIN reset link has been sent to your email." });
 }
 
-export async function handleMoveFundingToWithdrawable(req, res) {
-  const context = await requireMutationContext(req, res);
-  if (!context) return;
-
-  const key = requireIdempotency(req, res, context.body);
-  if (!key) return;
-
-  const amount = Number(context.body.amount);
-  if (!Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) !== amount * 100) {
-    return send(res, 400, "FUNDING_CONVERSION_INVALID", "Enter a valid amount to move.");
-  }
-
-  const supabase = getWalletServiceClient(res);
-  if (!supabase) return;
-  if (!(await verifyWalletPin(supabase, context.actor.userId, context.body.pin, res))) return;
-
-  const result = await callRpc(supabase, res, "move_funding_to_withdrawable_v1", {
-    p_actor_user_id: context.actor.userId,
-    p_actor_email: context.actor.email,
-    p_amount: amount,
-    p_idempotency_key: key,
-  });
-  if (!result) return;
-
-  return res.status(200).json({
-    success: true,
-    alreadyProcessed: result.already_processed === true,
-    reference: result.reference,
-    amount: result.amount,
-    fee: result.fee,
-    netAmount: result.net_amount,
-    balanceAfter: result.balance_after,
-  });
-}
-
 export async function handleResetPin(req, res) {
   if (req.method !== "POST") return send(res, 405, "METHOD_NOT_ALLOWED", "Method not allowed.");
   const body = await parseBody(req, res);
