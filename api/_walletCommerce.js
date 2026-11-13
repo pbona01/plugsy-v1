@@ -1915,6 +1915,31 @@ export async function handleWithdrawal(req, res) {
   if (!supabase) return;
   if (!(await verifyWalletPin(supabase, context.actor.userId, context.body.pin, res))) return;
 
+  // Any account that used the retired deposit-to-cash conversion is held for
+  // review. This is fail-closed: if the safety state cannot be read, do not
+  // initiate an irreversible bank transfer.
+  const { data: cashoutProfile, error: cashoutProfileError } = await supabase
+    .from("profiles")
+    .select("wallet_cashout_hold")
+    .eq("clerk_id", context.actor.userId)
+    .maybeSingle();
+  if (cashoutProfileError || !cashoutProfile) {
+    return send(
+      res,
+      503,
+      "WITHDRAWAL_SAFETY_CHECK_UNAVAILABLE",
+      "We could not complete the withdrawal safety check. Please try again later.",
+    );
+  }
+  if (cashoutProfile.wallet_cashout_hold === true) {
+    return send(
+      res,
+      423,
+      "WITHDRAWAL_REVIEW_REQUIRED",
+      "This wallet needs a quick balance review before another bank withdrawal can be made.",
+    );
+  }
+
   const reservation = await callRpc(
     supabase,
     res,
