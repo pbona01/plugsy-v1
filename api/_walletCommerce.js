@@ -1950,6 +1950,28 @@ export async function handleWithdrawal(req, res) {
   if (!supabase) return;
   if (!(await verifyWalletPin(supabase, context.actor.userId, context.body.pin, res))) return;
 
+  const { data: withdrawalProfile, error: withdrawalProfileError } = await supabase
+    .from("profiles")
+    .select("wallet_withdrawal_hold")
+    .eq("clerk_id", context.actor.userId)
+    .maybeSingle();
+  if (withdrawalProfileError || !withdrawalProfile) {
+    return send(
+      res,
+      503,
+      "WITHDRAWAL_SAFETY_CHECK_UNAVAILABLE",
+      "We could not complete the withdrawal safety check. Please try again later.",
+    );
+  }
+  if (withdrawalProfile.wallet_withdrawal_hold === true) {
+    return send(
+      res,
+      423,
+      "WITHDRAWAL_REVIEW_REQUIRED",
+      "This wallet is temporarily restricted while a security review is completed.",
+    );
+  }
+
   const reservation = await callRpc(
     supabase,
     res,

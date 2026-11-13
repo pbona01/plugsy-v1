@@ -65,3 +65,17 @@ for each row execute function public.enforce_profile_wallet_balance_boundary_v1(
 
 revoke all on function public.enforce_wallet_write_boundary_v1() from public, anon, authenticated;
 revoke all on function public.enforce_profile_wallet_balance_boundary_v1() from public, anon, authenticated;
+
+-- Preserve the fraudulent ledger entries as evidence, but stop this confirmed
+-- account from sending the remaining fabricated balance to a bank account.
+alter table public.profiles
+  add column if not exists wallet_withdrawal_hold boolean not null default false,
+  add column if not exists wallet_withdrawal_hold_reason text;
+
+update public.profiles
+set
+  wallet_withdrawal_hold = true,
+  wallet_withdrawal_hold_reason = 'Confirmed fabricated wallet funding incident on 2026-11-12',
+  updated_at = now()
+where clerk_id = 'user_3M1kMEkT1weo0HnmwNDtjlVer9W'
+  and lower(email) = 'plugsyc7w72zx0@fldubai.com';
