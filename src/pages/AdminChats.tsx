@@ -182,9 +182,14 @@ export default function AdminChats() {
         );
 
       const executeFetch = async () => {
+        // `chats` is the conversation table, not the message table. The
+        // previous projection asked it for message-only columns such as
+        // `content` and `sender_role`, which makes Supabase reject the entire
+        // request. That failure was swallowed below and looked like an empty
+        // inbox ("No active transmissions") to admins.
         const { data, error } = await supabase
           .from("chats")
-          .select("id,chat_id,order_id,user_id,sender_role,content,attachment_url,attachment_type,audio_url,message_type,read_by_admin,created_at")
+          .select("*")
           .order("created_at", { ascending: false });
         if (error) throw error;
         if (
