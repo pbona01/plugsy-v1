@@ -107,7 +107,7 @@ export const trustScoreForSeller = (seller) => {
   });
 };
 
-export const canPublishPublicly = (seller, now = Date.now()) => seller?.verification_status === 'verified' && seller?.public_selling_enabled === true && Date.parse(seller?.public_plan_expires_at || '') > now;
+export const canPublishPublicly = (seller, now = Date.now()) => seller?.verification_status === 'verified' && seller?.public_selling_enabled === true && seller?.marketplace_restricted !== true && Date.parse(seller?.public_plan_expires_at || '') > now;
 
 export const publicListing = (listing, seller) => ({
   id: listing.id,
@@ -264,7 +264,7 @@ async function acceptMarketplaceOnboarding(req, res) {
 async function loadSellers(supabase, sellerIds) {
   const ids = [...new Set(sellerIds.map(text).filter(Boolean))];
   if (!ids.length) return new Map();
-  const [sellerResult, profileResult, adResult] = await Promise.all([
+  const [sellerResult, profileResult, adResult, restrictionResult] = await Promise.all([
     supabase
       .from("marketplace_seller_profiles")
       .select("user_id,trust_score,verification_status,public_selling_enabled,public_plan_expires_at,marketplace_fee_paid_by,completed_orders_count,upheld_disputes_count")
@@ -274,6 +274,7 @@ async function loadSellers(supabase, sellerIds) {
       .select("clerk_id,username,full_name,profile_pic_url,image_url")
       .in("clerk_id", ids),
     supabase.from("marketplace_ad_integrations").select("seller_id,meta_pixel_id,tiktok_pixel_id").in("seller_id", ids),
+    supabase.from("marketplace_seller_restrictions").select("seller_id,reason,expires_at").in("seller_id", ids).eq("status", "active").gt("expires_at", new Date().toISOString()),
   ]);
   // Ad integrations decorate cards but are not required to browse or buy.
   // Never let a missing/stale optional ad table blank the live marketplace.
@@ -282,6 +283,10 @@ async function loadSellers(supabase, sellerIds) {
   if (sellerResult.error || profileResult.error) throw sellerResult.error || profileResult.error;
   const profiles = new Map((profileResult.data || []).map((profile) => [profile.clerk_id, profile]));
   const adPixels = new Map((adsUnavailable ? [] : adResult.data || []).map((row) => [row.seller_id, { metaPixelId: row.meta_pixel_id || null, tiktokPixelId: row.tiktok_pixel_id || null }]));
+  // Restrictions are an additive safety layer. During the short period before
+  // its migration is applied, Marketplace remains available rather than
+  // blanking live listings because a newly-added table is not yet visible.
+  const restrictions = new Map((restrictionResult.error ? [] : restrictionResult.data || []).map((row) => [row.seller_id, row]));
   return new Map((sellerResult.data || []).map((seller) => {
     const profile = profiles.get(seller.user_id);
     return [seller.user_id, {
@@ -290,8 +295,30 @@ async function loadSellers(supabase, sellerIds) {
       username: profile?.username || null,
       avatar_url: profile?.profile_pic_url || profile?.image_url || null,
       ad_pixels: adPixels.get(seller.user_id) || null,
+      marketplace_restricted: restrictions.has(seller.user_id),
+      marketplace_restriction: restrictions.get(seller.user_id) || null,
     }];
   }));
+}
+
+async function liftExpiredSellerRestrictions(supabase) {
+  const now = new Date().toISOString();
+  const { data: expired, error } = await supabase.from('marketplace_seller_restrictions')
+    .select('id,seller_id,public_selling_was_enabled')
+    .eq('status', 'active').lte('expires_at', now).limit(100);
+  if (error) {
+    if (!['42P01', 'PGRST205'].includes(error.code)) console.error('[marketplace] restriction expiry check unavailable', error.code || error.message);
+    return;
+  }
+  for (const restriction of expired || []) {
+    const { data: lifted, error: liftError } = await supabase.from('marketplace_seller_restrictions')
+      .update({ status: 'lifted', lifted_at: now, lift_note: 'Restriction ended automatically.', updated_at: now })
+      .eq('id', restriction.id).eq('status', 'active').select('id').maybeSingle();
+    if (liftError || !lifted) continue;
+    if (restriction.public_selling_was_enabled) {
+      await supabase.from('marketplace_seller_profiles').update({ public_selling_enabled: true, updated_at: now }).eq('user_id', restriction.seller_id);
+    }
+  }
 }
 
 async function followedSellers(req, res) {
@@ -611,6 +638,28 @@ async function sellerWorkspace(req, res) {
     buyer: { id: null, name: sale.buyer_email || "Guest buyer", username: null, avatar: null },
   }));
   const allSales = [...safeSales, ...safeGuestSales].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const totalSalesValue = allSales.reduce((sum, sale) => sum + Number(sale.seller_amount || 0), 0);
+  const milestoneDefinitions = [
+    { code: 'sales_10000', target: 10_000, label: 'First ₦10k in sales' },
+    { code: 'sales_100000', target: 100_000, label: '₦100k in sales' },
+    { code: 'sales_1000000', target: 1_000_000, label: '₦1m in sales' },
+  ];
+  const reachedMilestones = milestoneDefinitions.filter((milestone) => totalSalesValue >= milestone.target);
+  const milestoneWrite = reachedMilestones.length
+    ? await supabase.from('marketplace_seller_milestones').upsert(
+      reachedMilestones.map((milestone) => ({ seller_id: actor.userId, milestone_code: milestone.code, target_amount: milestone.target })),
+      { onConflict: 'seller_id,milestone_code', ignoreDuplicates: true },
+    )
+    : { error: null };
+  // Milestones must never interrupt a seller's workspace while the additive
+  // migration is being rolled out.
+  if (milestoneWrite.error && !['42P01', 'PGRST205'].includes(milestoneWrite.error.code)) throw milestoneWrite.error;
+  const [milestoneResult, restrictionResult] = await Promise.all([
+    supabase.from('marketplace_seller_milestones').select('milestone_code,target_amount,reached_at').eq('seller_id', actor.userId).order('target_amount', { ascending: true }),
+    supabase.from('marketplace_seller_restrictions').select('id,reason,starts_at,expires_at,status').eq('seller_id', actor.userId).eq('status', 'active').gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (milestoneResult.error && !['42P01', 'PGRST205'].includes(milestoneResult.error.code)) throw milestoneResult.error;
+  if (restrictionResult.error && !['42P01', 'PGRST205'].includes(restrictionResult.error.code)) throw restrictionResult.error;
   const sellerListings = (listings || []).filter((listing) => listing.status !== 'archived');
   const relatedProductsPromise = sellerListings.length
     ? supabase.from('marketplace_listing_related_products').select('listing_id,related_listing_id,sort_order').in('listing_id', sellerListings.map((listing) => listing.id))
@@ -636,7 +685,7 @@ async function sellerWorkspace(req, res) {
   const verificationRetryAvailable = seller?.verification_status === 'pending'
     && ['prembly', 'prembly_widget'].includes(seller?.verification_provider)
     && (!Number.isFinite(pendingSince) || pendingSince <= Date.now() - 5 * 60_000);
-  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), ...sellerBilling, contact_preferences: contactPreferencesResult, verification_retry_available: verificationRetryAvailable, trust_score: trustScoreForSeller(seller) }, listings: listingsWithDeliveries, sales: allSales });
+  return res.status(200).json({ success: true, seller: { ...(seller || { verification_status: "unverified", public_selling_enabled: false, total_sales_count: 0, completed_orders_count: 0, upheld_disputes_count: 0 }), ...sellerBilling, contact_preferences: contactPreferencesResult, verification_retry_available: verificationRetryAvailable, trust_score: trustScoreForSeller(seller), marketplace_restriction: restrictionResult.data || null }, listings: listingsWithDeliveries, sales: allSales, milestoneSummary: { totalSalesValue, milestones: milestoneDefinitions.map((milestone) => ({ ...milestone, reached: totalSalesValue >= milestone.target, reachedAt: (milestoneResult.data || []).find((row) => row.milestone_code === milestone.code)?.reached_at || null })), next: milestoneDefinitions.find((milestone) => totalSalesValue < milestone.target) || null } });
 }
 
 async function sellerAdIntegrations(req, res, method) {
@@ -1610,6 +1659,8 @@ async function processEmails(req,res) {
   const secret=text(req.headers?.authorization).replace(/^Bearer\s+/i,'');
   if(!secretsMatch(text(process.env.CRON_SECRET),secret)) return send(res,401,'CRON_UNAUTHORIZED','Not authorized.');
   const supabase = getClient();
+  try { await liftExpiredSellerRestrictions(supabase); }
+  catch (restrictionError) { console.error('[marketplace] scheduled restriction expiry check deferred', restrictionError?.message || restrictionError); }
   let fileReviews = { checked: 0, approved: 0, rejected: 0, pending: 0, skipped: true };
   try { fileReviews = await scanPendingMarketplaceAssets(supabase); }
   catch (scanError) { console.error('[marketplace] scheduled file review deferred', scanError?.message || scanError); }
@@ -1635,12 +1686,42 @@ async function adminWorkspace(req, res) {
     supabase.from('marketplace_assets').select('id,seller_id,listing_id,original_name,content_type,status,expected_size,actual_size,created_at').order('created_at', { ascending: false }).limit(2000),
   ]);
   if (results.some((result) => result.error)) throw results.find((result) => result.error).error;
+  const sellerIds = (results[1].data || []).map((seller) => seller.user_id).filter(Boolean);
+  const [sellerProfilesResult, allSellerOrdersResult, allGuestSellerOrdersResult, allDisputesResult, restrictionsResult] = await Promise.all([
+    sellerIds.length ? supabase.from('profile_directory_v1').select('clerk_id,username,full_name,profile_pic_url,image_url').in('clerk_id', sellerIds) : Promise.resolve({ data: [], error: null }),
+    supabase.from('marketplace_orders').select('seller_id,amount,seller_amount,payment_status').eq('payment_status', 'paid').limit(10000),
+    supabase.from('marketplace_guest_orders').select('seller_id,amount,seller_amount,payment_status').eq('payment_status', 'paid').limit(10000),
+    supabase.from('marketplace_disputes').select('seller_id,status').limit(5000),
+    sellerIds.length ? supabase.from('marketplace_seller_restrictions').select('seller_id,id,reason,starts_at,expires_at,status').in('seller_id', sellerIds).eq('status', 'active').gt('expires_at', new Date().toISOString()) : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (sellerProfilesResult.error || allSellerOrdersResult.error || allGuestSellerOrdersResult.error || allDisputesResult.error) throw sellerProfilesResult.error || allSellerOrdersResult.error || allGuestSellerOrdersResult.error || allDisputesResult.error;
+  const profileBySeller = new Map((sellerProfilesResult.data || []).map((profile) => [profile.clerk_id, profile]));
+  const sellerTotals = new Map();
+  for (const order of [...(allSellerOrdersResult.data || []), ...(allGuestSellerOrdersResult.data || [])]) {
+    const total = sellerTotals.get(order.seller_id) || { grossVolume: 0, sellerRevenue: 0, paidOrders: 0 };
+    total.grossVolume += Number(order.amount || 0);
+    total.sellerRevenue += Number(order.seller_amount || 0);
+    total.paidOrders += 1;
+    sellerTotals.set(order.seller_id, total);
+  }
+  const reportTotals = new Map();
+  for (const report of allDisputesResult.data || []) {
+    const total = reportTotals.get(report.seller_id) || { total: 0, open: 0 };
+    total.total += 1;
+    if (['open', 'seller_response'].includes(report.status)) total.open += 1;
+    reportTotals.set(report.seller_id, total);
+  }
+  const restrictionBySeller = new Map((restrictionsResult.error ? [] : restrictionsResult.data || []).map((restriction) => [restriction.seller_id, restriction]));
+  const sellers = (results[1].data || []).map((seller) => {
+    const profile = profileBySeller.get(seller.user_id);
+    return { ...seller, name: profile?.full_name || profile?.username || 'Plugsy seller', username: profile?.username || null, avatar: profile?.profile_pic_url || profile?.image_url || null, totals: sellerTotals.get(seller.user_id) || { grossVolume: 0, sellerRevenue: 0, paidOrders: 0 }, reports: reportTotals.get(seller.user_id) || { total: 0, open: 0 }, restriction: restrictionBySeller.get(seller.user_id) || null };
+  });
   const orders = results[3].data || [];
   const guestOrders = results[4].data || [];
   const paid = orders.filter((order) => order.payment_status === 'paid');
   const paidGuestOrders = guestOrders.filter((order) => order.payment_status === 'paid');
   const uniqueBuyers = new Set(paid.map((order) => order.buyer_id)).size;
-  return res.status(200).json({ success: true, days, generatedAt: new Date().toISOString(), disputes: results[0].data, sellers: results[1].data, events: results[2].data, orders, guestOrders, listings: results[5].data || [], assets: results[6].data || [], summary: {
+  return res.status(200).json({ success: true, days, generatedAt: new Date().toISOString(), disputes: results[0].data, sellers, events: results[2].data, orders, guestOrders, listings: results[5].data || [], assets: results[6].data || [], summary: {
     grossVolume: [...paid, ...paidGuestOrders].reduce((sum, order) => sum + Number(order.amount || 0), 0),
     platformRevenue: [...paid, ...paidGuestOrders].reduce((sum, order) => sum + Number(order.platform_fee || 0), 0),
     orders: paid.length + paidGuestOrders.length,
@@ -1869,6 +1950,37 @@ async function adminMutation(req, res, action) {
   if (!actor) return;
   const body = readBody(req);
   let result;
+  if (action === 'set-seller-restriction') {
+    const sellerId = text(body.sellerId);
+    const operation = text(body.operation);
+    const reason = text(body.reason);
+    if (!/^user_[A-Za-z0-9]+$/.test(sellerId) || !['restrict', 'lift'].includes(operation)) return send(res, 400, 'SELLER_RESTRICTION_INVALID', 'Choose a valid seller and action.');
+    const { data: seller, error: sellerError } = await supabase.from('marketplace_seller_profiles').select('user_id,public_selling_enabled').eq('user_id', sellerId).maybeSingle();
+    if (sellerError) throw sellerError;
+    if (!seller) return send(res, 404, 'SELLER_NOT_FOUND', 'That seller is not available.');
+    if (operation === 'restrict') {
+      const durationDays = Math.min(365, Math.max(1, Number.parseInt(body.durationDays, 10) || 28));
+      if (reason.length < 10 || reason.length > 1500) return send(res, 400, 'SELLER_RESTRICTION_REASON_REQUIRED', 'Explain the restriction in 10 to 1,500 characters.');
+      const expiresAt = new Date(Date.now() + durationDays * 86400000).toISOString();
+      const { error: restrictionError } = await supabase.from('marketplace_seller_restrictions').insert({ seller_id: sellerId, reason, issued_by: actor.userId, public_selling_was_enabled: seller.public_selling_enabled === true, expires_at: expiresAt });
+      if (restrictionError) return send(res, 409, 'SELLER_ALREADY_RESTRICTED', 'This seller already has an active Marketplace restriction.');
+      const { error: sellerUpdateError } = await supabase.from('marketplace_seller_profiles').update({ public_selling_enabled: false, updated_at: new Date().toISOString() }).eq('user_id', sellerId);
+      if (sellerUpdateError) throw sellerUpdateError;
+      await supabase.from('marketplace_audit_events').insert({ actor_id: actor.userId, action: 'seller_marketplace_restricted', entity_id: sellerId, details: { reason, duration_days: durationDays, expires_at: expiresAt } });
+      return res.status(200).json({ success: true, restriction: { sellerId, expiresAt } });
+    }
+    const { data: restriction, error: restrictionLookupError } = await supabase.from('marketplace_seller_restrictions').select('id,public_selling_was_enabled').eq('seller_id', sellerId).eq('status', 'active').order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (restrictionLookupError) throw restrictionLookupError;
+    if (!restriction) return send(res, 409, 'SELLER_NOT_RESTRICTED', 'This seller has no active Marketplace restriction.');
+    const { error: liftError } = await supabase.from('marketplace_seller_restrictions').update({ status: 'lifted', lifted_at: new Date().toISOString(), lifted_by: actor.userId, lift_note: reason || 'Restriction lifted by Marketplace admin.', updated_at: new Date().toISOString() }).eq('id', restriction.id).eq('status', 'active');
+    if (liftError) throw liftError;
+    if (restriction.public_selling_was_enabled) {
+      const { error: restoreError } = await supabase.from('marketplace_seller_profiles').update({ public_selling_enabled: true, updated_at: new Date().toISOString() }).eq('user_id', sellerId);
+      if (restoreError) throw restoreError;
+    }
+    await supabase.from('marketplace_audit_events').insert({ actor_id: actor.userId, action: 'seller_marketplace_restriction_lifted', entity_id: sellerId, details: { note: reason || null } });
+    return res.status(200).json({ success: true });
+  }
   if (action === 'review-asset') {
     const assetId = text(body.assetId);
     const outcome = text(body.outcome);
@@ -1900,6 +2012,10 @@ export default async function handler(req, res) {
   const url = new URL(req.originalUrl || req.url, `http://${req.headers?.host || "localhost"}`);
   const action = text(req.query?.action || url.searchParams.get("action") || "browse");
   try {
+    // Temporary restrictions self-expire without requiring an admin to remember
+    // to reactivate a seller. This is intentionally best-effort while the
+    // additive governance migration is being deployed.
+    try { await liftExpiredSellerRestrictions(getClient()); } catch (error) { console.error('[marketplace] restriction cleanup skipped', error?.message || error); }
     if (req.method === "GET" && action === "browse") return await browse(req, res);
     if (req.method === "GET" && action === "product") return await productListing(req,res);
     if (req.method === "GET" && action === "creator") return await creatorProfile(req, res);
@@ -1916,7 +2032,7 @@ export default async function handler(req, res) {
     if (req.method === "POST" && ['prepare-upload','complete-upload','check-upload-review'].includes(action)) return await fileMutation(req,res,action);
     if (req.method === "POST" && action === 'add-delivery-link') return await addDeliveryLink(req, res);
     if (req.method === "PATCH" && action === 'update-deliveries') return await updateDeliveries(req, res);
-    if (req.method === "POST" && ['resolve-dispute','review-seller','review-asset'].includes(action)) return await adminMutation(req, res, action);
+    if (req.method === "POST" && ['resolve-dispute','review-seller','review-asset','set-seller-restriction'].includes(action)) return await adminMutation(req, res, action);
     if (req.method === "GET" && action === "private-listing") return await privateListing(req, res);
     if (req.method === "GET" && action === "onboarding") return await marketplaceOnboarding(req, res);
     if (req.method === "POST" && action === "accept-onboarding") return await acceptMarketplaceOnboarding(req, res);

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/clerk-react";
 import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, ArrowRight, BadgePercent, BarChart3, Box, Check, Copy, Crown, LayoutDashboard, Loader2, MessageCircle, PackagePlus, Plus, PlugZap, Search, Settings2, ShoppingBag, Store, Trash2, UploadCloud, Users, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, BadgePercent, BarChart3, Box, Check, Copy, Crown, LayoutDashboard, Loader2, MessageCircle, PackagePlus, Plus, PlugZap, Search, Settings2, ShieldCheck, ShoppingBag, Store, Trash2, UploadCloud, Users, X } from "lucide-react";
 import toast from "react-hot-toast";
 import SellerPremiumPlan from "../components/marketplace/SellerPremiumPlan";
 import SellerVerification from "../components/marketplace/SellerVerification";
@@ -464,6 +464,7 @@ export default function SellerDashboard() {
                 sales={sales}
                 metrics={metrics}
                 top={top}
+                milestones={data?.milestoneSummary}
                 create={() => start()}
                 products={() => setTab("products")}
                 viewOrders={(filter: any) => {
@@ -663,6 +664,14 @@ function AdIntegrations({ request }: any) {
 }
 
 function PublicSellingNextStep({ seller, premiumActive, verified, listings, onPremium, onVerify, onProducts, onCreate }: any) {
+  const restriction = seller?.marketplace_restriction;
+  if (restriction) {
+    return (
+      <section aria-label="Public marketplace restriction" className="mt-5 flex flex-col gap-4 rounded-2xl border border-amber-500/30 bg-amber-500/[.07] p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-500/15 text-amber-500"><ShieldCheck size={20} /></span><div><p className="text-[10px] font-black uppercase tracking-[.16em] text-amber-500">Public Marketplace paused</p><h2 className="mt-1 text-base font-black">Your public listings are temporarily paused.</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-brand-text-secondary">{restriction.reason} Public selling will resume automatically after {new Date(restriction.expires_at).toLocaleString()}. Your private links and buyer deliveries remain available.</p></div></div>
+      </section>
+    );
+  }
   const pending = seller?.verification_status === "pending" && seller?.verification_retry_available !== true;
   const title = !premiumActive ? "Get discovered in the public Marketplace" : pending ? "Your identity check is in progress" : !verified ? "Premium is active. Verify to publish publicly." : listings.some((item: any) => item.visibility === "public" && item.status === "published") ? "Your public store is ready" : "You're ready to publish publicly";
   const detail = !premiumActive ? "Private links work now. Premium and identity verification unlock public discovery." : pending ? "We'll show your publishing options as soon as verification is complete. You can still sell with private links." : !verified ? "One step left: complete a BVN or NIN face check. Your products and private links remain available while you do this." : "Choose a product and select Public marketplace to make it discoverable.";
@@ -688,7 +697,7 @@ function PublicSellingNextStep({ seller, premiumActive, verified, listings, onPr
   );
 }
 
-function Home({ listings, sales, metrics, top, create, products, viewOrders }: any) {
+function Home({ listings, sales, metrics, top, milestones, create, products, viewOrders }: any) {
   return (
     <div className="mt-6 space-y-5">
       {!listings.length ? (
@@ -731,6 +740,12 @@ function Home({ listings, sales, metrics, top, create, products, viewOrders }: a
         </button>
         <Metric label="Customers" value={metrics.buyers} icon={Users} />
       </div>
+      {milestones && (
+        <section className="rounded-3xl border border-brand-accent/20 bg-gradient-to-br from-brand-accent/[.08] to-brand-surface p-6">
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[.18em] text-brand-accent">Seller growth</p><h2 className="mt-1 text-lg font-black">Sales milestones</h2></div><p className="text-sm font-black">{money(milestones.totalSalesValue)} all-time seller revenue</p></div>
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">{(milestones.milestones || []).map((milestone: any) => <article key={milestone.code} className={`rounded-2xl border p-4 ${milestone.reached ? 'border-emerald-500/30 bg-emerald-500/[.08]' : 'border-brand-border bg-brand-bg/70'}`}><p className={`text-[9px] font-black uppercase tracking-wider ${milestone.reached ? 'text-emerald-500' : 'text-brand-text-secondary'}`}>{milestone.reached ? 'Achieved' : 'Next milestone'}</p><p className="mt-2 font-black">{milestone.label}</p><p className="mt-2 text-xs text-brand-text-secondary">{milestone.reached ? `Reached${milestone.reachedAt ? ` · ${new Date(milestone.reachedAt).toLocaleDateString()}` : ''}` : `${money(Math.max(0, milestone.target - milestones.totalSalesValue))} to go`}</p></article>)}</div>
+        </section>
+      )}
       <section className="rounded-3xl border border-brand-border bg-brand-surface p-6">
         <h2 className="text-lg font-black">Top products</h2>
         <p className="text-xs text-brand-text-secondary">Updates with the selected period</p>
